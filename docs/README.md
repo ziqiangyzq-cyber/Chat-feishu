@@ -156,6 +156,7 @@
 ### 6.3 `inprogress`
 
 - [claude-backend-integration-plan.md](./inprogress/claude-backend-integration-plan.md)
+- [claude-plan-confirmation-permission-panel-design.md](./inprogress/claude-plan-confirmation-permission-panel-design.md)
 - [claude-live-projection-semantics-design.md](./inprogress/claude-live-projection-semantics-design.md)
 - [codex-app-server-state-machine-audit.md](./inprogress/codex-app-server-state-machine-audit.md)
 - [final-message-feidex-audit.md](./inprogress/final-message-feidex-audit.md)
