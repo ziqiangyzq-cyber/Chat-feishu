@@ -11,6 +11,7 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	"github.com/kxn/codex-remote-feishu/internal/app/daemon/surfaceresume"
+	"github.com/kxn/codex-remote-feishu/internal/config"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
@@ -1449,6 +1450,147 @@ func TestDaemonNormalResumeFailureEmitsNoticeAfterFirstRefresh(t *testing.T) {
 	}
 	if gateway.operations[1].CardTitle != "工作区准备失败" {
 		t.Fatalf("expected workspace prepare failure notice second, got %#v", gateway.operations[1])
+	}
+}
+
+func TestDaemonHeadlessResumeProviderPrepareFailureUsesProviderNotice(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	putSurfaceResumeStateForTest(t, stateDir, surfaceresume.Entry{
+		SurfaceSessionID:   "surface-1",
+		GatewayID:          "app-1",
+		ChatID:             "chat-1",
+		ActorUserID:        "user-1",
+		ProductMode:        "normal",
+		Backend:            "codex",
+		CodexProviderID:    "team-proxy",
+		ResumeThreadID:     "thread-1",
+		ResumeThreadTitle:  "修复登录流程",
+		ResumeThreadCWD:    "/data/dl/droid",
+		ResumeWorkspaceKey: "/data/dl/droid",
+		ResumeRouteMode:    "pinned",
+		ResumeHeadless:     true,
+	})
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := config.WriteAppConfig(configPath, config.DefaultAppConfig()); err != nil {
+		t.Fatalf("WriteAppConfig: %v", err)
+	}
+
+	gateway := &recordingGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+	app.SetHeadlessRuntime(HeadlessRuntimeConfig{
+		IdleTTL:    time.Hour,
+		KillGrace:  time.Second,
+		ConfigPath: configPath,
+		Paths:      relayruntime.Paths{StateDir: stateDir},
+		BinaryPath: "codex",
+	})
+	app.ConfigureAdmin(AdminRuntimeOptions{
+		ConfigPath:      configPath,
+		Services:        defaultFeishuServices(),
+		AdminListenHost: "127.0.0.1",
+		AdminListenPort: "9501",
+		AdminURL:        "http://localhost:9501/admin/",
+		SetupURL:        "http://localhost:9501/setup",
+	})
+
+	app.onTick(context.Background(), time.Date(2026, 5, 31, 7, 0, 0, 0, time.UTC))
+
+	if len(gateway.operations) != 1 {
+		t.Fatalf("expected one restore failure notice, got %#v", gateway.operations)
+	}
+	text := operationCardText(gateway.operations[0])
+	if !strings.Contains(text, "Provider") || !strings.Contains(text, "配置") {
+		t.Fatalf("expected provider-specific restore failure notice, got %q", text)
+	}
+}
+
+func TestDaemonHeadlessResumeDoesNotReplaceLaunchFailureWithLaterWorkspaceBusy(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	putSurfaceResumeStateForTest(t, stateDir, surfaceresume.Entry{
+		SurfaceSessionID:   "surface-1",
+		GatewayID:          "app-1",
+		ChatID:             "chat-1",
+		ActorUserID:        "user-1",
+		ProductMode:        "normal",
+		Backend:            "codex",
+		CodexProviderID:    "team-proxy",
+		ResumeThreadID:     "thread-1",
+		ResumeThreadTitle:  "修复登录流程",
+		ResumeThreadCWD:    "/data/dl/droid",
+		ResumeWorkspaceKey: "/data/dl/droid",
+		ResumeRouteMode:    "pinned",
+		ResumeHeadless:     true,
+	})
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := config.WriteAppConfig(configPath, config.DefaultAppConfig()); err != nil {
+		t.Fatalf("WriteAppConfig: %v", err)
+	}
+
+	gateway := &recordingGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+	app.SetHeadlessRuntime(HeadlessRuntimeConfig{
+		IdleTTL:    time.Hour,
+		KillGrace:  time.Second,
+		ConfigPath: configPath,
+		Paths:      relayruntime.Paths{StateDir: stateDir},
+		BinaryPath: "codex",
+	})
+	app.ConfigureAdmin(AdminRuntimeOptions{
+		ConfigPath:      configPath,
+		Services:        defaultFeishuServices(),
+		AdminListenHost: "127.0.0.1",
+		AdminListenPort: "9501",
+		AdminURL:        "http://localhost:9501/admin/",
+		SetupURL:        "http://localhost:9501/setup",
+	})
+
+	firstAttempt := time.Date(2026, 5, 31, 7, 0, 0, 0, time.UTC)
+	app.onTick(context.Background(), firstAttempt)
+
+	if len(gateway.operations) != 1 {
+		t.Fatalf("expected one restore failure notice after launch-preflight failure, got %#v", gateway.operations)
+	}
+
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-busy-1",
+		DisplayName:   "busy",
+		WorkspaceRoot: "/data/dl/droid",
+		WorkspaceKey:  "/data/dl/droid",
+		ShortName:     "busy",
+		Source:        "vscode",
+		Online:        true,
+		Threads: map[string]*state.ThreadRecord{
+			"thread-busy": {ThreadID: "thread-busy", Name: "占位会话", CWD: "/data/dl/droid", Loaded: true},
+		},
+	})
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-busy",
+		ChatID:           "chat-busy",
+		ActorUserID:      "user-busy",
+		InstanceID:       "inst-busy-1",
+	})
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionUseThread,
+		SurfaceSessionID: "surface-busy",
+		ChatID:           "chat-busy",
+		ActorUserID:      "user-busy",
+		ThreadID:         "thread-busy",
+	})
+	if recovery := app.surfaceResumeRuntime.recovery["surface-1"]; recovery != nil {
+		recovery.NextAttemptAt = time.Time{}
+	}
+
+	app.onTick(context.Background(), firstAttempt.Add(time.Minute))
+
+	if len(gateway.operations) != 1 {
+		t.Fatalf("expected later busy retry to stay silent after earlier launch failure, got %#v", gateway.operations)
 	}
 }
 

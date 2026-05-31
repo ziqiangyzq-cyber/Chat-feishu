@@ -264,3 +264,29 @@ func TestTryAutoResumeHeadlessSurfaceKeepsStableWorkspaceRootForSyntheticThreadR
 		t.Fatalf("expected synthetic restore to claim the stable workspace root, got %#v", surface)
 	}
 }
+
+func TestHeadlessRestoreFailureNoticeWorkspaceBusyUsesGenericRestoreText(t *testing.T) {
+	notice := headlessRestoreFailureNotice("workspace_busy")
+	if notice == nil {
+		t.Fatal("expected notice")
+	}
+	if strings.Contains(notice.Text, "占用") || strings.Contains(notice.Text, "接管") {
+		t.Fatalf("expected generic restore failure text, got %q", notice.Text)
+	}
+	if !strings.Contains(notice.Text, "暂时无法恢复") {
+		t.Fatalf("expected generic restore failure text, got %q", notice.Text)
+	}
+}
+
+func TestSurfaceResumeFailureNoticeWorkspaceBusyUsesGenericRestoreText(t *testing.T) {
+	notice := surfaceResumeFailureNotice("workspace_busy")
+	if notice == nil {
+		t.Fatal("expected notice")
+	}
+	if strings.Contains(notice.Text, "占用") || strings.Contains(notice.Text, "接管") {
+		t.Fatalf("expected generic restore failure text, got %q", notice.Text)
+	}
+	if !strings.Contains(notice.Text, "暂时无法恢复") {
+		t.Fatalf("expected generic restore failure text, got %q", notice.Text)
+	}
+}

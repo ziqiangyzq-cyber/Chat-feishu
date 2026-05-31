@@ -620,18 +620,28 @@ func (s *Service) syntheticHeadlessRestoreView(threadID, threadTitle, workspaceK
 
 func headlessRestoreFailureNotice(code string) *control.Notice {
 	switch strings.TrimSpace(code) {
+	case "headless_restore_provider_unavailable":
+		return &control.Notice{
+			Code:  "headless_restore_provider_unavailable",
+			Title: "恢复失败",
+			Text:  "当前 Codex Provider 配置不可用，暂时无法恢复之前会话。请检查 Provider 设置后重试。",
+		}
+	case "headless_restore_claude_profile_unavailable":
+		return &control.Notice{
+			Code:  "headless_restore_claude_profile_unavailable",
+			Title: "恢复失败",
+			Text:  "当前 Claude 配置不可用，暂时无法恢复之前会话。请检查 Claude 设置后重试。",
+		}
+	case "headless_restore_runtime_unavailable":
+		return &control.Notice{
+			Code:  "headless_restore_runtime_unavailable",
+			Title: "恢复失败",
+			Text:  "当前恢复环境未准备好，暂时无法恢复之前会话。请检查本地配置后重试。",
+		}
 	case "workspace_busy":
-		return &control.Notice{
-			Code:  "headless_restore_workspace_busy",
-			Title: "恢复失败",
-			Text:  "之前的 workspace 当前被其他飞书会话占用，暂时无法恢复，请稍后重试或尝试其他会话。",
-		}
+		return genericHeadlessRestoreFailureNotice("headless_restore_workspace_busy")
 	case "thread_busy":
-		return &control.Notice{
-			Code:  "headless_restore_thread_busy",
-			Title: "恢复失败",
-			Text:  "之前的会话当前被其他窗口占用，暂时无法恢复，请稍后重试或尝试其他会话。",
-		}
+		return genericHeadlessRestoreFailureNotice("headless_restore_thread_busy")
 	case "thread_cwd_missing":
 		return &control.Notice{
 			Code:  "headless_restore_thread_cwd_missing",
@@ -647,20 +657,46 @@ func headlessRestoreFailureNotice(code string) *control.Notice {
 	}
 }
 
+func NoticeForHeadlessRestoreFailure(code string) *control.Notice {
+	return headlessRestoreFailureNotice(code)
+}
+
+func HeadlessRestoreLaunchFailureCode(err error) string {
+	problem := agentproto.ErrorInfoFromError(err, agentproto.ErrorInfo{})
+	switch strings.TrimSpace(problem.Code) {
+	case "codex_provider_prepare_failed":
+		return "headless_restore_provider_unavailable"
+	case "claude_profile_prepare_failed", "claude_settings_prepare_failed":
+		return "headless_restore_claude_profile_unavailable"
+	case "headless_binary_missing", "headless_backend_missing":
+		return "headless_restore_runtime_unavailable"
+	default:
+		return "headless_restore_start_failed"
+	}
+}
+
 func surfaceResumeFailureNotice(code string) *control.Notice {
 	switch strings.TrimSpace(code) {
 	case "workspace_busy":
-		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_workspace_busy", "恢复失败", "之前的工作区当前被其他飞书会话接管，暂时无法恢复。请稍后重试，或发送 /list 重新选择工作区。")
+		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_workspace_busy", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /list 重新选择工作区。")
 		return &notice
 	case "workspace_instance_busy":
-		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_workspace_instance_busy", "恢复失败", "之前的工作区当前暂时不可接管。请稍后重试，或发送 /list 重新选择工作区。")
+		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_workspace_instance_busy", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /list 重新选择工作区。")
 		return &notice
 	case "thread_busy":
-		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_thread_busy", "恢复失败", "之前的会话当前被其他飞书会话占用，暂时无法直接恢复。请稍后重试，或发送 /use 选择其他会话。")
+		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_thread_busy", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /use 选择其他会话。")
 		return &notice
 	default:
 		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_target_not_found", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /list 重新选择工作区。")
 		return &notice
+	}
+}
+
+func genericHeadlessRestoreFailureNotice(code string) *control.Notice {
+	return &control.Notice{
+		Code:  strings.TrimSpace(code),
+		Title: "恢复失败",
+		Text:  "之前的会话暂时无法恢复，请稍后重试或尝试其他会话。",
 	}
 }
 

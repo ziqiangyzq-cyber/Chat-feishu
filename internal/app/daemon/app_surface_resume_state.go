@@ -460,17 +460,25 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 			ResumeHeadless:   recovery.Entry.ResumeHeadless,
 		}, allowMissingTargetFailure)
 		switch result.Status {
-		case orchestrator.SurfaceResumeStatusStarting, orchestrator.SurfaceResumeStatusThreadAttached, orchestrator.SurfaceResumeStatusWorkspaceAttached:
+		case orchestrator.SurfaceResumeStatusStarting:
+			a.clearSurfaceResumeAttemptProgressLocked(surfaceID)
+			events = append(events, restoreEvents...)
+			updatedSurfaceIDs = append(updatedSurfaceIDs, surfaceID)
+		case orchestrator.SurfaceResumeStatusThreadAttached, orchestrator.SurfaceResumeStatusWorkspaceAttached:
 			a.clearSurfaceResumeBackoffLocked(surfaceID)
 			events = append(events, restoreEvents...)
 			updatedSurfaceIDs = append(updatedSurfaceIDs, surfaceID)
 		case orchestrator.SurfaceResumeStatusFailed:
-			a.setSurfaceResumeBackoffLocked(surfaceID, result.FailureCode, now)
+			displayCode, emit := a.recordSurfaceResumeFailureLocked(surfaceID, result.FailureCode, now)
+			restoreEvents = rewriteHeadlessRestoreFailureEvents(restoreEvents, displayCode, emit)
 			events = append(events, restoreEvents...)
 			if recovery.Entry.ResumeHeadless {
 				continue
 			}
-			notice := orchestrator.NoticeForSurfaceResumeFailure(result.FailureCode)
+			if !emit {
+				continue
+			}
+			notice := orchestrator.NoticeForSurfaceResumeFailure(displayCode)
 			if notice != nil {
 				events = append(events, eventcontract.Event{
 					Kind:             eventcontract.KindNotice,
@@ -605,6 +613,18 @@ func (a *App) clearSurfaceResumeBackoffLocked(surfaceID string) {
 	recovery.NextAttemptAt = time.Time{}
 	recovery.LastAttemptAt = time.Time{}
 	recovery.LastFailureCode = ""
+	recovery.StickyFailureCode = ""
+	recovery.LastNoticeCode = ""
+}
+
+func (a *App) clearSurfaceResumeAttemptProgressLocked(surfaceID string) {
+	recovery := a.surfaceResumeRuntime.recovery[strings.TrimSpace(surfaceID)]
+	if recovery == nil {
+		return
+	}
+	recovery.NextAttemptAt = time.Time{}
+	recovery.LastAttemptAt = time.Time{}
+	recovery.LastFailureCode = ""
 }
 
 func (a *App) setSurfaceResumeBackoffLocked(surfaceID, code string, now time.Time) {
@@ -615,6 +635,75 @@ func (a *App) setSurfaceResumeBackoffLocked(surfaceID, code string, now time.Tim
 	recovery.LastAttemptAt = now
 	recovery.NextAttemptAt = now.Add(surfaceResumeRetryBackoff)
 	recovery.LastFailureCode = strings.TrimSpace(code)
+}
+
+func surfaceResumeFailureSpecificity(code string) int {
+	switch strings.TrimSpace(code) {
+	case "headless_restore_provider_unavailable",
+		"headless_restore_claude_profile_unavailable":
+		return 3
+	case "headless_restore_runtime_unavailable":
+		return 2
+	case "headless_restore_start_failed",
+		"headless_restore_start_timeout":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func shouldUpgradeSurfaceResumeStickyFailure(current, next string) bool {
+	return surfaceResumeFailureSpecificity(next) > surfaceResumeFailureSpecificity(current)
+}
+
+func (a *App) recordSurfaceResumeFailureLocked(surfaceID, code string, now time.Time) (string, bool) {
+	recovery := a.surfaceResumeRuntime.recovery[strings.TrimSpace(surfaceID)]
+	if recovery == nil {
+		return strings.TrimSpace(code), false
+	}
+	code = strings.TrimSpace(code)
+	recovery.LastAttemptAt = now
+	recovery.NextAttemptAt = now.Add(surfaceResumeRetryBackoff)
+	recovery.LastFailureCode = code
+	if shouldUpgradeSurfaceResumeStickyFailure(recovery.StickyFailureCode, code) {
+		recovery.StickyFailureCode = code
+	}
+	displayCode := strings.TrimSpace(firstNonEmpty(recovery.StickyFailureCode, code))
+	if displayCode == "" {
+		return "", false
+	}
+	if recovery.LastNoticeCode == "" {
+		recovery.LastNoticeCode = displayCode
+		return displayCode, true
+	}
+	if displayCode == recovery.LastNoticeCode {
+		return displayCode, false
+	}
+	if recovery.StickyFailureCode != "" {
+		recovery.LastNoticeCode = displayCode
+		return displayCode, true
+	}
+	return displayCode, false
+}
+
+func rewriteHeadlessRestoreFailureEvents(events []eventcontract.Event, displayCode string, emit bool) []eventcontract.Event {
+	if !emit {
+		return nil
+	}
+	displayCode = strings.TrimSpace(displayCode)
+	if displayCode == "" {
+		return events
+	}
+	rewritten := make([]eventcontract.Event, 0, len(events))
+	for _, event := range events {
+		if event.Kind == eventcontract.KindNotice && event.Notice != nil {
+			if notice := orchestrator.NoticeForHeadlessRestoreFailure(displayCode); notice != nil {
+				event.Notice = notice
+			}
+		}
+		rewritten = append(rewritten, event)
+	}
+	return rewritten
 }
 
 func (a *App) shouldDeferHeadlessResumeUntilInitialRefreshLocked(entry surfaceresume.Entry, allowMissingTargetFailure bool) bool {
@@ -645,9 +734,12 @@ func (a *App) recordManagedHeadlessResumeOutcomeEventsLocked(events []eventcontr
 		case "headless_restore_thread_busy",
 			"headless_restore_thread_not_found",
 			"headless_restore_thread_cwd_missing",
+			"headless_restore_provider_unavailable",
+			"headless_restore_claude_profile_unavailable",
+			"headless_restore_runtime_unavailable",
 			"headless_restore_start_failed",
 			"headless_restore_start_timeout":
-			a.setSurfaceResumeBackoffLocked(event.SurfaceSessionID, event.Notice.Code, now)
+			a.recordSurfaceResumeFailureLocked(event.SurfaceSessionID, event.Notice.Code, now)
 		}
 	}
 }

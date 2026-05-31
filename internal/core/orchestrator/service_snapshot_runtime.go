@@ -493,16 +493,20 @@ func (s *Service) HandleHeadlessLaunchFailed(surfaceID, instanceID string, err e
 		return nil
 	}
 	if pending.AutoRestore {
-		events := []eventcontract.Event{{
-			Kind:             eventcontract.KindNotice,
-			SurfaceSessionID: surface.SurfaceSessionID,
-			Notice: &control.Notice{
+		notice := NoticeForHeadlessRestoreFailure(HeadlessRestoreLaunchFailureCode(err))
+		if notice == nil {
+			notice = &control.Notice{
 				Code:  "headless_restore_start_failed",
 				Title: "恢复失败",
 				Text:  "之前的会话暂时无法恢复，请稍后重试或尝试其他会话。",
-			},
+			}
+		}
+		events := []eventcontract.Event{{
+			Kind:             eventcontract.KindNotice,
+			SurfaceSessionID: surface.SurfaceSessionID,
+			Notice:           notice,
 		}}
-		return s.maybeFinalizePendingTargetPicker(surface, events, "之前的会话暂时无法恢复，请稍后重试或尝试其他会话。")
+		return s.maybeFinalizePendingTargetPicker(surface, events, notice.Text)
 	}
 	if pending.Purpose == state.HeadlessLaunchPurposeFreshWorkspace {
 		notice := NoticeForProblem(agentproto.ErrorInfoFromError(err, agentproto.ErrorInfo{
