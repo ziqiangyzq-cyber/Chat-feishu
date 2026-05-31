@@ -48,6 +48,20 @@ For every new repository task in chat (not only GitHub issue workflow):
 - Do not mix unrelated edits into one commit by default.
 - When the user asks to "先提交" or similar, complete that commit before starting additional implementation work.
 
+## Root-Cause First Bugfix Rule (Always On)
+
+For any bug, regression, flaky behavior, test failure, unexpected behavior, or suspected design mistake:
+
+- Default objective is to identify and fix the root cause or wrong design boundary, not merely to hide the visible symptom.
+- Do **not** start with the smallest patch, extra guard, fallback, retry, null-check, copy tweak, or conditional bypass just because it makes the symptom disappear.
+- Symptom-only or containment-only fixes are **forbidden by default**. They are allowed only when the user explicitly approves that tradeoff in the current turn.
+- Before proposing or implementing a fix, first gather concrete runtime evidence, trace the failing path across component boundaries, and state the current root-cause hypothesis.
+- If the root cause is still unknown, continue investigation instead of converting uncertainty into a patch.
+- If the failure is caused by a wrong abstraction, ownership split, state machine, data shape, or protocol boundary, prefer the deeper corrective fix even when it is broader than the smallest diff.
+- Do not preserve a known-wrong design by layering compatibility shims or defensive patches on top unless the user explicitly asks for a temporary containment path.
+- If a true emergency hotfix is needed before root-cause work is complete, label it explicitly as temporary containment, explain what remains unproven, state the residual risk, and wait for explicit user approval before applying it.
+- Do not present symptom suppression as a completed fix. State exactly what was proven, what remains uncertain, and what deeper correction is still required.
+
 ## Deterministic Repo Helper Rule
 
 - For repeated tail-state or publish-state checks, prefer `bash scripts/dev/worktree-facts.sh` instead of manually rerunning `git status --short --branch`.
@@ -84,6 +98,22 @@ When the user explicitly asks staged rollout (for example: `按阶段推进`, `�
 - On stop, report blocker evidence and exact resume action.
 
 ## Skill Trigger Matrix
+
+### `systematic-debugging`
+
+Use `superpowers:systematic-debugging` when working on:
+
+- any bug, regression, flaky behavior, test failure, unexpected behavior, build failure, or performance anomaly
+- any request phrased as `debug`, `排查`, `看下为什么`, `修 bug`, `fix bug`, `why is this happening`, or similar
+- any situation where a quick patch, fallback, or smallest-diff fix feels tempting
+- any repeated failure where the previous fix did not fully explain the behavior
+
+Execution floor:
+
+- finish root-cause investigation before proposing or implementing a fix
+- do not use minimal symptom-suppression patches unless the user explicitly approves that path in the current turn
+- if evidence points to a design/ownership/boundary problem, escalate to that deeper fix instead of cosmetically patching the symptom
+- if 3 fix attempts fail, stop local patching and question the architecture explicitly before continuing
 
 ### `relay-stack-playbook`
 
