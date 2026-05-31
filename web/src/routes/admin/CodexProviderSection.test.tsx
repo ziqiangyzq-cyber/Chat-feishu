@@ -134,6 +134,77 @@ describe("CodexProviderSection", () => {
     });
   });
 
+  it("keeps the existing api key when editing without entering a new one", async () => {
+    const user = userEvent.setup();
+    const initialProviders = [
+      makeCodexProvider(),
+      makeCodexProvider({
+        id: "team-proxy",
+        name: "Team Proxy",
+        baseURL: "https://proxy.internal/v1",
+        hasApiKey: true,
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        builtIn: false,
+        persisted: true,
+        readOnly: false,
+      }),
+    ];
+    const { calls } = installMockFetch({
+      "/api/admin/codex/providers/team-proxy": (call) => {
+        const body = JSON.parse(String(call.init?.body ?? "{}"));
+        return {
+          body: {
+            provider: makeCodexProvider({
+              id: "team-proxy",
+              name: body.name,
+              baseURL: body.baseURL,
+              hasApiKey: true,
+              model: body.model,
+              reasoningEffort: body.reasoningEffort,
+              builtIn: false,
+              persisted: true,
+              readOnly: false,
+            }),
+          },
+        };
+      },
+    });
+
+    function Harness() {
+      const [providers, setProviders] = useState(initialProviders);
+      return (
+        <CodexProviderSection
+          providers={providers}
+          loadError=""
+          setProviders={setProviders}
+          onReload={async () => {}}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    await user.click(await screen.findByRole("button", { name: /Team Proxy/ }));
+    expect(screen.getByPlaceholderText("输入 API Key")).toHaveValue("");
+
+    await user.clear(screen.getByLabelText(/名称/));
+    await user.type(screen.getByLabelText(/名称/), "Team Proxy 2");
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+
+    expect(await screen.findByText("Codex Provider 已保存。")).toBeInTheDocument();
+    const updateCall = calls.find(
+      (call) => call.method === "PUT" && call.path === "/api/admin/codex/providers/team-proxy",
+    );
+    expect(updateCall).toBeDefined();
+    expect(JSON.parse(String(updateCall?.init?.body))).toEqual({
+      name: "Team Proxy 2",
+      baseURL: "https://proxy.internal/v1",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+  });
+
   it("maps backend errors to user-facing copy", async () => {
     const user = userEvent.setup();
     installMockFetch({

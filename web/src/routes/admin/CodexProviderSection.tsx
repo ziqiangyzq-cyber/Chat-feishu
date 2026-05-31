@@ -20,6 +20,7 @@ import {
   ConfigFormDetailCard,
   ConfigSectionShell,
   type ConfigEditorSectionState,
+  type EditorMode,
   useConfigEditorSection,
 } from "./ConfigEditorShared";
 
@@ -70,7 +71,7 @@ export function CodexProviderSection(props: CodexProviderSectionProps) {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const validationError = validateDraft(draft);
+    const validationError = validateDraft(draft, editorMode);
     if (validationError) {
       setDetailNotice({ tone: "warn", message: validationError });
       return;
@@ -316,7 +317,8 @@ function renderCodexProviderDetailCard(props: CodexDetailCardProps) {
 
         <label className="field">
           <span>
-            API Key <em className="field-required">*</em>
+            API Key{" "}
+            {editorMode === "create" ? <em className="field-required">*</em> : null}
           </span>
           <input
             autoComplete="new-password"
@@ -390,14 +392,14 @@ function createDraftFromProvider(provider: CodexProviderSummary): CodexProviderD
   };
 }
 
-function validateDraft(draft: CodexProviderDraft): string {
+function validateDraft(draft: CodexProviderDraft, editorMode: EditorMode): string {
   if (!draft.name.trim()) {
     return "请填写名称。";
   }
   if (!draft.baseURL.trim()) {
     return "请填写端点地址。";
   }
-  if (!draft.apiKey.trim()) {
+  if (editorMode === "create" && !draft.apiKey.trim()) {
     return "请填写 API Key。";
   }
   return "";
