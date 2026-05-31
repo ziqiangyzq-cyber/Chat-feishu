@@ -9,6 +9,7 @@ on:
       - "install-release.ps1"
       - "scripts/check/smoke-install-release.sh"
       - "scripts/check/smoke-install-release.ps1"
+      - "scripts/check/smoke-macos-installer-result-model.sh"
       - "scripts/check/smoke-windows-nsis-installer.ps1"
       - "scripts/release/build-artifacts.sh"
       - "scripts/release/build-windows-nsis.sh"
@@ -32,6 +33,7 @@ on:
       - "install-release.ps1"
       - "scripts/check/smoke-install-release.sh"
       - "scripts/check/smoke-install-release.ps1"
+      - "scripts/check/smoke-macos-installer-result-model.sh"
       - "scripts/check/smoke-windows-nsis-installer.ps1"
       - "scripts/release/build-artifacts.sh"
       - "scripts/release/build-windows-nsis.sh"
@@ -251,6 +253,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Smoke macOS installer result model
+        run: bash scripts/check/smoke-macos-installer-result-model.sh
 
       - name: Download production fixture
         uses: actions/download-artifact@v4
