@@ -93,6 +93,7 @@ function Invoke-InstallerScenario(
     $startInfo.Environment["CODEX_REMOTE_INSTALLER_TEST_CAPTURE_FILE"] = $capturePath
     $startInfo.Environment["CODEX_REMOTE_INSTALLER_TEST_PROBE_FILE"] = $probePath
     $startInfo.Environment["CODEX_REMOTE_INSTALLER_TEST_RESULT_FILE"] = $resultPath
+    $startInfo.Environment["CODEX_REMOTE_INSTALLER_TEST_LANGUAGE"] = $LanguageId
     if ($AutoPrimary) {
       $startInfo.Environment["CODEX_REMOTE_INSTALLER_TEST_AUTO_PRIMARY"] = "1"
     }

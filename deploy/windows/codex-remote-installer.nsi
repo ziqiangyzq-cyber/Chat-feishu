@@ -71,6 +71,7 @@ Var TestCaptureFile
 Var TestProbeOverrideFile
 Var TestResultOverrideFile
 Var TestAutoPrimary
+Var TestLanguage
 
 LangString STR_CAPTION ${LANGID_ENGLISH} "Codex Remote Feishu Installer"
 LangString STR_CAPTION ${LANGID_SIMPCHINESE} "Codex Remote Feishu 安装器"
@@ -136,6 +137,10 @@ Function .onInit
   ReadEnvStr $TestProbeOverrideFile "CODEX_REMOTE_INSTALLER_TEST_PROBE_FILE"
   ReadEnvStr $TestResultOverrideFile "CODEX_REMOTE_INSTALLER_TEST_RESULT_FILE"
   ReadEnvStr $TestAutoPrimary "CODEX_REMOTE_INSTALLER_TEST_AUTO_PRIMARY"
+  ReadEnvStr $TestLanguage "CODEX_REMOTE_INSTALLER_TEST_LANGUAGE"
+  ${If} $TestLanguage != ""
+    StrCpy $LANGUAGE $TestLanguage
+  ${EndIf}
   ${If} $TestCaptureFile != ""
     SetSilent silent
   ${EndIf}
