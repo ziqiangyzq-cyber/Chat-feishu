@@ -126,6 +126,14 @@ final class InstallerBridge {
         NSWorkspace.shared.open(url)
     }
 
+    func openFilePath(_ rawValue: String) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: trimmed))
+    }
+
     private func selectedPayloadBinaryURL() throws -> URL {
         let machine = try machineArchitecture()
         let resourceName: String

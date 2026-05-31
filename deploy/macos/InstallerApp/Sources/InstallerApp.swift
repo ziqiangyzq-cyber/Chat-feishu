@@ -47,6 +47,7 @@ final class InstallerViewController: NSViewController {
     private let titleLabel = NSTextField(labelWithString: "")
     private let summaryLabel = NSTextField(wrappingLabelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
+    private let infoLabel = NSTextField(wrappingLabelWithString: "")
     private let locationTitleLabel = NSTextField(labelWithString: "安装位置")
     private let locationField = NSTextField(string: "")
     private let locationHintLabel = NSTextField(wrappingLabelWithString: "")
@@ -58,6 +59,8 @@ final class InstallerViewController: NSViewController {
     private let progressIndicator = NSProgressIndicator()
     private let logTextView = NSTextView()
     private let logScrollView = NSScrollView()
+    private let auxiliaryActionsStack = NSStackView()
+    private var auxiliaryActionsByTag: [Int: InstallerResultPageAction] = [:]
     private lazy var primaryButton: NSButton = {
         let button = NSButton(title: "继续", target: self, action: #selector(primaryAction))
         button.bezelStyle = .rounded
@@ -205,6 +208,10 @@ final class InstallerViewController: NSViewController {
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 0
 
+        infoLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.maximumNumberOfLines = 0
+
         locationTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         locationField.isEditable = false
         locationHintLabel.font = .systemFont(ofSize: 12, weight: .regular)
@@ -231,6 +238,11 @@ final class InstallerViewController: NSViewController {
         logScrollView.translatesAutoresizingMaskIntoConstraints = false
         logScrollView.heightAnchor.constraint(equalToConstant: 220).isActive = true
 
+        auxiliaryActionsStack.orientation = .horizontal
+        auxiliaryActionsStack.alignment = .leading
+        auxiliaryActionsStack.spacing = 12
+        auxiliaryActionsStack.translatesAutoresizingMaskIntoConstraints = false
+
         let buttonRow = NSStackView(views: [secondaryButton, primaryButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 10
@@ -245,6 +257,8 @@ final class InstallerViewController: NSViewController {
             locationHintLabel,
             progressIndicator,
             detailLabel,
+            infoLabel,
+            auxiliaryActionsStack,
             logScrollView,
             buttonRow,
         ] {
@@ -268,6 +282,9 @@ final class InstallerViewController: NSViewController {
             titleLabel.stringValue = "正在检查当前安装状态"
             summaryLabel.stringValue = "安装器会先探测当前用户环境中的安装状态，再决定是首次安装还是修复 / 升级。"
             detailLabel.stringValue = ""
+            infoLabel.stringValue = ""
+            infoLabel.isHidden = true
+            configureAuxiliaryActions([])
             locationTitleLabel.isHidden = true
             locationField.isHidden = true
             browseButton.isHidden = true
@@ -284,6 +301,9 @@ final class InstallerViewController: NSViewController {
             titleLabel.stringValue = plan.title
             summaryLabel.stringValue = plan.summary
             detailLabel.stringValue = detailText(for: plan)
+            infoLabel.stringValue = ""
+            infoLabel.isHidden = true
+            configureAuxiliaryActions([])
             locationTitleLabel.isHidden = false
             locationField.isHidden = false
             browseButton.isHidden = !plan.installLocationEditable
@@ -304,6 +324,9 @@ final class InstallerViewController: NSViewController {
             titleLabel.stringValue = "正在安装"
             summaryLabel.stringValue = "安装器正在调用嵌入的 Codex Remote payload，并根据当前安装状态执行首装、升级或重装修复。"
             detailLabel.stringValue = "如果你正在修复已有安装，当前目录和服务状态会被自动复用。"
+            infoLabel.stringValue = ""
+            infoLabel.isHidden = true
+            configureAuxiliaryActions([])
             locationTitleLabel.isHidden = true
             locationField.isHidden = true
             browseButton.isHidden = true
@@ -318,13 +341,16 @@ final class InstallerViewController: NSViewController {
             stepLabel.stringValue = model.stepText
             titleLabel.stringValue = model.title
             summaryLabel.stringValue = model.summary
-            detailLabel.stringValue = resultDetailText(for: model)
+            detailLabel.stringValue = model.detail
+            infoLabel.stringValue = resultInfoText(for: model)
+            infoLabel.isHidden = model.infoItems.isEmpty
+            configureAuxiliaryActions(model.auxiliaryActions)
             locationTitleLabel.isHidden = true
             locationField.isHidden = true
             browseButton.isHidden = true
             locationHintLabel.isHidden = true
             progressIndicator.stopAnimation(nil)
-            logScrollView.isHidden = false
+            logScrollView.isHidden = true
             primaryButton.isEnabled = true
             primaryButton.title = model.primaryAction.title
             secondaryButton.title = "关闭"
@@ -346,13 +372,8 @@ final class InstallerViewController: NSViewController {
         return lines.joined(separator: "\n")
     }
 
-    private func resultDetailText(for model: InstallerResultPageModel) -> String {
-        var lines: [String] = []
-        if !model.detail.isEmpty {
-            lines.append(model.detail)
-        }
-        lines.append(contentsOf: model.infoItems.map { "\($0.label)：\($0.value)" })
-        return lines.joined(separator: "\n")
+    private func resultInfoText(for model: InstallerResultPageModel) -> String {
+        model.infoItems.map { "\($0.label)：\($0.value)" }.joined(separator: "\n")
     }
 
     private func failureResultModel(from summary: InstallerExecutionSummary) -> InstallerResultPageModel {
@@ -364,16 +385,63 @@ final class InstallerViewController: NSViewController {
     }
 
     private func performPrimaryResultAction(_ action: InstallerResultPageAction) {
+        performResultAction(action, terminateAfter: true)
+    }
+
+    @objc private func auxiliaryActionPressed(_ sender: NSButton) {
+        guard let action = auxiliaryActionsByTag[sender.tag] else {
+            return
+        }
+        performResultAction(action, terminateAfter: false)
+    }
+
+    private func performResultAction(_ action: InstallerResultPageAction, terminateAfter: Bool) {
         switch action.kind {
         case .continueWebSetup, .openAdminUI:
             guard let target = action.target else {
-                NSApp.terminate(nil)
+                if terminateAfter {
+                    NSApp.terminate(nil)
+                }
                 return
             }
             bridge.openURL(target)
-            NSApp.terminate(nil)
-        case .openLogs, .finish:
-            NSApp.terminate(nil)
+            if terminateAfter {
+                NSApp.terminate(nil)
+            }
+        case .openLogs:
+            guard let target = action.target else {
+                return
+            }
+            bridge.openFilePath(target)
+        case .finish:
+            if terminateAfter {
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func configureAuxiliaryActions(_ actions: [InstallerResultPageAction]) {
+        auxiliaryActionsByTag.removeAll()
+        for view in auxiliaryActionsStack.arrangedSubviews {
+            auxiliaryActionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        guard !actions.isEmpty else {
+            auxiliaryActionsStack.isHidden = true
+            return
+        }
+
+        auxiliaryActionsStack.isHidden = false
+        for (index, action) in actions.enumerated() {
+            let button = NSButton(title: action.title, target: self, action: #selector(auxiliaryActionPressed(_:)))
+            button.isBordered = false
+            button.contentTintColor = .linkColor
+            button.setButtonType(.momentaryPushIn)
+            button.alignment = .left
+            button.tag = index
+            auxiliaryActionsByTag[index] = action
+            auxiliaryActionsStack.addArrangedSubview(button)
         }
     }
 
