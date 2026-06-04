@@ -1594,6 +1594,60 @@ func TestDaemonHeadlessResumeDoesNotReplaceLaunchFailureWithLaterWorkspaceBusy(t
 	}
 }
 
+func TestSurfaceResumeRecoverySyncPreservesBackoffForSameRecoveryTarget(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	putSurfaceResumeStateForTest(t, stateDir, surfaceresume.Entry{
+		SurfaceSessionID:   "surface-1",
+		GatewayID:          "app-1",
+		ChatID:             "chat-1",
+		ActorUserID:        "user-1",
+		ProductMode:        "normal",
+		Backend:            "codex",
+		CodexProviderID:    "default",
+		Verbosity:          "normal",
+		ResumeThreadID:     "thread-1",
+		ResumeThreadTitle:  "修复登录流程",
+		ResumeThreadCWD:    "/data/dl/droid",
+		ResumeWorkspaceKey: "/data/dl/droid",
+		ResumeRouteMode:    "pinned",
+		ResumeHeadless:     true,
+	})
+	app := newRestoreHintTestApp(stateDir)
+	now := time.Date(2026, 6, 5, 3, 20, 0, 0, time.UTC)
+	displayCode, emit := app.recordSurfaceResumeFailureLocked("surface-1", "headless_restore_start_timeout", now)
+	if !emit || displayCode != "headless_restore_start_timeout" {
+		t.Fatalf("expected first restore failure to emit, display=%q emit=%t", displayCode, emit)
+	}
+	before := app.surfaceResumeRuntime.recovery["surface-1"]
+	if before == nil || before.NextAttemptAt.IsZero() || before.LastNoticeCode == "" {
+		t.Fatalf("expected recovery backoff to be recorded, got %#v", before)
+	}
+
+	entry, ok := app.surfaceResumeRuntime.store.Get("surface-1")
+	if !ok {
+		t.Fatal("expected stored resume entry")
+	}
+	entry.ResumeThreadTitle = "修复登录流程 - 新标题"
+	entry.UpdatedAt = now.Add(time.Second)
+	if err := app.surfaceResumeRuntime.store.Put(entry); err != nil {
+		t.Fatalf("update surface resume state: %v", err)
+	}
+	app.syncSurfaceResumeRecoveryStateLocked()
+
+	after := app.surfaceResumeRuntime.recovery["surface-1"]
+	if after == nil {
+		t.Fatal("expected recovery state to remain")
+	}
+	if after.NextAttemptAt != before.NextAttemptAt || after.LastAttemptAt != before.LastAttemptAt || after.LastNoticeCode != before.LastNoticeCode || after.LastFailureCode != before.LastFailureCode {
+		t.Fatalf("expected same recovery target refresh to preserve backoff, before=%#v after=%#v", before, after)
+	}
+	if after.Entry.ResumeThreadTitle != "修复登录流程 - 新标题" {
+		t.Fatalf("expected refreshed entry metadata to update, got %#v", after.Entry)
+	}
+}
+
 func seedVSCodeResumeInstance(app *App, instanceID, threadID string) {
 	app.service.UpsertInstance(&state.InstanceRecord{
 		InstanceID:              instanceID,

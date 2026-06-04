@@ -336,7 +336,8 @@ func (s *Service) attachHeadlessInstance(surface *state.SurfaceConsoleRecord, in
 		if pending.AutoRestore {
 			mode = attachSurfaceToKnownThreadHeadlessRestore
 		}
-		return s.attachSurfaceToKnownThreadWithOverlayCleanup(surface, inst, view, mode, cleanup)
+		events := s.attachSurfaceToKnownThreadWithOverlayCleanup(surface, inst, view, mode, cleanup)
+		return s.finishFailedAutoRestoreThreadConnect(surface, pending, events)
 	}
 	s.consumeSurfacePendingHeadlessLaunch(surface, pending.InstanceID)
 	events := []eventcontract.Event{}
@@ -355,6 +356,51 @@ func (s *Service) attachHeadlessInstance(surface *state.SurfaceConsoleRecord, in
 		},
 	)
 	return events
+}
+
+func (s *Service) finishFailedAutoRestoreThreadConnect(surface *state.SurfaceConsoleRecord, pending *state.HeadlessLaunchRecord, events []eventcontract.Event) []eventcontract.Event {
+	if surface == nil || pending == nil || !pending.AutoRestore {
+		return events
+	}
+	if !eventsContainAutoRestoreThreadConnectFailure(events) {
+		return events
+	}
+	if s.consumeSurfacePendingHeadlessLaunch(surface, pending.InstanceID) == nil {
+		return events
+	}
+	workspaceKey := normalizeWorkspaceClaimKey(firstNonEmpty(pending.WorkspaceKey, pending.ThreadCWD, surface.ClaimedWorkspaceKey))
+	if surface.AttachedInstanceID == pending.InstanceID {
+		events = append(events, s.finalizeDetachedSurface(surface)...)
+	} else {
+		s.transitionSurfaceRouteCore(surface, nil, surfaceRouteCoreState{WorkspaceKey: workspaceKey})
+	}
+	events = append(events, eventcontract.Event{
+		Kind:             eventcontract.KindDaemonCommand,
+		SurfaceSessionID: surface.SurfaceSessionID,
+		DaemonCommand: &control.DaemonCommand{
+			Kind:             control.DaemonCommandKillHeadless,
+			SurfaceSessionID: surface.SurfaceSessionID,
+			InstanceID:       pending.InstanceID,
+			ThreadID:         pending.ThreadID,
+			ThreadTitle:      pending.ThreadTitle,
+			WorkspaceKey:     pending.WorkspaceKey,
+			ThreadCWD:        pending.ThreadCWD,
+		},
+	})
+	return events
+}
+
+func eventsContainAutoRestoreThreadConnectFailure(events []eventcontract.Event) bool {
+	for _, event := range events {
+		if event.Notice == nil {
+			continue
+		}
+		code := strings.TrimSpace(event.Notice.Code)
+		if strings.HasPrefix(code, "headless_restore_") && code != "headless_restore_attached" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) attachHeadlessPromptDispatchRestart(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord, pending *state.HeadlessLaunchRecord) []eventcontract.Event {

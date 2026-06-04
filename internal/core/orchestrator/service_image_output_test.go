@@ -398,6 +398,159 @@ func TestApplyInstanceConnectedAutoRestoreHeadlessSuppressesReplayAndSelectionNo
 	}
 }
 
+func TestApplyInstanceConnectedAutoRestoreMissingWorkspaceConsumesPendingAndKillsLaunch(t *testing.T) {
+	now := time.Date(2026, 6, 5, 3, 10, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.MaterializeSurfaceResumeContract("surface-1", "app-1", "chat-1", "user-1", state.HeadlessCodexSurfaceBackendContract("default"), state.SurfaceVerbosityNormal, state.PlanModeSettingOff)
+	svc.root.Surfaces["surface-1"].PendingHeadless = &state.HeadlessLaunchRecord{
+		InstanceID:      "inst-headless-1",
+		ThreadID:        "thread-1",
+		ThreadTitle:     "修复登录流程",
+		RequestedAt:     now,
+		ExpiresAt:       now.Add(30 * time.Second),
+		Status:          state.HeadlessLaunchStarting,
+		AutoRestore:     true,
+		CodexProviderID: "default",
+	}
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-headless-1",
+		DisplayName:   "headless",
+		WorkspaceRoot: "",
+		WorkspaceKey:  "",
+		ShortName:     "headless",
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+
+	events := svc.ApplyInstanceConnected("inst-headless-1")
+
+	snapshot := svc.SurfaceSnapshot("surface-1")
+	if snapshot == nil || snapshot.PendingHeadless.InstanceID != "" || snapshot.Attachment.InstanceID != "" {
+		t.Fatalf("expected missing-workspace restore failure to consume pending launch, got %#v", snapshot)
+	}
+	var sawFailure, sawKill bool
+	for _, event := range events {
+		if event.Notice != nil && event.Notice.Code == "headless_restore_thread_cwd_missing" {
+			sawFailure = true
+		}
+		if event.DaemonCommand != nil && event.DaemonCommand.Kind == control.DaemonCommandKillHeadless && event.DaemonCommand.InstanceID == "inst-headless-1" {
+			sawKill = true
+		}
+	}
+	if !sawFailure || !sawKill {
+		t.Fatalf("expected missing-workspace restore failure notice and kill command, got %#v", events)
+	}
+}
+
+func TestFinishFailedAutoRestoreThreadConnectIgnoresNonRestoreNotices(t *testing.T) {
+	now := time.Date(2026, 6, 5, 3, 12, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.MaterializeSurfaceResumeContract("surface-1", "app-1", "chat-1", "user-1", state.HeadlessCodexSurfaceBackendContract("default"), state.SurfaceVerbosityNormal, state.PlanModeSettingOff)
+	pending := &state.HeadlessLaunchRecord{
+		InstanceID:      "inst-headless-1",
+		ThreadID:        "thread-1",
+		ThreadTitle:     "修复登录流程",
+		WorkspaceKey:    "/data/dl/droid",
+		ThreadCWD:       "/data/dl/droid",
+		RequestedAt:     now,
+		ExpiresAt:       now.Add(30 * time.Second),
+		Status:          state.HeadlessLaunchStarting,
+		AutoRestore:     true,
+		CodexProviderID: "default",
+	}
+	svc.root.Surfaces["surface-1"].PendingHeadless = pending
+
+	events := svc.finishFailedAutoRestoreThreadConnect(svc.root.Surfaces["surface-1"], pending, []eventcontract.Event{
+		{
+			Kind:             eventcontract.KindNotice,
+			SurfaceSessionID: "surface-1",
+			Notice: &control.Notice{
+				Code: "target_picker_invalidated",
+				Text: "选择卡片已失效。",
+			},
+		},
+		{
+			Kind:             eventcontract.KindNotice,
+			SurfaceSessionID: "surface-1",
+			Notice: &control.Notice{
+				Code: "headless_restore_attached",
+				Text: "重连成功。",
+			},
+		},
+	})
+
+	snapshot := svc.SurfaceSnapshot("surface-1")
+	if snapshot == nil || snapshot.PendingHeadless.InstanceID != "inst-headless-1" {
+		t.Fatalf("expected non-restore notice not to consume pending launch, got %#v", snapshot)
+	}
+	for _, event := range events {
+		if event.DaemonCommand != nil && event.DaemonCommand.Kind == control.DaemonCommandKillHeadless {
+			t.Fatalf("expected non-restore notice not to kill launched headless, got %#v", events)
+		}
+	}
+}
+
+func TestApplyInstanceConnectedAutoRestoreHeadlessFailureConsumesPendingAndKillsLaunch(t *testing.T) {
+	now := time.Date(2026, 6, 5, 3, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.MaterializeSurfaceResumeContract("surface-1", "app-1", "chat-1", "user-1", state.HeadlessCodexSurfaceBackendContract("default"), state.SurfaceVerbosityNormal, state.PlanModeSettingOff)
+	svc.root.Surfaces["surface-1"].PendingHeadless = &state.HeadlessLaunchRecord{
+		InstanceID:      "inst-headless-1",
+		ThreadID:        "thread-1",
+		ThreadTitle:     "修复登录流程",
+		WorkspaceKey:    "/data/dl/droid",
+		ThreadCWD:       "/data/dl/droid",
+		RequestedAt:     now,
+		ExpiresAt:       now.Add(30 * time.Second),
+		Status:          state.HeadlessLaunchStarting,
+		AutoRestore:     true,
+		CodexProviderID: "default",
+	}
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-headless-1",
+		DisplayName:   "headless",
+		WorkspaceRoot: "/tmp",
+		WorkspaceKey:  "/tmp",
+		ShortName:     "headless",
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+	connectEvents := svc.finishFailedAutoRestoreThreadConnect(svc.root.Surfaces["surface-1"], svc.root.Surfaces["surface-1"].PendingHeadless, []eventcontract.Event{{
+		Kind:             eventcontract.KindNotice,
+		SurfaceSessionID: "surface-1",
+		Notice:           NoticeForHeadlessRestoreFailure("thread_not_found"),
+	}})
+
+	snapshot := svc.SurfaceSnapshot("surface-1")
+	if snapshot == nil || snapshot.Attachment.InstanceID != "" || snapshot.PendingHeadless.InstanceID != "" {
+		t.Fatalf("expected failed auto-restore connect to leave surface detached with no pending launch, got %#v", snapshot)
+	}
+	var sawFailure, sawKill bool
+	for _, event := range connectEvents {
+		if event.Notice != nil && event.Notice.Code == "headless_restore_thread_not_found" {
+			sawFailure = true
+		}
+		if event.DaemonCommand != nil && event.DaemonCommand.Kind == control.DaemonCommandKillHeadless && event.DaemonCommand.InstanceID == "inst-headless-1" {
+			sawKill = true
+		}
+	}
+	if !sawFailure || !sawKill {
+		t.Fatalf("expected failed auto-restore connect to emit failure notice and kill launched headless, got %#v", connectEvents)
+	}
+
+	later := now.Add(time.Minute)
+	tickEvents := svc.Tick(later)
+	for _, event := range tickEvents {
+		if event.Notice != nil && event.Notice.Code == "headless_restore_start_timeout" {
+			t.Fatalf("expected failed auto-restore connect not to later time out, got %#v", tickEvents)
+		}
+	}
+}
+
 func TestUseThreadDetachedReusesManagedHeadlessForKnownThread(t *testing.T) {
 	now := time.Date(2026, 4, 7, 18, 50, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

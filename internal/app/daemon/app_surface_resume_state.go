@@ -402,7 +402,7 @@ func (a *App) syncSurfaceResumeRecoveryStateLocked() {
 			continue
 		}
 		current := a.surfaceResumeRuntime.recovery[surfaceID]
-		if current == nil || !surfaceresume.SameEntryContent(current.Entry, entry) {
+		if current == nil || !sameSurfaceResumeRecoveryTarget(current.Entry, entry) {
 			a.surfaceResumeRuntime.recovery[surfaceID] = &surfaceResumeRecoveryState{Entry: entry}
 			continue
 		}
@@ -413,6 +413,20 @@ func (a *App) syncSurfaceResumeRecoveryStateLocked() {
 			delete(a.surfaceResumeRuntime.recovery, surfaceID)
 		}
 	}
+}
+
+func sameSurfaceResumeRecoveryTarget(left, right surfaceresume.Entry) bool {
+	return strings.TrimSpace(left.SurfaceSessionID) == strings.TrimSpace(right.SurfaceSessionID) &&
+		strings.TrimSpace(left.ProductMode) == strings.TrimSpace(right.ProductMode) &&
+		state.NormalizeHeadlessBackend(agentproto.Backend(left.Backend)) == state.NormalizeHeadlessBackend(agentproto.Backend(right.Backend)) &&
+		strings.TrimSpace(left.CodexProviderID) == strings.TrimSpace(right.CodexProviderID) &&
+		strings.TrimSpace(left.ClaudeProfileID) == strings.TrimSpace(right.ClaudeProfileID) &&
+		strings.TrimSpace(left.ResumeInstanceID) == strings.TrimSpace(right.ResumeInstanceID) &&
+		strings.TrimSpace(left.ResumeThreadID) == strings.TrimSpace(right.ResumeThreadID) &&
+		state.NormalizeWorkspaceKey(left.ResumeThreadCWD) == state.NormalizeWorkspaceKey(right.ResumeThreadCWD) &&
+		state.NormalizeWorkspaceKey(left.ResumeWorkspaceKey) == state.NormalizeWorkspaceKey(right.ResumeWorkspaceKey) &&
+		strings.TrimSpace(left.ResumeRouteMode) == strings.TrimSpace(right.ResumeRouteMode) &&
+		left.ResumeHeadless == right.ResumeHeadless
 }
 
 func surfaceResumeEntryNeedsRecovery(entry surfaceresume.Entry) bool {

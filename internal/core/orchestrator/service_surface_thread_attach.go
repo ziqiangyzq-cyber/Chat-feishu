@@ -157,6 +157,13 @@ func (s *Service) attachSurfaceToKnownThreadWithOverlayCleanup(surface *state.Su
 	}
 	workspaceKey := mergedThreadWorkspaceClaimKey(view)
 	if s.surfaceUsesWorkspaceClaims(surface) && workspaceKey == "" {
+		if mode == attachSurfaceToKnownThreadHeadlessRestore {
+			return []eventcontract.Event{{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           headlessRestoreFailureNotice("thread_cwd_missing"),
+			}}
+		}
 		return notice(surface, "workspace_key_missing", "当前无法确定目标会话所属的 workspace，暂时不能在 headless 模式接管。请切到 `/mode vscode` 后再试。")
 	}
 	if owner := s.workspaceBusyOwnerForSurface(surface, workspaceKey); owner != nil {
