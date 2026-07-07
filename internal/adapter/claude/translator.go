@@ -277,6 +277,30 @@ func (t *Translator) startActiveTurnIfNeeded() []agentproto.Event {
 	}}
 }
 
+// synthesizeRuntimeTurnIfOrphan models a turn that the Claude CLI started on its
+// own — e.g. a background task-notification resuming the model after a subagent
+// finishes — which has no daemon prompt.send backing it. Without a turn, every
+// observe* function early-returns on activeTurn==nil and the whole wakeup turn's
+// output is silently dropped (never reaches the Feishu surface).
+//
+// Gate on parent_tool_use_id (a protocol correlation id, not a timing/thread
+// heuristic per the wrapper ownership guardrail): a subagent's own messages
+// carry a non-empty parent and must stay out of the user-facing turn; only true
+// top-level output (parent == "") is surfaced. Synthesizes only when there is
+// genuinely no active or pending turn, so real prompt.send turns keep their
+// existing precedence and normal flows are unchanged.
+func (t *Translator) synthesizeRuntimeTurnIfOrphan(parentToolUseID string) []agentproto.Event {
+	if t.activeTurn != nil || len(t.pendingTurns) != 0 || strings.TrimSpace(parentToolUseID) != "" {
+		return nil
+	}
+	t.activeTurn = &turnState{
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorUnknown},
+		ThreadID:  t.canonicalThreadID(""),
+		TurnID:    t.nextTurnID(),
+	}
+	return t.startActiveTurnIfNeeded()
+}
+
 func (t *Translator) finalizeObservedResult(result Result) Result {
 	for index := range result.Events {
 		if turn := t.turnContextForEvent(result.Events[index]); turn != nil {
