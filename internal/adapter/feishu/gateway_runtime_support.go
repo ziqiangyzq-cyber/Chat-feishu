@@ -47,6 +47,8 @@ func (g *LiveGateway) inboundEnv() gatewaypkg.InboundEnv {
 		DownloadImage:              g.downloadImageFn,
 		DownloadFile:               g.downloadFileFn,
 		DeliverAsyncInboundFailure: g.deliverAsyncInboundFailure,
+		ApplySurfaceSlot:           g.applySurfaceSlot,
+		HandleTabCommand:           g.handleTabCommand,
 	}
 }
 
@@ -70,7 +72,7 @@ func (g *LiveGateway) surfaceForCardAction(messageID, chatID, operatorID string)
 	if surfaceID := g.lookupSurfaceMessage(messageID); surfaceID != "" {
 		return surfaceID
 	}
-	return gatewaypkg.SurfaceIDForInbound(g.config.GatewayID, chatID, "", operatorID)
+	return g.applySurfaceSlot(gatewaypkg.SurfaceIDForInbound(g.config.GatewayID, chatID, "", operatorID))
 }
 
 func (g *LiveGateway) deliverAsyncInboundFailure(ctx context.Context, surfaceID, chatID, actorUserID, replyToMessageID, body string) {

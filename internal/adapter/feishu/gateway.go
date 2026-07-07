@@ -33,6 +33,7 @@ type LiveGatewayConfig struct {
 	AppSecret      string
 	Domain         string
 	TempDir        string
+	TabStatePath   string
 	UseSystemProxy bool
 }
 
@@ -56,10 +57,12 @@ type LiveGateway struct {
 	deleteReactionFn   func(context.Context, string, string) (*larkim.DeleteMessageReactionResp, error)
 	botTimeSensitiveFn func(context.Context, string, bool, []string) (*larkimv2.BotTimeSentiveFeedCardResp, error)
 
-	mu        sync.Mutex
-	stateHook func(GatewayState, error)
-	reactions map[string]string
-	messages  map[string]string
+	mu            sync.Mutex
+	stateHook     func(GatewayState, error)
+	reactions     map[string]string
+	messages      map[string]string
+	tabs          map[string]*surfaceTabRecord
+	actionHandler ActionHandler
 }
 
 type gatewayMessage struct {

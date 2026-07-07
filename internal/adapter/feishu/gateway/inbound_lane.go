@@ -59,6 +59,7 @@ type queuedActionWork struct {
 type PlannedInboundMessage struct {
 	Action *control.Action
 	Queue  *QueuedMessageWork
+	Tab    *TabCommandRequest
 }
 
 func NewSurfaceInboundLane(ctx context.Context, env InboundEnv, dispatch ActionDispatcher) *SurfaceInboundLane {
@@ -402,6 +403,12 @@ func HandleInboundMessageEvent(ctx context.Context, env InboundEnv, event *larki
 	if err != nil || !ok {
 		return err
 	}
+	if plan.Tab != nil {
+		if env.HandleTabCommand != nil {
+			env.HandleTabCommand(ctx, *plan.Tab)
+		}
+		return nil
+	}
 	if plan.Action != nil {
 		if lane != nil && lane.markActionDuplicate(*plan.Action) {
 			return nil
@@ -452,7 +459,8 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 	chatType := stringPtr(message.ChatType)
 	senderUserID := userIDFromMessage(event.Event.Sender)
 	gatewayID := strings.TrimSpace(env.GatewayID)
-	surfaceSessionID := SurfaceIDForInbound(gatewayID, chatID, chatType, senderUserID)
+	baseSurfaceID := SurfaceIDForInbound(gatewayID, chatID, chatType, senderUserID)
+	surfaceSessionID := applySurfaceTabSlot(env, baseSurfaceID)
 	inbound := InboundMetaFromMessageEvent(event)
 	messageID := strings.TrimSpace(stringPtr(message.MessageId))
 	messageType := strings.ToLower(strings.TrimSpace(stringPtr(message.MessageType)))
@@ -476,6 +484,16 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 		if err != nil {
 			logInboundMessageParseFailed(gatewayID, surfaceSessionID, inbound, message, "parse_text_content", err)
 			return PlannedInboundMessage{}, false, err
+		}
+		if arg, isTab := ParseTabCommandText(commandText); isTab {
+			return PlannedInboundMessage{Tab: &TabCommandRequest{
+				GatewayID:     gatewayID,
+				BaseSurfaceID: baseSurfaceID,
+				ChatID:        chatID,
+				ActorUserID:   senderUserID,
+				MessageID:     messageID,
+				Arg:           arg,
+			}}, true, nil
 		}
 		commandAction, handled := env.ParseTextActionWithoutCatalog(commandText)
 		if handled {

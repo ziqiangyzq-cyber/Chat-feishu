@@ -21,6 +21,9 @@ const (
 )
 
 func (g *LiveGateway) Start(ctx context.Context, handler ActionHandler) error {
+	g.mu.Lock()
+	g.actionHandler = handler
+	g.mu.Unlock()
 	inboundLane := gatewaypkg.NewSurfaceInboundLane(ctx, g.inboundEnv(), gatewayDispatcher(handler))
 	dispatch := dispatcher.NewEventDispatcher("", "")
 	dispatch.OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -44,6 +47,7 @@ func (g *LiveGateway) Start(ctx context.Context, handler ActionHandler) error {
 		if !ok {
 			return nil
 		}
+		action.SurfaceSessionID = g.applySurfaceSlot(action.SurfaceSessionID)
 		return handleGatewayEventAction(ctx, action, handler)
 	})
 	return newGatewayWSRunner(g.config, dispatch, g.emitState).Run(ctx)

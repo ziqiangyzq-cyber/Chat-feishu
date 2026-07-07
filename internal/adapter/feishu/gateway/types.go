@@ -31,6 +31,12 @@ type InboundEnv struct {
 	DownloadImage                    func(context.Context, string, string) (string, string, error)
 	DownloadFile                     func(context.Context, string, string, string) (string, error)
 	DeliverAsyncInboundFailure       func(context.Context, string, string, string, string, string)
+	// ApplySurfaceSlot maps a base surface ID to the active virtual tab
+	// surface for that chat (identity when nil / no tab is active).
+	ApplySurfaceSlot func(baseSurfaceID string) string
+	// HandleTabCommand executes a gateway-local /tab command. The action is
+	// consumed by the gateway and never forwarded to the daemon core.
+	HandleTabCommand func(ctx context.Context, req TabCommandRequest)
 }
 
 type ActionDispatcher func(context.Context, control.Action) error

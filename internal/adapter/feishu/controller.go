@@ -37,6 +37,7 @@ type GatewayAppConfig struct {
 	Enabled               bool
 	UseSystemProxy        bool
 	ImageTempDir          string
+	TabStatePath          string
 	PreviewStatePath      string
 	PreviewCacheDir       string
 	PreviewRootFolderName string
@@ -94,6 +95,7 @@ func NewMultiGatewayController() *MultiGatewayController {
 			AppSecret:      cfg.AppSecret,
 			Domain:         cfg.Domain,
 			TempDir:        cfg.ImageTempDir,
+			TabStatePath:   cfg.TabStatePath,
 			UseSystemProxy: cfg.UseSystemProxy,
 		})
 	}

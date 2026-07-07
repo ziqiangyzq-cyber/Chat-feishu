@@ -140,6 +140,7 @@ func liveGatewayConfigFromRuntime(cfg feishu.GatewayAppConfig) feishu.LiveGatewa
 		AppSecret:      cfg.AppSecret,
 		Domain:         cfg.Domain,
 		TempDir:        cfg.ImageTempDir,
+		TabStatePath:   cfg.TabStatePath,
 		UseSystemProxy: cfg.UseSystemProxy,
 	}
 }

@@ -358,6 +358,7 @@ build:
 			Enabled:               enabled,
 			UseSystemProxy:        services.FeishuUseSystemProxy,
 			ImageTempDir:          filepath.Join(paths.StateDir, "image-staging", sanitizeGatewayPath(gatewayID)),
+			TabStatePath:          filepath.Join(paths.StateDir, "feishu-tabs-"+sanitizeGatewayPath(gatewayID)+".json"),
 			PreviewStatePath:      filepath.Join(paths.StateDir, "feishu-md-preview-"+sanitizeGatewayPath(gatewayID)+".json"),
 			PreviewCacheDir:       filepath.Join(paths.DataDir, "preview-cache", sanitizeGatewayPath(gatewayID)),
 			PreviewRootFolderName: strings.TrimSpace(appConfig.Storage.PreviewRootFolderName),

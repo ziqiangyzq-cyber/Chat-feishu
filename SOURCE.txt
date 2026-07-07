@@ -1,0 +1,9 @@
+Repository: https://github.com/kxn/codex-remote-feishu
+Downloaded from: GitHub tarball for branch master
+Commit: 87ce369cb22136e9d33c3a49be7a3ae20e497286
+Commit URL: https://github.com/kxn/codex-remote-feishu/commit/87ce369cb22136e9d33c3a49be7a3ae20e497286
+Commit date: 2026-07-02T00:34:29Z
+
+Note: git clone and shallow clone repeatedly disconnected while fetching this
+repository, so the working source tree was downloaded through the GitHub tarball
+API instead.

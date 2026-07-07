@@ -15,7 +15,19 @@ type SurfaceRef struct {
 	ScopeID   string
 }
 
+// SplitSurfaceTab separates an optional "#tabN" suffix from a surface session
+// ID. Tab-suffixed surfaces are virtual sub-surfaces of the same chat used to
+// run multiple concurrent sessions from one Feishu conversation.
+func SplitSurfaceTab(surfaceID string) (string, string) {
+	surfaceID = strings.TrimSpace(surfaceID)
+	if idx := strings.Index(surfaceID, "#"); idx >= 0 {
+		return surfaceID[:idx], surfaceID[idx+1:]
+	}
+	return surfaceID, ""
+}
+
 func ParseSurfaceRef(surfaceID string) (SurfaceRef, bool) {
+	surfaceID, _ = SplitSurfaceTab(surfaceID)
 	parts := strings.Split(strings.TrimSpace(surfaceID), ":")
 	if len(parts) != 4 {
 		return SurfaceRef{}, false

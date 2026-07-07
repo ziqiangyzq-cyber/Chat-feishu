@@ -37,6 +37,10 @@ type SurfaceRef struct {
 }
 
 func ParseSurfaceRef(surfaceID string) (SurfaceRef, bool) {
+	surfaceID = strings.TrimSpace(surfaceID)
+	if idx := strings.Index(surfaceID, "#"); idx >= 0 {
+		surfaceID = surfaceID[:idx]
+	}
 	parts := strings.Split(strings.TrimSpace(surfaceID), ":")
 	if len(parts) != 4 {
 		return SurfaceRef{}, false
