@@ -27,6 +27,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/renderer"
+	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 	"github.com/kxn/codex-remote-feishu/internal/debuglog"
 	"github.com/kxn/codex-remote-feishu/internal/externalaccess"
 	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
@@ -83,6 +84,7 @@ type App struct {
 	service             *orchestrator.Service
 	projector           *feishu.Projector
 	gateway             feishu.Gateway
+	channel             surface.Channel
 	finalBlockPreviewer previewpkg.FinalBlockPreviewService
 	relay               *relayws.Server
 	serverIdentity      agentproto.ServerIdentity
@@ -212,6 +214,11 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 		finalPreviewTimeout:         90 * time.Second,
 		commandAnchorRecallDelay:    8 * time.Second,
 	}
+	// channel wraps the same gateway + projector as a surface.Channel. It drives
+	// the inbound Start path through the channel-neutral contract while the
+	// existing feishu-typed projector/gateway fields continue to serve the
+	// Feishu-specific delivery, sync-replacement, attention, and patch paths.
+	app.channel = feishu.NewSurfaceChannel(app.gateway, app.projector)
 	app.codexUpgradeRuntime.Inspect = func(ctx context.Context, opts codexupgrade.InspectOptions) (codexupgrade.Installation, error) {
 		return codexupgrade.Inspect(ctx, opts), nil
 	}
@@ -434,7 +441,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.setGatewayRuntime(gatewayCancel, gatewayDone)
 	go func() {
 		defer close(gatewayDone)
-		if err := a.gateway.Start(gatewayCtx, a.HandleGatewayAction); err != nil && err != context.Canceled {
+		if err := a.channel.Start(gatewayCtx, feishu.WrapActionHandler(a.HandleGatewayAction)); err != nil && err != context.Canceled {
 			errCh <- err
 		}
 	}()
