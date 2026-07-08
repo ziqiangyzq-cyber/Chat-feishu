@@ -141,6 +141,7 @@ func (c *Channel) dispatchCardEvent(ctx context.Context, event InboundCardEvent)
 		log.Printf("wecom: ignored card event task=%q key=%q chat=%q operator=%q selections=%d", event.TaskID, event.EventKey, event.ChatID, event.OperatorUserID, len(event.Selections))
 		return
 	}
+	c.rememberResponseReqID(action.ChatID, event.Headers.ReqID)
 	log.Printf("wecom: mapped card event kind=%s picker=%q workspace=%q target=%q chat=%q", action.Kind, action.PickerID, action.WorkspaceKey, action.TargetPickerValue, action.ChatID)
 	handler(ctx, action)
 }
@@ -226,7 +227,6 @@ func (c *Channel) shouldSuppressNotice(chatID string, event eventcontract.Event)
 		}
 	}
 	if seenAt, ok := c.recentNoticeByChat[key]; ok && now.Sub(seenAt) <= noticeDedupeWindow {
-		log.Printf("wecom: suppressed duplicate notice chat=%q code=%q", strings.TrimSpace(chatID), strings.TrimSpace(notice.Code))
 		return true
 	}
 	c.recentNoticeByChat[key] = now

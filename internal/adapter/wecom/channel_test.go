@@ -95,6 +95,34 @@ func TestResponseReqIDConsumedOnce(t *testing.T) {
 	}
 }
 
+func TestDispatchCardEventRemembersCallbackReqID(t *testing.T) {
+	ch := NewChannel(Config{})
+	var got control.Action
+	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
+		got = action
+		return nil
+	}
+
+	ch.dispatchCardEvent(context.Background(), InboundCardEvent{
+		ChatID:         " chat-1 ",
+		OperatorUserID: " user-1 ",
+		MessageID:      " msg-1 ",
+		TaskID:         " picker-1 ",
+		EventKey:       keyPrefixTargetSession + keyValueSep + "thread-1",
+		Headers:        frameHeaders{ReqID: " req-card-1 "},
+	})
+
+	if got.Kind != control.ActionTargetPickerSelectSession {
+		t.Fatalf("Kind = %q, want %q", got.Kind, control.ActionTargetPickerSelectSession)
+	}
+	if got.ChatID != "chat-1" || got.ActorUserID != "user-1" || got.MessageID != "msg-1" {
+		t.Fatalf("card action lost inbound context: %+v", got)
+	}
+	if reqID := ch.responseReqID("chat-1"); reqID != "req-card-1" {
+		t.Fatalf("card response req id = %q, want req-card-1", reqID)
+	}
+}
+
 func TestShouldSuppressDuplicateNotice(t *testing.T) {
 	ch := NewChannel(Config{})
 	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
