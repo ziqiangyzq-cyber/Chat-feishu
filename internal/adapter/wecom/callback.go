@@ -114,14 +114,15 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 		return base, true
 
 	case keyTargetConfirm:
-		if taskID == "" {
+		pickerID := firstNonEmpty(value, taskID)
+		if pickerID == "" {
 			return control.Action{}, false
 		}
 		// A multiple_interaction submit carries the chosen dropdown values
 		// alongside the confirm button, mirroring the Feishu confirm path which
 		// recovers both the workspace key and the session value.
 		base.Kind = control.ActionTargetPickerConfirm
-		base.PickerID = taskID
+		base.PickerID = pickerID
 		base.WorkspaceKey = event.selectedOption(questionKeyWorkspace)
 		base.TargetPickerValue = event.selectedOption(questionKeySession)
 		return base, true

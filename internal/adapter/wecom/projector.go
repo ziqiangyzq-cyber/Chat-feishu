@@ -1,7 +1,9 @@
 package wecom
 
 import (
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -329,7 +331,7 @@ func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []F
 	// Multiple-interaction fallback: dropdowns + confirm/cancel.
 	card := &templateCard{
 		CardType:  cardTypeMultipleInteraction,
-		TaskID:    pickerID,
+		TaskID:    uniqueTaskID("tp"),
 		MainTitle: &cardMainTitle{Title: title},
 	}
 	if view.ShowWorkspaceSelect {
@@ -351,7 +353,7 @@ func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []F
 		})
 	}
 	confirmLabel := firstNonEmpty(strings.TrimSpace(view.ConfirmLabel), "确认")
-	card.SubmitButton = &cardSubmitButton{Text: confirmLabel, Key: keyTargetConfirm}
+	card.SubmitButton = &cardSubmitButton{Text: confirmLabel, Key: keyTargetConfirm + keyValueSep + pickerID}
 	card.ReplaceText = "已提交"
 	return append(frames, cardFrame(card))
 }
@@ -418,6 +420,14 @@ func selectedOptionID(selected string, options []cardSelectOption) string {
 		return ""
 	}
 	return options[0].ID
+}
+
+func uniqueTaskID(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "card"
+	}
+	return prefix + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 func targetPickerBody(view control.FeishuTargetPickerView) string {

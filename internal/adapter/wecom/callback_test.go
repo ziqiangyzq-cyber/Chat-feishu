@@ -44,8 +44,8 @@ func TestMapCardEventSelectSession(t *testing.T) {
 
 func TestMapCardEventConfirmRecoversSelections(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
-		TaskID:   "picker-2",
-		EventKey: keyTargetConfirm,
+		TaskID:   "tp-unique",
+		EventKey: keyTargetConfirm + keyValueSep + "picker-2",
 		Selections: []InboundSelection{
 			{QuestionKey: questionKeyWorkspace, OptionIDs: []string{"/data/web"}},
 			{QuestionKey: questionKeySession, OptionIDs: []string{"thread-b"}},

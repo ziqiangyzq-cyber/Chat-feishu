@@ -136,7 +136,7 @@ func TestProjectTargetPickerDropdownsWhenBothDimensions(t *testing.T) {
 	if card.SubmitButton == nil {
 		t.Fatal("expected submit_button")
 	}
-	if card.SubmitButton.Text != "开始" || card.SubmitButton.Key != keyTargetConfirm {
+	if card.SubmitButton.Text != "开始" || card.SubmitButton.Key != keyTargetConfirm+keyValueSep+"picker-2" {
 		t.Fatalf("unexpected submit button: %+v", card.SubmitButton)
 	}
 	if card.ReplaceText == "" {
@@ -161,7 +161,7 @@ func TestProjectTargetPickerDropdownsWhenSingleDimensionExceedsButtonBudget(t *t
 	if card == nil || card.CardType != cardTypeMultipleInteraction {
 		t.Fatalf("expected multiple_interaction fallback, got %+v", card)
 	}
-	if card.SubmitButton == nil || card.SubmitButton.Key != keyTargetConfirm {
+	if card.SubmitButton == nil || card.SubmitButton.Key != keyTargetConfirm+keyValueSep+"picker-3" {
 		t.Fatalf("expected submit button on multiple_interaction fallback, got %+v", card.SubmitButton)
 	}
 }
