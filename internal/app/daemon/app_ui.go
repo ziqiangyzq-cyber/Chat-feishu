@@ -167,6 +167,15 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 	chatID := a.service.SurfaceChatID(event.SurfaceSessionID)
 	actorUserID := a.service.SurfaceActorUserID(event.SurfaceSessionID)
 	gatewayID := firstNonEmpty(event.GatewayID, a.service.SurfaceGatewayID(event.SurfaceSessionID))
+	// Channel routing. A WeCom-namespaced surface (see app_wecom.go) delivers via
+	// the WeCom channel ONLY, bypassing the entire Feishu render/apply path below.
+	// Every Feishu surface has a non-WeCom gateway id and takes the false branch,
+	// so the Feishu path that follows is byte-identical to before this branch
+	// existed. This replaces the Phase-3 blind tee (which reused the Feishu chat
+	// id for every event) with proper channel-aware routing.
+	if isWeComGateway(gatewayID) {
+		return a.deliverWeComEventLocked(ctx, chatID, event, appLocked)
+	}
 	receiveID, receiveIDType := feishu.ResolveReceiveTarget(chatID, actorUserID)
 	if receiveID == "" || receiveIDType == "" {
 		return nil
@@ -258,12 +267,6 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 		}
 		return err
 	}
-	// Additive WeCom tee: after Feishu delivery has fully succeeded, best-effort
-	// deliver the SAME channel-neutral event to WeCom. This runs only when a
-	// WeCom channel is configured; otherwise it is a no-op branch and this path
-	// is byte-identical to Feishu-only. Errors are swallowed inside the helper —
-	// a WeCom failure must never affect the Feishu result already returned.
-	a.teeWeComEvent(chatID, event)
 	a.recordUIEventDelivery(event, operations)
 	if didPreview {
 		a.maybeScheduleSecondChanceFinalPatchLocked(gatewayID, chatID, event, operations, previewReq, previewErr)

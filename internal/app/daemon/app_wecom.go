@@ -5,9 +5,50 @@ import (
 	"log"
 	"strings"
 
+	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
+	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 )
+
+// WeCom channel namespace.
+//
+// Feishu surfaces are keyed by a gateway id equal to the Feishu app id (an
+// opaque token such as "cli_xxx") that the daemon itself assigns from Feishu
+// config and NEVER prefixes with "wecom:". The WeCom bot is deliberately parked
+// under a reserved gateway id built from wecomNamespacePrefix so a Feishu app id
+// and the WeCom bot id can never collide. Channel routing (both outbound and
+// inbound tagging) keys off this namespace, not off any per-channel struct.
+const (
+	// wecomNamespacePrefix marks a gateway/surface id as belonging to WeCom. The
+	// colon guarantees separation from Feishu app ids.
+	wecomNamespacePrefix = "wecom:"
+	// wecomGatewayID is the single reserved gateway id under which every WeCom
+	// surface lives. The daemon runs at most one WeCom bot, so one namespace id
+	// is sufficient.
+	wecomGatewayID = wecomNamespacePrefix + "bot"
+)
+
+// isWeComGateway reports whether a resolved gateway id belongs to the WeCom
+// namespace. It is the single routing predicate: false for every Feishu app id
+// (which is never "wecom:"-prefixed), true only for surfaces the daemon itself
+// tagged as WeCom. This is what keeps the Feishu delivery path byte-identical —
+// every Feishu surface takes the false branch.
+func isWeComGateway(gatewayID string) bool {
+	return strings.HasPrefix(strings.TrimSpace(gatewayID), wecomNamespacePrefix)
+}
+
+// wecomSurfaceID derives the WeCom surface session id for a WeCom chat. The
+// format mirrors the Feishu "<platform>:<gateway>:<scope>:<id>" shape but with
+// a "wecom" platform token, so feishu.ParseSurfaceRef rejects it (parts[0] !=
+// "feishu") and all Feishu-specific surface consumers skip it gracefully.
+func wecomSurfaceID(chatID string) string {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return ""
+	}
+	return wecomGatewayID + ":chat:" + chatID
+}
 
 // SetWeComChannel installs the OPTIONAL, opt-in WeCom (企业微信 aibot) second
 // channel. It is called exactly once during startup (from entry.go) BEFORE
@@ -21,29 +62,66 @@ func (a *App) SetWeComChannel(channel surface.Channel) {
 	a.wecomChannel = channel
 }
 
-// teeWeComEvent best-effort delivers a channel-neutral event to WeCom, ADDITIVE
-// to (and never replacing) the Feishu delivery that already ran. It is a no-op
-// when WeCom is unconfigured. Delivery happens in its own goroutine so it adds
-// zero latency to, and cannot block, the Feishu hot path; all errors are
-// logged and swallowed so a WeCom failure never affects Feishu.
+// wecomInboundHandler returns the surface.ActionHandler wired to the WeCom
+// channel's Start. It tags each inbound WeCom action with the WeCom gateway /
+// surface namespace BEFORE the shared HandleGatewayAction runs, so the surface
+// the orchestrator creates (and every event it later emits for that surface) is
+// WeCom-namespaced and therefore routes back to the WeCom channel — never to
+// Feishu. The action-result conversion reuses the existing Feishu wrapper; the
+// only WeCom-specific step is the namespace tagging.
+func (a *App) wecomInboundHandler() surface.ActionHandler {
+	return feishu.WrapActionHandler(func(ctx context.Context, action control.Action) *feishu.ActionResult {
+		return a.HandleGatewayAction(ctx, tagWeComInboundAction(action))
+	})
+}
+
+// tagWeComInboundAction stamps a raw inbound WeCom action with the WeCom gateway
+// id and a WeCom-namespaced surface session id derived from its chat id, unless
+// they are already set. An action with no chat id is left untouched (it cannot
+// address a surface); ensureSurface downstream ignores an empty surface id.
+func tagWeComInboundAction(action control.Action) control.Action {
+	if strings.TrimSpace(action.GatewayID) == "" {
+		action.GatewayID = wecomGatewayID
+	}
+	if strings.TrimSpace(action.SurfaceSessionID) == "" {
+		if surfaceID := wecomSurfaceID(action.ChatID); surfaceID != "" {
+			action.SurfaceSessionID = surfaceID
+		}
+	}
+	return action
+}
+
+// deliverWeComEventLocked delivers a channel-neutral event to the WeCom channel
+// for a WeCom-namespaced surface. It is reached ONLY from the WeCom routing
+// branch in deliverUIEventWithContextMode, so it never touches the Feishu path.
 //
-// TODO(wecom Phase 4): chatID here is the Feishu chat identifier. Cross-channel
-// session routing (mapping a Feishu surface/chat to the corresponding WeCom
-// chat, and vice versa) is not yet implemented, so this tee only produces a
-// correct WeCom message when the WeCom chat happens to share the same chatID.
-// Until routing lands, the tee is wired-but-inert for distinct WeCom chats; it
-// establishes the real fan-out structure without altering Feishu behavior.
-func (a *App) teeWeComEvent(chatID string, event eventcontract.Event) {
+// Delivery I/O runs off the app lock (mirroring the Feishu gateway.Apply
+// unlock/relock) so it cannot block other handlers. A WeCom delivery error is
+// logged and swallowed rather than returned: the caller's failure path
+// (queueGatewayFailureNotice) is Feishu-specific and would mis-render a WeCom
+// surface, so a soft failure is the correct, safe outcome for an independent
+// WeCom session. When no WeCom channel is configured the event is dropped
+// safely (a WeCom-namespaced surface can only exist if a WeCom channel was
+// running, but this stays defensive).
+func (a *App) deliverWeComEventLocked(ctx context.Context, chatID string, event eventcontract.Event, appLocked bool) error {
 	channel := a.wecomChannel
 	if channel == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(chatID) == "" {
-		return
+		return nil
 	}
-	go func() {
-		if err := channel.Deliver(context.Background(), chatID, event); err != nil {
-			log.Printf("wecom tee delivery failed (ignored): chat=%s kind=%s err=%v", chatID, event.Kind, err)
+	deliver := func() {
+		if err := channel.Deliver(ctx, chatID, event); err != nil {
+			log.Printf("wecom delivery failed (ignored): chat=%s kind=%s err=%v", chatID, event.Kind, err)
 		}
-	}()
+	}
+	if appLocked {
+		a.mu.Unlock()
+		deliver()
+		a.mu.Lock()
+	} else {
+		deliver()
+	}
+	return nil
 }

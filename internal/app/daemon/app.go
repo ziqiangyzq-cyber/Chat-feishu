@@ -461,7 +461,10 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			ch := a.wecomChannel
 			defer func() { _ = ch.Stop(context.Background()) }()
-			if err := ch.Start(gatewayCtx, feishu.WrapActionHandler(a.HandleGatewayAction)); err != nil && err != context.Canceled {
+			// The WeCom channel uses the namespace-tagging inbound handler so a new
+			// WeCom conversation creates a WeCom-namespaced surface whose later
+			// outbound events route back to WeCom (not Feishu).
+			if err := ch.Start(gatewayCtx, a.wecomInboundHandler()); err != nil && err != context.Canceled {
 				log.Printf("wecom channel stopped: %v", err)
 			}
 		}()
