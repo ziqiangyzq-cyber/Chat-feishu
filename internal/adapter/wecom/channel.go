@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -23,6 +24,8 @@ type Channel struct {
 	mu                  sync.Mutex
 	handler             surface.ActionHandler
 	responseReqIDByChat map[string]string
+	recentNoticeByChat  map[string]time.Time
+	now                 func() time.Time
 }
 
 // Compile-time assertion that *Channel satisfies surface.Channel.
@@ -34,6 +37,8 @@ func NewChannel(config Config) *Channel {
 		client:              NewClient(config),
 		projector:           NewProjector(),
 		responseReqIDByChat: make(map[string]string),
+		recentNoticeByChat:  make(map[string]time.Time),
+		now:                 time.Now,
 	}
 }
 
@@ -159,7 +164,10 @@ func (c *Channel) Deliver(ctx context.Context, chatID string, event eventcontrac
 	if strings.TrimSpace(chatID) == "" {
 		return errors.New("wecom: deliver requires a chatID")
 	}
-	responseReqID := c.responseReqID(chatID)
+	if c.shouldSuppressNotice(chatID, event) {
+		return nil
+	}
+	responseReqID := c.consumeResponseReqID(chatID)
 	for _, frame := range c.projector.ProjectEvent(event) {
 		if responseReqID != "" {
 			if err := c.client.respondFrame(ctx, responseReqID, frame); err != nil {
@@ -188,6 +196,59 @@ func (c *Channel) responseReqID(chatID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.responseReqIDByChat[chatID]
+}
+
+func (c *Channel) consumeResponseReqID(chatID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	reqID := c.responseReqIDByChat[chatID]
+	delete(c.responseReqIDByChat, chatID)
+	return reqID
+}
+
+const noticeDedupeWindow = 30 * time.Second
+
+func (c *Channel) shouldSuppressNotice(chatID string, event eventcontract.Event) bool {
+	notice := event.Normalized().Notice
+	if notice == nil {
+		return false
+	}
+	key := wecomNoticeDedupeKey(chatID, *notice)
+	if key == "" {
+		return false
+	}
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for existing, seenAt := range c.recentNoticeByChat {
+		if now.Sub(seenAt) > noticeDedupeWindow {
+			delete(c.recentNoticeByChat, existing)
+		}
+	}
+	if seenAt, ok := c.recentNoticeByChat[key]; ok && now.Sub(seenAt) <= noticeDedupeWindow {
+		log.Printf("wecom: suppressed duplicate notice chat=%q code=%q", strings.TrimSpace(chatID), strings.TrimSpace(notice.Code))
+		return true
+	}
+	c.recentNoticeByChat[key] = now
+	return false
+}
+
+func wecomNoticeDedupeKey(chatID string, notice control.Notice) string {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return ""
+	}
+	parts := []string{
+		chatID,
+		strings.TrimSpace(notice.DeliveryDedupKey),
+		strings.TrimSpace(notice.Code),
+		strings.TrimSpace(notice.Title),
+		strings.TrimSpace(notice.Text),
+	}
+	if parts[1] == "" && parts[2] == "" && parts[3] == "" && parts[4] == "" {
+		return ""
+	}
+	return strings.Join(parts, "\x00")
 }
 
 // Stop tears down the long connection.

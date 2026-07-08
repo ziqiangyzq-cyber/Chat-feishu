@@ -3,8 +3,10 @@ package wecom
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
+	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 )
 
@@ -79,6 +81,37 @@ func TestDispatchMessageFallsBackToSenderAsSingleChatID(t *testing.T) {
 	}
 	if reqID := ch.responseReqID("user-single"); reqID != "req-single" {
 		t.Fatalf("response req id = %q, want req-single", reqID)
+	}
+}
+
+func TestResponseReqIDConsumedOnce(t *testing.T) {
+	ch := NewChannel(Config{})
+	ch.rememberResponseReqID("chat-1", "req-1")
+	if got := ch.consumeResponseReqID("chat-1"); got != "req-1" {
+		t.Fatalf("first consume = %q, want req-1", got)
+	}
+	if got := ch.consumeResponseReqID("chat-1"); got != "" {
+		t.Fatalf("second consume = %q, want empty", got)
+	}
+}
+
+func TestShouldSuppressDuplicateNotice(t *testing.T) {
+	ch := NewChannel(Config{})
+	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
+	ch.now = func() time.Time { return now }
+	event := eventcontract.Event{Notice: &control.Notice{
+		Code: "workspace_instance_busy",
+		Text: "目标工作区当前暂时不可接管，请稍后重试。",
+	}}
+	if ch.shouldSuppressNotice("chat-1", event) {
+		t.Fatal("first notice must be delivered")
+	}
+	if !ch.shouldSuppressNotice("chat-1", event) {
+		t.Fatal("duplicate notice inside dedupe window must be suppressed")
+	}
+	now = now.Add(noticeDedupeWindow + time.Second)
+	if ch.shouldSuppressNotice("chat-1", event) {
+		t.Fatal("notice after dedupe window must be delivered")
 	}
 }
 
