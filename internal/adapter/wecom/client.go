@@ -56,16 +56,6 @@ type msgCallbackFrame struct {
 	} `json:"text"`
 }
 
-// eventCallbackFrame is an inbound non-message event (menu click, enter chat,
-// template_card interaction, ...).
-type eventCallbackFrame struct {
-	Type      string `json:"type"`
-	BotID     string `json:"botid"`
-	ChatID    string `json:"chatid"`
-	EventType string `json:"event_type"`
-	EventKey  string `json:"event_key"`
-}
-
 // streamMeta carries the streaming identity shared across a sequence of
 // respond/update frames. finish marks the terminal update.
 type streamMeta struct {
@@ -73,13 +63,16 @@ type streamMeta struct {
 	Finish bool   `json:"finish"`
 }
 
-// respondMsgFrame is a new outbound message.
+// respondMsgFrame is a new outbound message. Exactly one of Text / Markdown /
+// TemplateCard is populated, selected by MsgType.
 type respondMsgFrame struct {
-	Type    string      `json:"type"`
-	ChatID  string      `json:"chatid"`
-	MsgType string      `json:"msgtype"`
-	Text    *textBody   `json:"text,omitempty"`
-	Stream  *streamMeta `json:"stream,omitempty"`
+	Type         string        `json:"type"`
+	ChatID       string        `json:"chatid"`
+	MsgType      string        `json:"msgtype"`
+	Text         *textBody     `json:"text,omitempty"`
+	Markdown     *markdownBody `json:"markdown,omitempty"`
+	TemplateCard *templateCard `json:"template_card,omitempty"`
+	Stream       *streamMeta   `json:"stream,omitempty"`
 }
 
 // respondUpdateMsgFrame updates a previously sent message, used for streaming
@@ -100,11 +93,21 @@ type textBody struct {
 
 // Client wraps a gorilla/websocket connection to the WeCom aibot long
 // connection. It owns the dial, subscribe, read-loop and ping scaffolding.
+//
+// Inbound frames are decoded here (transport concern) and handed to the
+// injected sinks; the Channel installs sinks that translate them into
+// channel-neutral control.Action values. This keeps the wire/transport layer
+// free of control-plane knowledge.
 type Client struct {
 	config Config
 
 	// dialFn is injectable for testing; defaults to dialDefault.
 	dialFn func(ctx context.Context) (*websocket.Conn, error)
+
+	// onMessage receives decoded inbound user messages.
+	onMessage func(ctx context.Context, frame msgCallbackFrame)
+	// onCardEvent receives decoded inbound template_card interactions.
+	onCardEvent func(ctx context.Context, event InboundCardEvent)
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
@@ -241,11 +244,11 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		}
 		return c.handleMsgCallback(ctx, frame)
 	case frameTypeEventCallback:
-		var frame eventCallbackFrame
-		if err := json.Unmarshal(raw, &frame); err != nil {
+		var event InboundCardEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
 			return fmt.Errorf("wecom: decode event_callback: %w", err)
 		}
-		return c.handleEventCallback(ctx, frame)
+		return c.handleEventCallback(ctx, event)
 	default:
 		// TODO(wecom Phase 2): handle additional inbound frame types (acks,
 		// server keepalive frames) as the protocol is fleshed out.
@@ -254,22 +257,40 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 	}
 }
 
-// handleMsgCallback processes an inbound user message.
-func (c *Client) handleMsgCallback(_ context.Context, frame msgCallbackFrame) error {
-	// TODO(wecom Phase 2): translate msgCallbackFrame into a channel-neutral
-	// control.Action and forward it to the surface.ActionHandler wired via
-	// Channel.Start. For now this returns without side effects.
-	_ = frame
+// handleMsgCallback processes an inbound user message, handing it to the
+// installed message sink (if any).
+func (c *Client) handleMsgCallback(ctx context.Context, frame msgCallbackFrame) error {
+	if c.onMessage != nil {
+		c.onMessage(ctx, frame)
+	}
 	return nil
 }
 
-// handleEventCallback processes an inbound non-message event (menu click,
-// template_card interaction, ...).
-func (c *Client) handleEventCallback(_ context.Context, frame eventCallbackFrame) error {
-	// TODO(wecom Phase 2): map template_card / menu events to control.Action
-	// and dispatch to the handler. For now this returns without side effects.
-	_ = frame
+// handleEventCallback processes an inbound template_card interaction, handing it
+// to the installed card-event sink (if any).
+func (c *Client) handleEventCallback(ctx context.Context, event InboundCardEvent) error {
+	if c.onCardEvent != nil {
+		c.onCardEvent(ctx, event)
+	}
 	return nil
+}
+
+// sendFrame serialises an outbound projector Frame into the aibot respond wire
+// frame and writes it. Streaming semantics (aibot_respond_update_msg with a
+// shared stream id) are deferred to a later phase; a Frame flagged Stream is
+// still sent as a standalone message here.
+//
+// TODO(wecom Phase 3): honour Frame.Stream by emitting aibot_respond_msg +
+// aibot_respond_update_msg sequences sharing a stream id.
+func (c *Client) sendFrame(chatID string, frame Frame) error {
+	return c.writeJSON(respondMsgFrame{
+		Type:         frameTypeRespondMsg,
+		ChatID:       chatID,
+		MsgType:      frame.MsgType,
+		Text:         frame.Text,
+		Markdown:     frame.Markdown,
+		TemplateCard: frame.TemplateCard,
+	})
 }
 
 // pingLoop sends a WebSocket ping every pingInterval to keep the long
