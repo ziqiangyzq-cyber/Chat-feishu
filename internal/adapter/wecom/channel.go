@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,11 +22,12 @@ type Channel struct {
 	client    *Client
 	projector *Projector
 
-	mu                  sync.Mutex
-	handler             surface.ActionHandler
-	responseReqIDByChat map[string]string
-	recentNoticeByChat  map[string]time.Time
-	now                 func() time.Time
+	mu                   sync.Mutex
+	handler              surface.ActionHandler
+	responseReqIDByChat  map[string]string
+	recentNoticeByChat   map[string]time.Time
+	recentCardEventByKey map[string]time.Time
+	now                  func() time.Time
 }
 
 // Compile-time assertion that *Channel satisfies surface.Channel.
@@ -34,11 +36,12 @@ var _ surface.Channel = (*Channel)(nil)
 // NewChannel constructs a WeCom Channel from the given aibot config.
 func NewChannel(config Config) *Channel {
 	return &Channel{
-		client:              NewClient(config),
-		projector:           NewProjector(),
-		responseReqIDByChat: make(map[string]string),
-		recentNoticeByChat:  make(map[string]time.Time),
-		now:                 time.Now,
+		client:               NewClient(config),
+		projector:            NewProjector(),
+		responseReqIDByChat:  make(map[string]string),
+		recentNoticeByChat:   make(map[string]time.Time),
+		recentCardEventByKey: make(map[string]time.Time),
+		now:                  time.Now,
 	}
 }
 
@@ -141,6 +144,9 @@ func (c *Channel) dispatchCardEvent(ctx context.Context, event InboundCardEvent)
 		log.Printf("wecom: ignored card event task=%q key=%q chat=%q operator=%q selections=%d", event.TaskID, event.EventKey, event.ChatID, event.OperatorUserID, len(event.Selections))
 		return
 	}
+	if c.shouldSuppressCardEvent(event) {
+		return
+	}
 	log.Printf("wecom: mapped card event kind=%s picker=%q workspace=%q target=%q chat=%q", action.Kind, action.PickerID, action.WorkspaceKey, action.TargetPickerValue, action.ChatID)
 	handler(ctx, action)
 }
@@ -207,6 +213,28 @@ func (c *Channel) consumeResponseReqID(chatID string) string {
 }
 
 const noticeDedupeWindow = 30 * time.Second
+const cardEventDedupeWindow = 15 * time.Second
+
+func (c *Channel) shouldSuppressCardEvent(event InboundCardEvent) bool {
+	key := wecomCardEventDedupeKey(event)
+	if key == "" {
+		return false
+	}
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for existing, seenAt := range c.recentCardEventByKey {
+		if now.Sub(seenAt) > cardEventDedupeWindow {
+			delete(c.recentCardEventByKey, existing)
+		}
+	}
+	if seenAt, ok := c.recentCardEventByKey[key]; ok && now.Sub(seenAt) <= cardEventDedupeWindow {
+		log.Printf("wecom: suppressed duplicate card event task=%q key=%q chat=%q", strings.TrimSpace(event.TaskID), strings.TrimSpace(event.EventKey), strings.TrimSpace(event.ChatID))
+		return true
+	}
+	c.recentCardEventByKey[key] = now
+	return false
+}
 
 func (c *Channel) shouldSuppressNotice(chatID string, event eventcontract.Event) bool {
 	notice := event.Normalized().Notice
@@ -247,6 +275,37 @@ func wecomNoticeDedupeKey(chatID string, notice control.Notice) string {
 	if parts[1] == "" && parts[2] == "" && parts[3] == "" && parts[4] == "" {
 		return ""
 	}
+	return strings.Join(parts, "\x00")
+}
+
+func wecomCardEventDedupeKey(event InboundCardEvent) string {
+	chatID := strings.TrimSpace(event.ChatID)
+	taskID := strings.TrimSpace(event.TaskID)
+	eventKey := strings.TrimSpace(event.EventKey)
+	if chatID == "" || taskID == "" || eventKey == "" {
+		return ""
+	}
+	parts := []string{
+		chatID,
+		strings.TrimSpace(event.OperatorUserID),
+		strings.TrimSpace(event.MessageID),
+		taskID,
+		eventKey,
+	}
+	selections := make([]string, 0, len(event.Selections))
+	for _, selection := range event.Selections {
+		questionKey := strings.TrimSpace(selection.QuestionKey)
+		optionIDs := make([]string, 0, len(selection.OptionIDs))
+		for _, optionID := range selection.OptionIDs {
+			if optionID = strings.TrimSpace(optionID); optionID != "" {
+				optionIDs = append(optionIDs, optionID)
+			}
+		}
+		sort.Strings(optionIDs)
+		selections = append(selections, questionKey+"="+strings.Join(optionIDs, ","))
+	}
+	sort.Strings(selections)
+	parts = append(parts, selections...)
 	return strings.Join(parts, "\x00")
 }
 

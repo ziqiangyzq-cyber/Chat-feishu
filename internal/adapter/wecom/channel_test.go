@@ -123,6 +123,33 @@ func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 	}
 }
 
+func TestDispatchCardEventSuppressesDuplicateCallback(t *testing.T) {
+	ch := NewChannel(Config{})
+	var count int
+	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
+		count++
+		return nil
+	}
+	event := InboundCardEvent{
+		ChatID:         "chat-1",
+		OperatorUserID: "user-1",
+		MessageID:      "msg-1",
+		TaskID:         "picker-1",
+		EventKey:       keyTargetConfirm + keyValueSep + "picker-1",
+		Selections: []InboundSelection{{
+			QuestionKey: questionKeySession,
+			OptionIDs:   []string{"new_thread"},
+		}},
+	}
+
+	ch.dispatchCardEvent(context.Background(), event)
+	ch.dispatchCardEvent(context.Background(), event)
+
+	if count != 1 {
+		t.Fatalf("handler call count = %d, want 1", count)
+	}
+}
+
 func TestShouldSuppressDuplicateNotice(t *testing.T) {
 	ch := NewChannel(Config{})
 	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
