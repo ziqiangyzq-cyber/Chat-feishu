@@ -9,9 +9,13 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/render"
 )
 
-// defaultMaxButtons mirrors surface.Capabilities.MaxButtons for WeCom: a single
-// template_card of type button_interaction may host at most this many buttons.
-const defaultMaxButtons = 6
+const (
+	// defaultMaxButtons mirrors surface.Capabilities.MaxButtons for WeCom: a single
+	// template_card of type button_interaction may host at most this many buttons.
+	defaultMaxButtons = 6
+	// maxSelectOptions mirrors WeCom's multiple_interaction select_list limit.
+	maxSelectOptions = 10
+)
 
 // ----------------------------------------------------------------------------
 // Outbound frame model
@@ -391,6 +395,9 @@ func optionButtons(prefix string, options []namedOption) []cardButton {
 }
 
 func selectOptions(options []namedOption) []cardSelectOption {
+	if len(options) > maxSelectOptions {
+		options = options[:maxSelectOptions]
+	}
 	out := make([]cardSelectOption, 0, len(options))
 	for _, opt := range options {
 		out = append(out, cardSelectOption{ID: opt.Value, Text: opt.Label})

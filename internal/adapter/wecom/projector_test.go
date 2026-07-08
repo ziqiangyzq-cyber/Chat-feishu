@@ -166,6 +166,28 @@ func TestProjectTargetPickerDropdownsWhenSingleDimensionExceedsButtonBudget(t *t
 	}
 }
 
+func TestProjectTargetPickerDropdownOptionsRespectWeComLimit(t *testing.T) {
+	opts := make([]control.FeishuTargetPickerSessionOption, 0, maxSelectOptions+3)
+	for i := 0; i < maxSelectOptions+3; i++ {
+		opts = append(opts, control.FeishuTargetPickerSessionOption{Value: string(rune('a' + i)), Label: "会话"})
+	}
+	view := control.FeishuTargetPickerView{
+		PickerID:          "picker-limit",
+		ShowSessionSelect: true,
+		SessionOptions:    opts,
+	}
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.TargetPickerPayload{View: view},
+	})
+	card := frames[len(frames)-1].TemplateCard
+	if card == nil || card.CardType != cardTypeMultipleInteraction {
+		t.Fatalf("expected multiple_interaction fallback, got %+v", card)
+	}
+	if got := len(card.SelectList[0].OptionList); got != maxSelectOptions {
+		t.Fatalf("option_list size = %d, want %d", got, maxSelectOptions)
+	}
+}
+
 func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	view := control.FeishuRequestView{
 		RequestID: "req-1",
