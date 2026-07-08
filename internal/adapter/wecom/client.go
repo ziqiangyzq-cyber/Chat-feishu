@@ -292,17 +292,10 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		frame.Headers = wire.Headers
 		return c.handleMsgCallback(ctx, frame)
 	case frameCmdEventCallback:
-		var wire struct {
-			Cmd     string           `json:"cmd"`
-			Headers frameHeaders     `json:"headers,omitempty"`
-			Body    InboundCardEvent `json:"body"`
-		}
-		if err := json.Unmarshal(raw, &wire); err != nil {
+		event, err := decodeInboundCardEvent(raw)
+		if err != nil {
 			return fmt.Errorf("wecom: decode event_callback: %w", err)
 		}
-		event := wire.Body
-		event.Cmd = wire.Cmd
-		event.Headers = wire.Headers
 		return c.handleEventCallback(ctx, event)
 	default:
 		if env.ErrCode != 0 {

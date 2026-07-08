@@ -62,6 +62,58 @@ func TestMapCardEventConfirmRecoversSelections(t *testing.T) {
 	}
 }
 
+func TestDecodeInboundCardEventNestedTemplateCardEvent(t *testing.T) {
+	raw := []byte(`{
+		"cmd":"aibot_event_callback",
+		"headers":{"req_id":"req-1"},
+		"body":{
+			"msgid":"msg-1",
+			"aibotid":"bot-1",
+			"from":{"userid":"user-1"},
+			"chatid":"chat-1",
+			"chattype":"single",
+			"msgtype":"event",
+			"event":{
+				"eventtype":"template_card_event",
+				"template_card_event":{
+					"card_type":"multiple_interaction",
+					"event_key":"tp.confirm::picker-2",
+					"task_id":"tp-unique",
+					"selected_items":{
+						"selected_item":[
+							{
+								"question_key":"tp.ws",
+								"option_ids":{"option_id":["/data/web"]}
+							},
+							{
+								"question_key":"tp.sess",
+								"option_ids":{"option_id":["thread-b"]}
+							}
+						]
+					}
+				}
+			}
+		}
+	}`)
+	event, err := decodeInboundCardEvent(raw)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if event.Cmd != frameCmdEventCallback || event.Headers.ReqID != "req-1" {
+		t.Fatalf("unexpected frame metadata: %+v", event)
+	}
+	if event.ChatID != "chat-1" || event.OperatorUserID != "user-1" || event.MessageID != "msg-1" {
+		t.Fatalf("unexpected inbound context: %+v", event)
+	}
+	action, ok := MapCardEventToAction(event)
+	if !ok || action.Kind != control.ActionTargetPickerConfirm {
+		t.Fatalf("unexpected action: ok=%v action=%+v", ok, action)
+	}
+	if action.PickerID != "picker-2" || action.WorkspaceKey != "/data/web" || action.TargetPickerValue != "thread-b" {
+		t.Fatalf("unexpected mapped selection: %+v", action)
+	}
+}
+
 func TestMapCardEventCancel(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
 		TaskID:   "picker-3",

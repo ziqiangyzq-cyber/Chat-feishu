@@ -1,6 +1,7 @@
 package wecom
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -54,6 +55,136 @@ type InboundCardEvent struct {
 type InboundSelection struct {
 	QuestionKey string   `json:"question_key"`
 	OptionIDs   []string `json:"option_ids"`
+}
+
+type inboundEventCallbackWire struct {
+	Cmd     string          `json:"cmd"`
+	Headers frameHeaders    `json:"headers,omitempty"`
+	Body    json.RawMessage `json:"body"`
+}
+
+type inboundEventCallbackBody struct {
+	BotID          string `json:"aibotid"`
+	ChatID         string `json:"chatid"`
+	ChatType       string `json:"chattype"`
+	MessageID      string `json:"msgid"`
+	MsgType        string `json:"msgtype"`
+	OperatorUserID string `json:"operator_userid"`
+	FromUserID     string `json:"from_userid"`
+	UserID         string `json:"userid"`
+	From           struct {
+		UserID string `json:"userid"`
+	} `json:"from"`
+	EventType         string                     `json:"eventtype"`
+	TemplateCardEvent inboundTemplateCardEvent   `json:"template_card_event"`
+	Event             inboundTemplateCardWrapper `json:"event"`
+}
+
+type inboundTemplateCardWrapper struct {
+	EventType         string                   `json:"eventtype"`
+	TemplateCardEvent inboundTemplateCardEvent `json:"template_card_event"`
+}
+
+type inboundTemplateCardEvent struct {
+	CardType      string               `json:"card_type"`
+	EventKey      string               `json:"event_key"`
+	TaskID        string               `json:"task_id"`
+	SelectedItems inboundSelectedItems `json:"selected_items"`
+}
+
+type inboundSelectedItems struct {
+	SelectedItem inboundSelectedItemList `json:"selected_item"`
+}
+
+type inboundSelectedItemList []inboundSelectedItem
+
+func (l *inboundSelectedItemList) UnmarshalJSON(data []byte) error {
+	var items []inboundSelectedItem
+	if err := json.Unmarshal(data, &items); err == nil {
+		*l = items
+		return nil
+	}
+	var item inboundSelectedItem
+	if err := json.Unmarshal(data, &item); err != nil {
+		return err
+	}
+	*l = []inboundSelectedItem{item}
+	return nil
+}
+
+type inboundSelectedItem struct {
+	QuestionKey string          `json:"question_key"`
+	OptionIDs   inboundOptionID `json:"option_ids"`
+}
+
+type inboundOptionID []string
+
+func (ids *inboundOptionID) UnmarshalJSON(data []byte) error {
+	var object struct {
+		OptionID json.RawMessage `json:"option_id"`
+	}
+	if err := json.Unmarshal(data, &object); err == nil && len(object.OptionID) > 0 {
+		return ids.UnmarshalJSON(object.OptionID)
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*ids = list
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(data, &single); err != nil {
+		return err
+	}
+	*ids = []string{single}
+	return nil
+}
+
+func decodeInboundCardEvent(raw []byte) (InboundCardEvent, error) {
+	var wire inboundEventCallbackWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return InboundCardEvent{}, err
+	}
+
+	var flat InboundCardEvent
+	_ = json.Unmarshal(wire.Body, &flat)
+
+	var body inboundEventCallbackBody
+	_ = json.Unmarshal(wire.Body, &body)
+
+	nested := body.Event.TemplateCardEvent
+	direct := body.TemplateCardEvent
+
+	event := flat
+	event.Cmd = wire.Cmd
+	event.Headers = wire.Headers
+	event.BotID = firstNonEmpty(event.BotID, body.BotID)
+	event.ChatID = firstNonEmpty(event.ChatID, body.ChatID, body.From.UserID, body.FromUserID, body.UserID)
+	event.EventType = firstNonEmpty(event.EventType, body.Event.EventType, body.EventType)
+	event.OperatorUserID = firstNonEmpty(event.OperatorUserID, body.OperatorUserID, body.From.UserID, body.FromUserID, body.UserID)
+	event.MessageID = firstNonEmpty(event.MessageID, body.MessageID)
+	event.TaskID = firstNonEmpty(event.TaskID, nested.TaskID, direct.TaskID)
+	event.EventKey = firstNonEmpty(event.EventKey, nested.EventKey, direct.EventKey)
+	event.Selections = append(event.Selections, nested.SelectedItems.toSelections()...)
+	event.Selections = append(event.Selections, direct.SelectedItems.toSelections()...)
+	return event, nil
+}
+
+func (items inboundSelectedItems) toSelections() []InboundSelection {
+	out := make([]InboundSelection, 0, len(items.SelectedItem))
+	for _, item := range items.SelectedItem {
+		questionKey := strings.TrimSpace(item.QuestionKey)
+		if questionKey == "" {
+			continue
+		}
+		optionIDs := make([]string, 0, len(item.OptionIDs))
+		for _, optionID := range item.OptionIDs {
+			if optionID = strings.TrimSpace(optionID); optionID != "" {
+				optionIDs = append(optionIDs, optionID)
+			}
+		}
+		out = append(out, InboundSelection{QuestionKey: questionKey, OptionIDs: optionIDs})
+	}
+	return out
 }
 
 // selectedOption returns the first selected option id for the given question

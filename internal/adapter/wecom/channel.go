@@ -3,6 +3,7 @@ package wecom
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync"
 
@@ -132,8 +133,10 @@ func (c *Channel) dispatchCardEvent(ctx context.Context, event InboundCardEvent)
 	}
 	action, ok := MapCardEventToAction(event)
 	if !ok {
+		log.Printf("wecom: ignored card event task=%q key=%q chat=%q operator=%q selections=%d", event.TaskID, event.EventKey, event.ChatID, event.OperatorUserID, len(event.Selections))
 		return
 	}
+	log.Printf("wecom: mapped card event kind=%s picker=%q workspace=%q target=%q chat=%q", action.Kind, action.PickerID, action.WorkspaceKey, action.TargetPickerValue, action.ChatID)
 	handler(ctx, action)
 }
 
