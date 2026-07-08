@@ -81,10 +81,16 @@ type vscodeCompatibilityCacheState struct {
 }
 
 type App struct {
-	service             *orchestrator.Service
-	projector           *feishu.Projector
-	gateway             feishu.Gateway
-	channel             surface.Channel
+	service   *orchestrator.Service
+	projector *feishu.Projector
+	gateway   feishu.Gateway
+	channel   surface.Channel
+	// wecomChannel is the OPTIONAL, opt-in WeCom second channel. It is nil unless
+	// WeCom credentials are configured (see SetWeComChannel). When nil, every
+	// WeCom code path is a no-op branch, so the Feishu-only delivery path is
+	// byte-identical to before this channel existed. Set once during startup
+	// (before Run) and only read afterward, matching finalBlockPreviewer.
+	wecomChannel        surface.Channel
 	finalBlockPreviewer previewpkg.FinalBlockPreviewService
 	relay               *relayws.Server
 	serverIdentity      agentproto.ServerIdentity
@@ -445,6 +451,21 @@ func (a *App) Run(ctx context.Context) error {
 			errCh <- err
 		}
 	}()
+	// Opt-in WeCom second channel. Guarded on a.wecomChannel != nil: when WeCom is
+	// unconfigured this branch never runs, so no goroutine is spawned and the
+	// Feishu run path is unchanged. WeCom is best-effort — its Start error never
+	// feeds errCh (a WeCom failure must not stop the daemon or disturb Feishu).
+	// It shares gatewayCtx so it terminates on the same shutdown cancel; the
+	// goroutine Stops it on exit so no shutdown-path change is needed.
+	if a.wecomChannel != nil {
+		go func() {
+			ch := a.wecomChannel
+			defer func() { _ = ch.Stop(context.Background()) }()
+			if err := ch.Start(gatewayCtx, feishu.WrapActionHandler(a.HandleGatewayAction)); err != nil && err != context.Canceled {
+				log.Printf("wecom channel stopped: %v", err)
+			}
+		}()
+	}
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()

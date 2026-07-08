@@ -258,6 +258,12 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 		}
 		return err
 	}
+	// Additive WeCom tee: after Feishu delivery has fully succeeded, best-effort
+	// deliver the SAME channel-neutral event to WeCom. This runs only when a
+	// WeCom channel is configured; otherwise it is a no-op branch and this path
+	// is byte-identical to Feishu-only. Errors are swallowed inside the helper —
+	// a WeCom failure must never affect the Feishu result already returned.
+	a.teeWeComEvent(chatID, event)
 	a.recordUIEventDelivery(event, operations)
 	if didPreview {
 		a.maybeScheduleSecondChanceFinalPatchLocked(gatewayID, chatID, event, operations, previewReq, previewErr)

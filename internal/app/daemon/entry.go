@@ -15,6 +15,7 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	previewpkg "github.com/kxn/codex-remote-feishu/internal/adapter/feishu/preview"
+	"github.com/kxn/codex-remote-feishu/internal/adapter/wecom"
 	toolruntime "github.com/kxn/codex-remote-feishu/internal/app/daemon/toolruntime"
 	"github.com/kxn/codex-remote-feishu/internal/app/desktopsession"
 	"github.com/kxn/codex-remote-feishu/internal/app/install"
@@ -109,6 +110,19 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		gateway,
 		identity,
 	)
+	// Opt-in WeCom second channel. Constructed ONLY when both credentials are
+	// present; otherwise no wecom.Channel is created, SetWeComChannel is never
+	// called, a.wecomChannel stays nil, and the daemon runs Feishu-only exactly
+	// as before. This is the enforcement point for WeCom being additive.
+	if botID := strings.TrimSpace(cfg.WeComBotID); botID != "" {
+		if secret := strings.TrimSpace(cfg.WeComSecret); secret != "" {
+			app.SetWeComChannel(wecom.NewChannel(wecom.Config{
+				BotID:  botID,
+				Secret: secret,
+			}))
+			log.Printf("wecom channel enabled (additive): bot=%s", botID)
+		}
+	}
 	baseEnv := buildDaemonHeadlessBaseEnv(os.Environ(), capturedProxyEnv)
 	app.SetHeadlessRuntime(HeadlessRuntimeConfig{
 		BinaryPath: identity.BinaryPath,

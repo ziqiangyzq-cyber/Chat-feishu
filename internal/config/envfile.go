@@ -28,9 +28,16 @@ type ServicesConfig struct {
 	FeishuAppID          string
 	FeishuAppSecret      string
 	FeishuUseSystemProxy bool
-	ConfigPath           string
-	DebugRelayFlow       bool
-	DebugRelayRaw        bool
+	// WeComBotID and WeComSecret are OPTIONAL credentials for the additive,
+	// opt-in WeCom (企业微信 aibot) second channel. When both are empty, WeCom is
+	// entirely inactive and the daemon runs Feishu-only, unchanged. Sourced from
+	// the WECOM_BOT_ID / WECOM_SECRET environment variables (mirroring the Feishu
+	// env override), so no config-file schema change is required for Phase 3.
+	WeComBotID     string
+	WeComSecret    string
+	ConfigPath     string
+	DebugRelayFlow bool
+	DebugRelayRaw  bool
 }
 
 const (
@@ -115,7 +122,9 @@ func LoadServicesConfig() (ServicesConfig, error) {
 			boolString(loaded.Config.Feishu.UseSystemProxy),
 			loaded.Config.Feishu.UseSystemProxy,
 		),
-		ConfigPath: loaded.Path,
+		WeComBotID:  chooseNonEmpty(os.Getenv("WECOM_BOT_ID")),
+		WeComSecret: chooseNonEmpty(os.Getenv("WECOM_SECRET")),
+		ConfigPath:  loaded.Path,
 		DebugRelayFlow: chooseBool(
 			os.Getenv(DebugRelayFlowEnv),
 			boolString(loaded.Config.Debug.RelayFlow),
