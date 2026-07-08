@@ -333,19 +333,21 @@ func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []F
 		MainTitle: &cardMainTitle{Title: title},
 	}
 	if view.ShowWorkspaceSelect {
+		options := selectOptions(wsOptions)
 		card.SelectList = append(card.SelectList, cardSelect{
 			QuestionKey: questionKeyWorkspace,
 			Title:       firstNonEmpty(view.WorkspacePlaceholder, "工作区"),
-			SelectedID:  strings.TrimSpace(view.SelectedWorkspaceKey),
-			OptionList:  selectOptions(wsOptions),
+			SelectedID:  selectedOptionID(strings.TrimSpace(view.SelectedWorkspaceKey), options),
+			OptionList:  options,
 		})
 	}
 	if view.ShowSessionSelect {
+		options := selectOptions(sessOptions)
 		card.SelectList = append(card.SelectList, cardSelect{
 			QuestionKey: questionKeySession,
 			Title:       firstNonEmpty(view.SessionPlaceholder, "会话"),
-			SelectedID:  strings.TrimSpace(view.SelectedSessionValue),
-			OptionList:  selectOptions(sessOptions),
+			SelectedID:  selectedOptionID(strings.TrimSpace(view.SelectedSessionValue), options),
+			OptionList:  options,
 		})
 	}
 	confirmLabel := firstNonEmpty(strings.TrimSpace(view.ConfirmLabel), "确认")
@@ -403,6 +405,19 @@ func selectOptions(options []namedOption) []cardSelectOption {
 		out = append(out, cardSelectOption{ID: opt.Value, Text: opt.Label})
 	}
 	return out
+}
+
+func selectedOptionID(selected string, options []cardSelectOption) string {
+	selected = strings.TrimSpace(selected)
+	for _, opt := range options {
+		if opt.ID == selected {
+			return selected
+		}
+	}
+	if len(options) == 0 {
+		return ""
+	}
+	return options[0].ID
 }
 
 func targetPickerBody(view control.FeishuTargetPickerView) string {
