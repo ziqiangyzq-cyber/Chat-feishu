@@ -83,8 +83,6 @@ type templateCard struct {
 	SelectList []cardSelect `json:"select_list,omitempty"`
 	// SubmitButton is the submit control for a multiple_interaction card.
 	SubmitButton *cardSubmitButton `json:"submit_button,omitempty"`
-	// ReplaceText is displayed after a multiple_interaction card is submitted.
-	ReplaceText string `json:"replace_text,omitempty"`
 	// ButtonList holds buttons for a button_interaction card.
 	ButtonList []cardButton `json:"button_list,omitempty"`
 }
@@ -354,7 +352,6 @@ func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []F
 	}
 	confirmLabel := firstNonEmpty(strings.TrimSpace(view.ConfirmLabel), "确认")
 	card.SubmitButton = &cardSubmitButton{Text: confirmLabel, Key: keyTargetConfirm + keyValueSep + pickerID}
-	card.ReplaceText = "已提交"
 	return append(frames, cardFrame(card))
 }
 

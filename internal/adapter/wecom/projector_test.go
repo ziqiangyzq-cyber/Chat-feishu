@@ -139,9 +139,6 @@ func TestProjectTargetPickerDropdownsWhenBothDimensions(t *testing.T) {
 	if card.SubmitButton.Text != "开始" || card.SubmitButton.Key != keyTargetConfirm+keyValueSep+"picker-2" {
 		t.Fatalf("unexpected submit button: %+v", card.SubmitButton)
 	}
-	if card.ReplaceText == "" {
-		t.Fatal("expected replace_text")
-	}
 }
 
 func TestProjectTargetPickerDropdownsWhenSingleDimensionExceedsButtonBudget(t *testing.T) {
