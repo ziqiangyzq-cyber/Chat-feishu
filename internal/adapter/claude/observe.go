@@ -111,6 +111,9 @@ func (t *Translator) observeMessageStart(event map[string]any) Result {
 	}
 	events := t.startActiveTurnIfNeeded()
 	if t.activeTurn == nil {
+		events = append(events, t.synthesizeRuntimeTurnIfOrphan(t.currentMessage.ParentToolUseID)...)
+	}
+	if t.activeTurn == nil {
 		return Result{}
 	}
 	return Result{Events: events}
@@ -271,6 +274,10 @@ func (t *Translator) observeContentBlockStop(event map[string]any) Result {
 
 func (t *Translator) observeAssistantMessage(message map[string]any) Result {
 	events := t.startActiveTurnIfNeeded()
+	if t.activeTurn == nil {
+		parentToolUseID := strings.TrimSpace(lookupStringFromAny(message["parent_tool_use_id"]))
+		events = append(events, t.synthesizeRuntimeTurnIfOrphan(parentToolUseID)...)
+	}
 	if t.activeTurn == nil {
 		return Result{Events: events}
 	}
@@ -636,6 +643,16 @@ func (t *Translator) observeInternalToolResult(message, block map[string]any, to
 
 func (t *Translator) observeControlRequest(message map[string]any) Result {
 	startEvents := t.startActiveTurnIfNeeded()
+	if t.activeTurn == nil {
+		// A can_use_tool request arriving with no active turn (e.g. inside a
+		// CLI self-initiated wakeup turn) would otherwise be dropped here, so
+		// the approval card never surfaces and the CLI blocks forever on a
+		// reply that never comes — starving the run. Model the orphan turn so
+		// the approval flows normally. Same parent_tool_use_id gate as the
+		// message paths keeps a subagent's own tool requests out of the surface.
+		parentToolUseID := strings.TrimSpace(lookupStringFromAny(message["parent_tool_use_id"]))
+		startEvents = append(startEvents, t.synthesizeRuntimeTurnIfOrphan(parentToolUseID)...)
+	}
 	if t.activeTurn == nil {
 		return Result{Events: startEvents}
 	}
