@@ -81,3 +81,29 @@ func TestDispatchMessageFallsBackToSenderAsSingleChatID(t *testing.T) {
 		t.Fatalf("response req id = %q, want req-single", reqID)
 	}
 }
+
+func TestDispatchMessageParsesSlashCommand(t *testing.T) {
+	ch := NewChannel(Config{})
+	var got control.Action
+	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
+		got = action
+		return nil
+	}
+
+	frame := msgCallbackFrame{
+		ChatID:  "chat-1",
+		MsgID:   "msg-1",
+		Headers: frameHeaders{ReqID: "req-1"},
+	}
+	frame.From.UserID = "user-1"
+	frame.Text.Content = "/list"
+
+	ch.dispatchMessage(context.Background(), frame)
+
+	if got.Kind != control.ActionListInstances {
+		t.Fatalf("Kind = %q, want %q", got.Kind, control.ActionListInstances)
+	}
+	if got.ChatID != "chat-1" || got.ActorUserID != "user-1" || got.MessageID != "msg-1" || got.Text != "/list" {
+		t.Fatalf("command lost inbound context: %+v", got)
+	}
+}

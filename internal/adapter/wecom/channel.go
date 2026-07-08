@@ -94,6 +94,12 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 		Text:        text,
 		Inputs:      []agentproto.Input{{Type: agentproto.InputText, Text: text}},
 	}
+	if command, ok := control.ParseFeishuTextActionWithoutCatalog(text); ok {
+		command.ChatID = action.ChatID
+		command.ActorUserID = action.ActorUserID
+		command.MessageID = action.MessageID
+		action = command
+	}
 	action.SteerInputs = append([]agentproto.Input(nil), action.Inputs...)
 	handler(ctx, action)
 }
