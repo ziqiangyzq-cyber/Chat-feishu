@@ -413,15 +413,15 @@ func selectOptions(options []namedOption) []cardSelectOption {
 
 func selectedOptionID(selected string, options []cardSelectOption) string {
 	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return ""
+	}
 	for _, opt := range options {
 		if opt.ID == selected {
 			return selected
 		}
 	}
-	if len(options) == 0 {
-		return ""
-	}
-	return options[0].ID
+	return ""
 }
 
 func uniqueTaskID(prefix string) string {

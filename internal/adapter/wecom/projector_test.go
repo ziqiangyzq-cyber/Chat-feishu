@@ -185,7 +185,7 @@ func TestProjectTargetPickerDropdownOptionsRespectWeComLimit(t *testing.T) {
 	}
 }
 
-func TestProjectTargetPickerDropdownDefaultsSelectedID(t *testing.T) {
+func TestProjectTargetPickerDropdownDoesNotDefaultSelectedID(t *testing.T) {
 	opts := make([]control.FeishuTargetPickerWorkspaceOption, 0, defaultMaxButtons+1)
 	for i := 0; i < defaultMaxButtons+1; i++ {
 		opts = append(opts, control.FeishuTargetPickerWorkspaceOption{Value: string(rune('a' + i)), Label: "工作区"})
@@ -202,8 +202,31 @@ func TestProjectTargetPickerDropdownDefaultsSelectedID(t *testing.T) {
 	if card == nil || len(card.SelectList) != 1 {
 		t.Fatalf("expected one dropdown card, got %+v", card)
 	}
-	if got := card.SelectList[0].SelectedID; got != "a" {
-		t.Fatalf("selected_id = %q, want first visible option", got)
+	if got := card.SelectList[0].SelectedID; got != "" {
+		t.Fatalf("selected_id = %q, want empty so WeCom does not auto-submit the first option", got)
+	}
+}
+
+func TestProjectTargetPickerDropdownKeepsExplicitSelectedID(t *testing.T) {
+	opts := make([]control.FeishuTargetPickerWorkspaceOption, 0, defaultMaxButtons+1)
+	for i := 0; i < defaultMaxButtons+1; i++ {
+		opts = append(opts, control.FeishuTargetPickerWorkspaceOption{Value: string(rune('a' + i)), Label: "工作区"})
+	}
+	view := control.FeishuTargetPickerView{
+		PickerID:             "picker-selected",
+		ShowWorkspaceSelect:  true,
+		SelectedWorkspaceKey: "c",
+		WorkspaceOptions:     opts,
+	}
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.TargetPickerPayload{View: view},
+	})
+	card := frames[len(frames)-1].TemplateCard
+	if card == nil || len(card.SelectList) != 1 {
+		t.Fatalf("expected one dropdown card, got %+v", card)
+	}
+	if got := card.SelectList[0].SelectedID; got != "c" {
+		t.Fatalf("selected_id = %q, want c", got)
 	}
 }
 

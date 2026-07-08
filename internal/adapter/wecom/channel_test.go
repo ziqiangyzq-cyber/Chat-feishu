@@ -95,7 +95,7 @@ func TestResponseReqIDConsumedOnce(t *testing.T) {
 	}
 }
 
-func TestDispatchCardEventRemembersCallbackReqID(t *testing.T) {
+func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 	ch := NewChannel(Config{})
 	var got control.Action
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
@@ -118,8 +118,8 @@ func TestDispatchCardEventRemembersCallbackReqID(t *testing.T) {
 	if got.ChatID != "chat-1" || got.ActorUserID != "user-1" || got.MessageID != "msg-1" {
 		t.Fatalf("card action lost inbound context: %+v", got)
 	}
-	if reqID := ch.responseReqID("chat-1"); reqID != "req-card-1" {
-		t.Fatalf("card response req id = %q, want req-card-1", reqID)
+	if reqID := ch.responseReqID("chat-1"); reqID != "" {
+		t.Fatalf("card callback req id must not be reused for outbound sends, got %q", reqID)
 	}
 }
 
