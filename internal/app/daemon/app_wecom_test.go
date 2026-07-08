@@ -164,6 +164,55 @@ func TestTagWeComInboundAction(t *testing.T) {
 	})
 }
 
+func TestWeComTextAutoAttachesDefaultWorkspace(t *testing.T) {
+	gateway := &messageIDAssigningGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+	wecomCh := &recordingWeComChannel{}
+	app.SetWeComChannel(wecomCh)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-pool",
+		DisplayName:   "headless",
+		WorkspaceRoot: home + "/.local/state/codex-remote",
+		WorkspaceKey:  home + "/.local/state/codex-remote",
+		ShortName:     "codex-remote",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+	})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-work",
+		DisplayName:   "work",
+		WorkspaceRoot: "/data/work",
+		WorkspaceKey:  "/data/work",
+		ShortName:     "work",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+	})
+
+	action := tagWeComInboundAction(control.Action{
+		Kind:        control.ActionTextMessage,
+		ChatID:      "wcchat-1",
+		ActorUserID: "wecom-user",
+		MessageID:   "msg-1",
+		Text:        "你好",
+	})
+	app.HandleAction(context.Background(), action)
+
+	surface := app.service.Surface(wecomSurfaceID("wcchat-1"))
+	if surface == nil {
+		t.Fatal("expected wecom surface")
+	}
+	if surface.AttachedInstanceID != "inst-work" || surface.ClaimedWorkspaceKey != "/data/work" {
+		t.Fatalf("expected default workspace attach to /data/work, got surface=%#v", surface)
+	}
+}
+
 func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

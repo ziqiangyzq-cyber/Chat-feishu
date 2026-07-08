@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
+	"github.com/kxn/codex-remote-feishu/internal/core/state"
 	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 )
 
@@ -75,6 +77,65 @@ func (a *App) wecomInboundHandler() surface.ActionHandler {
 	return feishu.WrapActionHandler(func(ctx context.Context, action control.Action) *feishu.ActionResult {
 		return a.HandleGatewayAction(ctx, tagWeComInboundAction(action))
 	})
+}
+
+func (a *App) maybeAttachDefaultWeComWorkspaceLocked(ctx context.Context, action control.Action) {
+	if a == nil || a.service == nil || !isWeComGateway(action.GatewayID) || action.Kind != control.ActionTextMessage {
+		return
+	}
+	surfaceID := strings.TrimSpace(action.SurfaceSessionID)
+	if surfaceID == "" {
+		return
+	}
+	if surface := a.service.Surface(surfaceID); surface != nil {
+		if strings.TrimSpace(surface.AttachedInstanceID) != "" ||
+			strings.TrimSpace(surface.ClaimedWorkspaceKey) != "" ||
+			surface.PendingHeadless != nil {
+			return
+		}
+	}
+	workspaceKey := a.defaultWeComWorkspaceKeyLocked()
+	if workspaceKey == "" {
+		return
+	}
+	events := a.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachWorkspace,
+		GatewayID:        action.GatewayID,
+		SurfaceSessionID: surfaceID,
+		ChatID:           action.ChatID,
+		ActorUserID:      action.ActorUserID,
+		WorkspaceKey:     workspaceKey,
+	})
+	a.handleUIEventsLocked(ctx, events)
+}
+
+func (a *App) defaultWeComWorkspaceKeyLocked() string {
+	if a == nil || a.service == nil {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	internalPrefix := state.NormalizeWorkspaceKey(home + "/.local/state/codex-remote")
+	fallback := ""
+	for _, inst := range a.service.Instances() {
+		if inst == nil || !inst.Online {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(inst.Source), "vscode") {
+			continue
+		}
+		workspaceKey := state.ResolveWorkspaceKey(inst.WorkspaceKey, inst.WorkspaceRoot)
+		if workspaceKey == "" {
+			continue
+		}
+		if internalPrefix != "" && strings.HasPrefix(workspaceKey, internalPrefix) {
+			if fallback == "" {
+				fallback = workspaceKey
+			}
+			continue
+		}
+		return workspaceKey
+	}
+	return fallback
 }
 
 func (a *App) runWeComChannel(ctx context.Context, channel surface.Channel) {

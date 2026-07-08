@@ -130,11 +130,17 @@ func TestProjectTargetPickerDropdownsWhenBothDimensions(t *testing.T) {
 	if got := card.SelectList[1].OptionList; len(got) != 2 || got[0].ID != "thread-a" || got[1].ID != "thread-b" {
 		t.Fatalf("unexpected session option ids: %+v", got)
 	}
-	if len(card.ButtonList) != 2 {
-		t.Fatalf("expected confirm+cancel buttons, got %d", len(card.ButtonList))
+	if len(card.ButtonList) != 0 {
+		t.Fatalf("multiple_interaction must not use button_list, got %+v", card.ButtonList)
 	}
-	if card.ButtonList[0].Key != keyTargetConfirm || card.ButtonList[1].Key != keyTargetCancel {
-		t.Fatalf("unexpected control button keys: %+v", card.ButtonList)
+	if card.SubmitButton == nil {
+		t.Fatal("expected submit_button")
+	}
+	if card.SubmitButton.Text != "开始" || card.SubmitButton.Key != keyTargetConfirm {
+		t.Fatalf("unexpected submit button: %+v", card.SubmitButton)
+	}
+	if card.ReplaceText == "" {
+		t.Fatal("expected replace_text")
 	}
 }
 
@@ -154,6 +160,9 @@ func TestProjectTargetPickerDropdownsWhenSingleDimensionExceedsButtonBudget(t *t
 	card := frames[len(frames)-1].TemplateCard
 	if card == nil || card.CardType != cardTypeMultipleInteraction {
 		t.Fatalf("expected multiple_interaction fallback, got %+v", card)
+	}
+	if card.SubmitButton == nil || card.SubmitButton.Key != keyTargetConfirm {
+		t.Fatalf("expected submit button on multiple_interaction fallback, got %+v", card.SubmitButton)
 	}
 }
 

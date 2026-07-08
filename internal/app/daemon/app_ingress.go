@@ -256,6 +256,7 @@ func (a *App) handleAction(ctx context.Context, action control.Action) *feishu.A
 		a.syncWorkspaceSurfaceContextFilesLocked()
 		return inlineResult
 	}
+	a.maybeAttachDefaultWeComWorkspaceLocked(ctx, action)
 	events := a.applyIngressActionLocked(action)
 	contract := control.ResolveFeishuFrontstageActionContract(action)
 	inlineResult, appendEvents := a.synchronousCurrentCardActionResultLocked(action, contract, events)

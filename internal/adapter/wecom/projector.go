@@ -75,8 +75,11 @@ type templateCard struct {
 	SubTitle  string         `json:"sub_title_text,omitempty"`
 	// SelectList holds dropdowns for a multiple_interaction card.
 	SelectList []cardSelect `json:"select_list,omitempty"`
-	// ButtonList holds buttons for a button_interaction card, and the
-	// confirm/cancel buttons of a multiple_interaction card.
+	// SubmitButton is the submit control for a multiple_interaction card.
+	SubmitButton *cardSubmitButton `json:"submit_button,omitempty"`
+	// ReplaceText is displayed after a multiple_interaction card is submitted.
+	ReplaceText string `json:"replace_text,omitempty"`
+	// ButtonList holds buttons for a button_interaction card.
 	ButtonList []cardButton `json:"button_list,omitempty"`
 }
 
@@ -96,6 +99,13 @@ type cardButton struct {
 	Text  string `json:"text"`
 	Key   string `json:"key"`
 	Style int    `json:"style,omitempty"`
+}
+
+// cardSubmitButton is the submit control required by WeCom
+// multiple_interaction cards.
+type cardSubmitButton struct {
+	Text string `json:"text"`
+	Key  string `json:"key"`
 }
 
 // cardSelect is a dropdown in a multiple_interaction card. QuestionKey is
@@ -335,10 +345,8 @@ func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []F
 		})
 	}
 	confirmLabel := firstNonEmpty(strings.TrimSpace(view.ConfirmLabel), "确认")
-	card.ButtonList = []cardButton{
-		{Text: confirmLabel, Key: keyTargetConfirm, Style: 1},
-		{Text: "取消", Key: keyTargetCancel},
-	}
+	card.SubmitButton = &cardSubmitButton{Text: confirmLabel, Key: keyTargetConfirm}
+	card.ReplaceText = "已提交"
 	return append(frames, cardFrame(card))
 }
 
