@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
@@ -22,6 +24,49 @@ type recordingWeComChannel struct {
 	chatIDs  []string
 	events   []eventcontract.Event
 	delivers int
+}
+
+type flakyWeComChannel struct {
+	mu        sync.Mutex
+	starts    int
+	stops     int
+	failures  int
+	onSuccess context.CancelFunc
+}
+
+func (c *flakyWeComChannel) Name() string { return "wecom" }
+
+func (c *flakyWeComChannel) Start(ctx context.Context, _ surface.ActionHandler) error {
+	c.mu.Lock()
+	c.starts++
+	starts := c.starts
+	failures := c.failures
+	cancel := c.onSuccess
+	c.mu.Unlock()
+	if starts <= failures {
+		return errors.New("temporary wecom failure")
+	}
+	if cancel != nil {
+		cancel()
+	}
+	return ctx.Err()
+}
+
+func (c *flakyWeComChannel) Deliver(context.Context, string, eventcontract.Event) error { return nil }
+
+func (c *flakyWeComChannel) Stop(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stops++
+	return nil
+}
+
+func (c *flakyWeComChannel) Capabilities() surface.Capabilities { return surface.Capabilities{} }
+
+func (c *flakyWeComChannel) snapshot() (starts, stops int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.starts, c.stops
 }
 
 func (c *recordingWeComChannel) Name() string { return "wecom" }
@@ -117,6 +162,24 @@ func TestTagWeComInboundAction(t *testing.T) {
 			t.Fatalf("SurfaceSessionID = %q, want empty", got.SurfaceSessionID)
 		}
 	})
+}
+
+func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := &flakyWeComChannel{failures: 2, onSuccess: cancel}
+
+	runWeComChannelWithReconnect(ctx, ch, func(context.Context, control.Action) *surface.ActionResult {
+		return nil
+	}, time.Millisecond, time.Millisecond)
+
+	starts, stops := ch.snapshot()
+	if starts != 3 {
+		t.Fatalf("starts = %d, want 3", starts)
+	}
+	if stops != 3 {
+		t.Fatalf("stops = %d, want 3", stops)
+	}
 }
 
 // TestDeliverRoutesFeishuSurfaceToFeishuOnly asserts a Feishu-owned surface

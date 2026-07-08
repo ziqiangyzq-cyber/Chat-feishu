@@ -46,12 +46,16 @@ type subscribeFrame struct {
 
 // msgCallbackFrame is an inbound user message pushed by the server.
 type msgCallbackFrame struct {
-	Type    string `json:"type"`
-	BotID   string `json:"botid"`
-	ChatID  string `json:"chatid"`
-	MsgID   string `json:"msgid"`
-	MsgType string `json:"msgtype"`
-	Text    struct {
+	Type           string `json:"type"`
+	BotID          string `json:"botid"`
+	ChatID         string `json:"chatid"`
+	MsgID          string `json:"msgid"`
+	MsgType        string `json:"msgtype"`
+	FromUserID     string `json:"from_userid"`
+	UserID         string `json:"userid"`
+	SenderUserID   string `json:"sender_userid"`
+	OperatorUserID string `json:"operator_userid"`
+	Text           struct {
 		Content string `json:"content"`
 	} `json:"text"`
 }
@@ -151,7 +155,7 @@ func (c *Client) subscribe(ctx context.Context) error {
 	if c.config.BotID == "" || c.config.Secret == "" {
 		return errors.New("wecom: subscribe requires BotID and Secret")
 	}
-	return c.writeJSON(subscribeFrame{
+	return c.writeJSON(ctx, subscribeFrame{
 		Type:   frameTypeSubscribe,
 		BotID:  c.config.BotID,
 		Secret: c.config.Secret,
@@ -170,7 +174,15 @@ func (c *Client) currentConn() (*websocket.Conn, error) {
 }
 
 // writeJSON serializes v and writes it as a text frame under the write lock.
-func (c *Client) writeJSON(v any) error {
+func (c *Client) writeJSON(ctx context.Context, v any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	conn, err := c.currentConn()
 	if err != nil {
 		return err
@@ -181,8 +193,17 @@ func (c *Client) writeJSON(v any) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+	deadline := time.Now().Add(writeTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
 		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 	return conn.WriteMessage(websocket.TextMessage, payload)
 }
@@ -282,8 +303,8 @@ func (c *Client) handleEventCallback(ctx context.Context, event InboundCardEvent
 //
 // TODO(wecom Phase 3): honour Frame.Stream by emitting aibot_respond_msg +
 // aibot_respond_update_msg sequences sharing a stream id.
-func (c *Client) sendFrame(chatID string, frame Frame) error {
-	return c.writeJSON(respondMsgFrame{
+func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) error {
+	return c.writeJSON(ctx, respondMsgFrame{
 		Type:         frameTypeRespondMsg,
 		ChatID:       chatID,
 		MsgType:      frame.MsgType,

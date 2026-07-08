@@ -34,15 +34,14 @@ func NewChannel(config Config) *Channel {
 // Name returns the stable channel identifier.
 func (c *Channel) Name() string { return "wecom" }
 
-// Capabilities reports the WeCom feature matrix. WeCom supports streamed text
-// and file sends, but cannot combine streaming text with interactive buttons in
-// a single message (InteractiveSameFrame=false). MaxButtons reflects the
-// template_card button limit.
+// Capabilities reports the WeCom feature matrix implemented by this adapter.
+// Streaming/file support stay disabled until the transport emits the matching
+// WeCom update/file frames, so upstream callers do not select unsupported paths.
 func (c *Channel) Capabilities() surface.Capabilities {
 	return surface.Capabilities{
-		Streaming:            true,
+		Streaming:            false,
 		InteractiveSameFrame: false,
-		FileSend:             true,
+		FileSend:             false,
 		MaxButtons:           6,
 	}
 }
@@ -78,14 +77,24 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 		return
 	}
 	action := control.Action{
-		Kind:      control.ActionTextMessage,
-		ChatID:    strings.TrimSpace(frame.ChatID),
-		MessageID: strings.TrimSpace(frame.MsgID),
-		Text:      text,
-		Inputs:    []agentproto.Input{{Type: agentproto.InputText, Text: text}},
+		Kind:        control.ActionTextMessage,
+		ChatID:      strings.TrimSpace(frame.ChatID),
+		ActorUserID: wecomMessageActorUserID(frame),
+		MessageID:   strings.TrimSpace(frame.MsgID),
+		Text:        text,
+		Inputs:      []agentproto.Input{{Type: agentproto.InputText, Text: text}},
 	}
 	action.SteerInputs = append([]agentproto.Input(nil), action.Inputs...)
 	handler(ctx, action)
+}
+
+func wecomMessageActorUserID(frame msgCallbackFrame) string {
+	return firstNonEmpty(
+		strings.TrimSpace(frame.FromUserID),
+		strings.TrimSpace(frame.UserID),
+		strings.TrimSpace(frame.SenderUserID),
+		strings.TrimSpace(frame.OperatorUserID),
+	)
 }
 
 // dispatchCardEvent maps an inbound template_card interaction to a
@@ -117,12 +126,12 @@ func (c *Channel) currentHandler() surface.ActionHandler {
 //
 // Event kinds the Projector does not yet render (images, files, ...) produce no
 // frames and are safely skipped. TODO(wecom Phase 3): render those kinds.
-func (c *Channel) Deliver(_ context.Context, chatID string, event eventcontract.Event) error {
+func (c *Channel) Deliver(ctx context.Context, chatID string, event eventcontract.Event) error {
 	if strings.TrimSpace(chatID) == "" {
 		return errors.New("wecom: deliver requires a chatID")
 	}
 	for _, frame := range c.projector.ProjectEvent(event) {
-		if err := c.client.sendFrame(chatID, frame); err != nil {
+		if err := c.client.sendFrame(ctx, chatID, frame); err != nil {
 			return err
 		}
 	}

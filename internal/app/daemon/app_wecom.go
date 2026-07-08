@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -73,6 +75,47 @@ func (a *App) wecomInboundHandler() surface.ActionHandler {
 	return feishu.WrapActionHandler(func(ctx context.Context, action control.Action) *feishu.ActionResult {
 		return a.HandleGatewayAction(ctx, tagWeComInboundAction(action))
 	})
+}
+
+func (a *App) runWeComChannel(ctx context.Context, channel surface.Channel) {
+	runWeComChannelWithReconnect(ctx, channel, a.wecomInboundHandler(), time.Second, 30*time.Second)
+}
+
+func runWeComChannelWithReconnect(ctx context.Context, channel surface.Channel, handler surface.ActionHandler, baseDelay, maxDelay time.Duration) {
+	if channel == nil {
+		return
+	}
+	if baseDelay <= 0 {
+		baseDelay = time.Second
+	}
+	if maxDelay < baseDelay {
+		maxDelay = baseDelay
+	}
+	delay := baseDelay
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := channel.Start(ctx, handler)
+		_ = channel.Stop(context.Background())
+		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		log.Printf("wecom channel stopped: %v; reconnecting in %s", err, delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
 }
 
 // tagWeComInboundAction stamps a raw inbound WeCom action with the WeCom gateway

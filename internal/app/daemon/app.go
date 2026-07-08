@@ -459,14 +459,10 @@ func (a *App) Run(ctx context.Context) error {
 	// goroutine Stops it on exit so no shutdown-path change is needed.
 	if a.wecomChannel != nil {
 		go func() {
-			ch := a.wecomChannel
-			defer func() { _ = ch.Stop(context.Background()) }()
 			// The WeCom channel uses the namespace-tagging inbound handler so a new
 			// WeCom conversation creates a WeCom-namespaced surface whose later
 			// outbound events route back to WeCom (not Feishu).
-			if err := ch.Start(gatewayCtx, a.wecomInboundHandler()); err != nil && err != context.Canceled {
-				log.Printf("wecom channel stopped: %v", err)
-			}
+			a.runWeComChannel(gatewayCtx, a.wecomChannel)
 		}()
 	}
 	go func() {
