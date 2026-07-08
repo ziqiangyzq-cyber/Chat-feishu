@@ -207,6 +207,32 @@ func TestProjectTargetPickerDropdownDefaultsSelectedID(t *testing.T) {
 	}
 }
 
+func TestProjectTargetPickerSucceededRendersStatusMarkdown(t *testing.T) {
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.TargetPickerPayload{View: control.FeishuTargetPickerView{
+			Stage:               control.FeishuTargetPickerStageSucceeded,
+			StatusTitle:         "已进入新会话待命",
+			StatusText:          "当前工作目标已经准备完成，下一条文本会直接开启新会话。",
+			ShowWorkspaceSelect: true,
+			WorkspaceOptions: []control.FeishuTargetPickerWorkspaceOption{
+				{Value: "/data/web", Label: "web"},
+			},
+		}},
+	})
+	if len(frames) != 1 {
+		t.Fatalf("expected one status frame, got %d", len(frames))
+	}
+	if frames[0].MsgType != "markdown" || frames[0].Markdown == nil {
+		t.Fatalf("expected markdown status frame, got %+v", frames[0])
+	}
+	if frames[0].TemplateCard != nil {
+		t.Fatalf("succeeded picker must not render an actionable card, got %+v", frames[0].TemplateCard)
+	}
+	if !strings.Contains(frames[0].Markdown.Content, "已进入新会话待命") || !strings.Contains(frames[0].Markdown.Content, "下一条文本会直接开启新会话") {
+		t.Fatalf("unexpected status markdown: %q", frames[0].Markdown.Content)
+	}
+}
+
 func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	view := control.FeishuRequestView{
 		RequestID: "req-1",

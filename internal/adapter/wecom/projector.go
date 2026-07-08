@@ -291,6 +291,11 @@ func planStepMarker(status agentproto.TurnPlanStepStatus) string {
 // message).
 func (p *Projector) projectTargetPicker(view control.FeishuTargetPickerView) []Frame {
 	view = control.NormalizeFeishuTargetPickerView(view)
+	if view.Stage != "" && view.Stage != control.FeishuTargetPickerStageEditing {
+		if body := targetPickerStatusMarkdown(view); body != "" {
+			return []Frame{markdownFrame(body)}
+		}
+	}
 	title := strings.TrimSpace(view.Title)
 	if title == "" {
 		title = "选择工作区与会话"
@@ -436,6 +441,50 @@ func targetPickerBody(view control.FeishuTargetPickerView) string {
 		parts = append(parts, h)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func targetPickerStatusMarkdown(view control.FeishuTargetPickerView) string {
+	title := strings.TrimSpace(view.StatusTitle)
+	if title == "" {
+		title = targetPickerStageTitle(view.Stage)
+	}
+	var parts []string
+	if title != "" {
+		parts = append(parts, "**"+title+"**")
+	}
+	if text := strings.TrimSpace(view.StatusText); text != "" {
+		parts = append(parts, text)
+	}
+	for _, section := range view.StatusSections {
+		label := strings.TrimSpace(section.Label)
+		if label != "" {
+			parts = append(parts, "**"+label+"**")
+		}
+		for _, line := range section.Lines {
+			if line = strings.TrimSpace(line); line != "" {
+				parts = append(parts, line)
+			}
+		}
+	}
+	if footer := strings.TrimSpace(view.StatusFooter); footer != "" {
+		parts = append(parts, footer)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func targetPickerStageTitle(stage control.FeishuTargetPickerStage) string {
+	switch stage {
+	case control.FeishuTargetPickerStageProcessing:
+		return "正在处理"
+	case control.FeishuTargetPickerStageSucceeded:
+		return "已完成"
+	case control.FeishuTargetPickerStageFailed:
+		return "处理失败"
+	case control.FeishuTargetPickerStageCancelled:
+		return "已取消"
+	default:
+		return ""
+	}
 }
 
 // ---- request (approve / reject) --------------------------------------------
