@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Type: `general`
-> Updated: `2026-05-13`
-> Summary: 更新非 Linux 当前用户自动启动实现文档索引。
+> Updated: `2026-07-08`
+> Summary: 增加 Feishu / WeCom 多通道架构文档索引。
 
 ## 1. 适用范围
 
@@ -128,6 +128,7 @@
 - [install-deploy-design.md](./general/install-deploy-design.md)
 - [issue-orchestration-workflow.md](./general/issue-orchestration-workflow.md)
 - [local-self-upgrade-flow.md](./general/local-self-upgrade-flow.md)
+- [messaging-channels.md](./general/messaging-channels.md)
 - [mode-terminology-guidelines.md](./general/mode-terminology-guidelines.md)
 - [page-mock-guidelines.md](./general/page-mock-guidelines.md)
 - [release-roadmap-workflow.md](./general/release-roadmap-workflow.md)

@@ -28,16 +28,11 @@ type ServicesConfig struct {
 	FeishuAppID          string
 	FeishuAppSecret      string
 	FeishuUseSystemProxy bool
-	// WeComBotID and WeComSecret are OPTIONAL credentials for the additive,
-	// opt-in WeCom (企业微信 aibot) second channel. When both are empty, WeCom is
-	// entirely inactive and the daemon runs Feishu-only, unchanged. Sourced from
-	// the WECOM_BOT_ID / WECOM_SECRET environment variables (mirroring the Feishu
-	// env override), so no config-file schema change is required for Phase 3.
-	WeComBotID     string
-	WeComSecret    string
-	ConfigPath     string
-	DebugRelayFlow bool
-	DebugRelayRaw  bool
+	WeComBotID           string
+	WeComSecret          string
+	ConfigPath           string
+	DebugRelayFlow       bool
+	DebugRelayRaw        bool
 }
 
 const (
@@ -100,6 +95,7 @@ func LoadServicesConfig() (ServicesConfig, error) {
 		return ServicesConfig{}, err
 	}
 	selectedApp := SelectRuntimeFeishuApp(loaded.Config.Feishu.Apps)
+	wecomBotID, wecomSecret := resolveWeComRuntimeCredentials(loaded.Config.WeCom)
 	cfg := ServicesConfig{
 		RelayHost:    chooseNonEmpty(os.Getenv("RELAY_HOST"), loaded.Config.Relay.ListenHost, defaultRelayListenHost),
 		RelayPort:    strconv.Itoa(chooseInt(os.Getenv("RELAY_PORT"), loaded.Config.Relay.ListenPort)),
@@ -122,8 +118,8 @@ func LoadServicesConfig() (ServicesConfig, error) {
 			boolString(loaded.Config.Feishu.UseSystemProxy),
 			loaded.Config.Feishu.UseSystemProxy,
 		),
-		WeComBotID:  chooseNonEmpty(os.Getenv("WECOM_BOT_ID")),
-		WeComSecret: chooseNonEmpty(os.Getenv("WECOM_SECRET")),
+		WeComBotID:  wecomBotID,
+		WeComSecret: wecomSecret,
 		ConfigPath:  loaded.Path,
 		DebugRelayFlow: chooseBool(
 			os.Getenv(DebugRelayFlowEnv),
@@ -137,6 +133,18 @@ func LoadServicesConfig() (ServicesConfig, error) {
 		),
 	}
 	return cfg, nil
+}
+
+func resolveWeComRuntimeCredentials(settings WeComSettings) (botID, secret string) {
+	envBotID := strings.TrimSpace(os.Getenv("WECOM_BOT_ID"))
+	envSecret := strings.TrimSpace(os.Getenv("WECOM_SECRET"))
+	if envBotID != "" || envSecret != "" {
+		return envBotID, envSecret
+	}
+	if settings.Enabled != nil && !*settings.Enabled {
+		return "", ""
+	}
+	return strings.TrimSpace(settings.BotID), strings.TrimSpace(settings.Secret)
 }
 
 func fileExists(path string) bool {

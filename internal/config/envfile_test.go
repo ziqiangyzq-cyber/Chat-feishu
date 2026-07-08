@@ -72,6 +72,11 @@ func TestLoadServicesConfigUsesUnifiedConfigEnvOverride(t *testing.T) {
 		AppSecret: "secret_override",
 		Enabled:   boolPtr(true),
 	}}
+	cfg.WeCom = WeComSettings{
+		Enabled: boolPtr(true),
+		BotID:   "bot_json",
+		Secret:  "secret_json",
+	}
 	cfg.Debug.RelayFlow = true
 	cfg.Debug.RelayRaw = true
 	if err := WriteAppConfig(overridePath, cfg); err != nil {
@@ -98,6 +103,9 @@ func TestLoadServicesConfigUsesUnifiedConfigEnvOverride(t *testing.T) {
 	if loaded.FeishuAppID != "cli_override" || loaded.FeishuAppSecret != "secret_override" {
 		t.Fatalf("feishu = %q/%q", loaded.FeishuAppID, loaded.FeishuAppSecret)
 	}
+	if loaded.WeComBotID != "bot_json" || loaded.WeComSecret != "secret_json" {
+		t.Fatalf("wecom = %q/%q", loaded.WeComBotID, loaded.WeComSecret)
+	}
 	if !loaded.FeishuUseSystemProxy {
 		t.Fatal("expected FeishuUseSystemProxy to be true")
 	}
@@ -106,6 +114,58 @@ func TestLoadServicesConfigUsesUnifiedConfigEnvOverride(t *testing.T) {
 	}
 	if !loaded.DebugRelayRaw {
 		t.Fatal("expected DebugRelayRaw to be true")
+	}
+}
+
+func TestLoadServicesConfigUsesWeComEnvOverride(t *testing.T) {
+	unsetUnifiedConfigOverride(t)
+	xdgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+	t.Setenv("WECOM_BOT_ID", "bot_env")
+	t.Setenv("WECOM_SECRET", "secret_env")
+
+	configPath := filepath.Join(xdgHome, "codex-remote", "config.json")
+	cfg := DefaultAppConfig()
+	cfg.WeCom = WeComSettings{
+		Enabled: boolPtr(false),
+		BotID:   "bot_json",
+		Secret:  "secret_json",
+	}
+	if err := WriteAppConfig(configPath, cfg); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	loaded, err := LoadServicesConfig()
+	if err != nil {
+		t.Fatalf("LoadServicesConfig: %v", err)
+	}
+	if loaded.WeComBotID != "bot_env" || loaded.WeComSecret != "secret_env" {
+		t.Fatalf("wecom env override = %q/%q", loaded.WeComBotID, loaded.WeComSecret)
+	}
+}
+
+func TestLoadServicesConfigRespectsDisabledWeComConfig(t *testing.T) {
+	unsetUnifiedConfigOverride(t)
+	xdgHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+
+	configPath := filepath.Join(xdgHome, "codex-remote", "config.json")
+	cfg := DefaultAppConfig()
+	cfg.WeCom = WeComSettings{
+		Enabled: boolPtr(false),
+		BotID:   "bot_json",
+		Secret:  "secret_json",
+	}
+	if err := WriteAppConfig(configPath, cfg); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	loaded, err := LoadServicesConfig()
+	if err != nil {
+		t.Fatalf("LoadServicesConfig: %v", err)
+	}
+	if loaded.WeComBotID != "" || loaded.WeComSecret != "" {
+		t.Fatalf("disabled wecom should not load credentials, got %q/%q", loaded.WeComBotID, loaded.WeComSecret)
 	}
 }
 

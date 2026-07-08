@@ -1,5 +1,10 @@
 # 快速开始
 
+`codex-remote` 当前支持两个 IM 通道：
+
+- Feishu / 飞书：推荐首次接入通道，WebSetup 可完成凭据、权限和菜单配置。
+- WeCom / 企业微信：可选第二通道，通过企业微信 aibot `botId` / `secret` 启用，可与飞书同时运行。
+
 ## 方式一：一条命令安装最新正式版
 
 ```bash
@@ -65,8 +70,9 @@ daemon 启动后，打开命令输出里的 `/setup` 地址。
 1. 添加或验证飞书应用凭据
 2. 看一下这台机器的运行环境检查结果
 3. 如有需要，开启自动启动
-4. 直接开始使用默认 `normal` 模式
-5. 只有在你明确需要“飞书跟着编辑器当前焦点走”时，再去处理 VS Code 接入
+4. 如果需要企业微信通道，按 [`deploy/wecom/README.md`](./deploy/wecom/README.md) 写入 `wecom.enabled/botId/secret` 并重启 daemon
+5. 直接开始使用默认 `normal` 模式
+6. 只有在你明确需要“飞书跟着编辑器当前焦点走”时，再去处理 VS Code 接入
 
 当前默认推荐路径是：先用 `normal` 模式，再按需启用 VS Code 跟随能力。
 
@@ -130,3 +136,26 @@ loginctl enable-linger "$USER"
 - `/detach` 会断开当前接管，并取消正在等待的后台恢复
 - 如果你需要编辑器跟随行为，使用 `/mode vscode`，然后 `/list`，最后 `/follow`
 - 默认执行权限是 `full`；如果你暂时想改成确认模式，可以发送 `/access confirm`
+
+## 开始在企业微信里使用
+
+先确认 `~/.config/codex-remote/config.json` 中已经配置：
+
+```json
+{
+  "wecom": {
+    "enabled": true,
+    "botId": "YOUR_WECOM_BOT_ID",
+    "secret": "YOUR_WECOM_SECRET"
+  }
+}
+```
+
+或者服务环境里存在：
+
+```bash
+WECOM_BOT_ID=YOUR_WECOM_BOT_ID
+WECOM_SECRET=YOUR_WECOM_SECRET
+```
+
+重启 daemon 后，在企业微信 aibot 会话里发送文本即可触发同一套 Codex Remote 工作区选择和执行流程。WeCom 当前支持基础文本、Markdown、计划更新、目标选择卡和确认卡；文件发送和 streaming 单消息更新尚未启用。

@@ -42,6 +42,7 @@ type AppConfig struct {
 	Codex          CodexSettings          `json:"codex,omitempty"`
 	Claude         ClaudeSettings         `json:"claude,omitempty"`
 	Feishu         FeishuSettings         `json:"feishu"`
+	WeCom          WeComSettings          `json:"wecom,omitempty"`
 	Debug          DebugSettings          `json:"debug"`
 	Storage        StorageSettings        `json:"storage,omitempty"`
 }
@@ -119,6 +120,12 @@ type FeishuAppConfig struct {
 	AppSecret  string     `json:"appSecret,omitempty"`
 	Enabled    *bool      `json:"enabled,omitempty"`
 	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
+}
+
+type WeComSettings struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	BotID   string `json:"botId,omitempty"`
+	Secret  string `json:"secret,omitempty"`
 }
 
 type DebugSettings struct {

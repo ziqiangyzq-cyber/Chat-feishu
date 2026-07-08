@@ -271,8 +271,8 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		}
 		return c.handleEventCallback(ctx, event)
 	default:
-		// TODO(wecom Phase 2): handle additional inbound frame types (acks,
-		// server keepalive frames) as the protocol is fleshed out.
+		// Future protocol support: handle additional inbound frame types such as
+		// acks or server keepalive frames when real traffic requires them.
 		log.Printf("wecom: ignoring unhandled frame type %q", env.Type)
 		return nil
 	}
@@ -298,11 +298,12 @@ func (c *Client) handleEventCallback(ctx context.Context, event InboundCardEvent
 
 // sendFrame serialises an outbound projector Frame into the aibot respond wire
 // frame and writes it. Streaming semantics (aibot_respond_update_msg with a
-// shared stream id) are deferred to a later phase; a Frame flagged Stream is
-// still sent as a standalone message here.
+// shared stream id) are not implemented yet; a Frame flagged Stream is still
+// sent as a standalone message here.
 //
-// TODO(wecom Phase 3): honour Frame.Stream by emitting aibot_respond_msg +
-// aibot_respond_update_msg sequences sharing a stream id.
+// Future protocol support: honour Frame.Stream by emitting aibot_respond_msg +
+// aibot_respond_update_msg sequences sharing a stream id. Until that exists,
+// Channel.Capabilities reports Streaming=false.
 func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) error {
 	return c.writeJSON(ctx, respondMsgFrame{
 		Type:         frameTypeRespondMsg,

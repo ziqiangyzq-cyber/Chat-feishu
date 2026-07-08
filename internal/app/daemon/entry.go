@@ -110,10 +110,9 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		gateway,
 		identity,
 	)
-	// Opt-in WeCom second channel. Constructed ONLY when both credentials are
-	// present; otherwise no wecom.Channel is created, SetWeComChannel is never
-	// called, a.wecomChannel stays nil, and the daemon runs Feishu-only exactly
-	// as before. This is the enforcement point for WeCom being additive.
+	// Optional WeCom second channel. It is constructed only when runtime
+	// credentials are present, so a default install remains Feishu-only while a
+	// configured install can run Feishu and WeCom side by side.
 	if botID := strings.TrimSpace(cfg.WeComBotID); botID != "" {
 		if secret := strings.TrimSpace(cfg.WeComSecret); secret != "" {
 			app.SetWeComChannel(wecom.NewChannel(wecom.Config{

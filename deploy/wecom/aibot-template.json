@@ -1,0 +1,28 @@
+{
+  "name": "codex-remote-wecom",
+  "description": "Reference checklist for configuring the WeCom aibot channel used by Codex Remote.",
+  "requiredRuntimeConfig": {
+    "configPath": "~/.config/codex-remote/config.json",
+    "json": {
+      "wecom": {
+        "enabled": true,
+        "botId": "YOUR_WECOM_BOT_ID",
+        "secret": "YOUR_WECOM_SECRET"
+      }
+    },
+    "envOverride": {
+      "WECOM_BOT_ID": "YOUR_WECOM_BOT_ID",
+      "WECOM_SECRET": "YOUR_WECOM_SECRET"
+    }
+  },
+  "transport": {
+    "kind": "websocket-long-connection",
+    "endpoint": "wss://openws.work.weixin.qq.com",
+    "subscribeFrame": "aibot_subscribe"
+  },
+  "notes": [
+    "This file is a project checklist, not an official WeCom import format.",
+    "Leave wecom.enabled false or omit botId/secret to run Feishu-only.",
+    "Feishu and WeCom can be enabled at the same time."
+  ]
+}

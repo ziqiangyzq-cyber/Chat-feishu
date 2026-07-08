@@ -1,13 +1,17 @@
-# Codex Remote Feishu
+# Codex Remote
 
-`codex-remote-feishu` 把一台机器上的 Codex 工作现场带到飞书，让你可以在飞书里接管工作区、切换 thread、继续对话、发图和停止当前 turn。
+`codex-remote` 把一台机器上的 Codex 工作现场带到 IM。当前项目内置两个通道：
+
+- Feishu / 飞书：成熟主通道，支持 WebSetup、卡片、文件、图片、预览和日常升级。
+- WeCom / 企业微信：可选第二通道，支持企业微信 aibot 长连接、基础消息、Markdown、目标选择和确认卡。
 
 使用说明 https://my.feishu.cn/docx/PTncdNBf1oS9N5xBikBcGi2enzc
 
 核心目标场景是：
 
 - 本机或远端 Linux 上运行 Codex
-- 默认直接在飞书里按工作区和已有会话继续当前工作
+- 默认直接在 IM 里按工作区和已有会话继续当前工作
+- 飞书和企业微信可以同时接入同一台 daemon，按各自 surface namespace 独立路由
 - 只有在需要跟着编辑器当前焦点走时，才按需接入 VS Code
 - 尽量保留原有对话的 thread、模型配置和工作目录语义
 
@@ -18,7 +22,7 @@
 - `codex-remote`
   - `daemon` role
     - 常驻服务
-    - 管理实例、thread、消息队列、Feishu 投影和状态接口
+    - 管理实例、thread、消息队列、Feishu / WeCom 通道投影和状态接口
   - `app-server` / wrapper role
     - 包装真实 `codex`
     - 把原生 app-server 协议翻译成统一事件流
@@ -45,6 +49,8 @@
 ## 功能
 
 - 在飞书里列出可接管工作区，并直接继续已有对话或新开会话
+- 在企业微信里通过 aibot 长连接接收文本消息，并把同一套 Codex Remote surface 路由回企业微信
+- Feishu 和 WeCom 会话按通道 namespace 隔离，避免一个通道的事件投递到另一个通道
 - 在统一目标选择卡里直接添加工作区：接入已有本地目录，或导入 Git 仓库
 - 直接从最近或全部会话列表继续已有对话
 - 需要时切到 VS Code 跟随当前编辑器对话
@@ -61,19 +67,23 @@
 - 最终回复会直接回在触发它的那条消息下方
 - 旧卡片、旧按钮和旧命令会明确提示已过期或已移除
 - 最终回复中的本地 `.md` 和单文件 `.html` 链接可自动替换成飞书云空间预览链接
+- WeCom 当前支持文本、Markdown、计划更新、目标选择卡和请求确认卡；streaming 单消息更新和文件发送尚未声明为可用能力
 
 ## 安装前准备
 
 1. 确保真实 `codex` 在目标机器上可运行
 2. 如果你需要和 VS Code 联动，再安装 VS Code 的 ChatGPT / Codex 扩展
 3. 无需提前配置飞书应用——安装后通过内置 WebSetup 向导即可扫码完成飞书接入，飞书配置是启动后的步骤，不是安装前提
-4. 只有在源码构建或仓库联调时才需要 Go 1.24+
+4. 如果需要企业微信通道，提前准备企业微信 aibot 的 `botId` 和 `secret`
+5. 只有在源码构建或仓库联调时才需要 Go 1.24+
 
 飞书应用配置无需提前准备，项目启动后通过内置 WebSetup 向导即可完成：扫码接入、权限配置和扫码绑定。无需手动准备 `App ID`、`App Secret` 或编辑配置文件。
 
 如需本地文档预览（将本地 `.md` 或 `.html` 链接替换为飞书云空间预览链接）或 `/cron` 定时任务等额外功能，在 WebSetup 中完成对应权限配置即可。不开这部分权限时，主对话功能仍可使用，但对应功能不可用。
 
 关于飞书应用的具体配置项，可参考仓库中的飞书配置模板 [`deploy/feishu/app-template.json`](./deploy/feishu/app-template.json) 和配置说明 [`deploy/feishu/README.md`](./deploy/feishu/README.md)。这些是 WebSetup 的参考资源，方便你了解机器人菜单、事件订阅和权限配置的具体内容，无需在安装前手动准备。
+
+企业微信通道不走飞书 WebSetup。准备好 aibot 凭据后，在统一配置 `~/.config/codex-remote/config.json` 里加入 `wecom.enabled/botId/secret`，或用 `WECOM_BOT_ID` / `WECOM_SECRET` 环境变量覆盖。完整说明见 [`deploy/wecom/README.md`](./deploy/wecom/README.md)。
 
 ## 一条命令安装
 
@@ -134,7 +144,7 @@ Windows PowerShell:
 .\codex-remote.exe install -bootstrap-only -start-daemon
 ```
 
-启动后打开输出中的 `/setup` 链接，后续飞书配置、normal mode 使用准备、以及按需的 VS Code detect/apply 和 shim 重装都在 WebSetup / Admin UI 完成。
+启动后打开输出中的 `/setup` 链接，后续飞书配置、normal mode 使用准备、以及按需的 VS Code detect/apply 和 shim 重装都在 WebSetup / Admin UI 完成。企业微信通道通过 `config.json` 或环境变量启用。
 
 ## 当前用户升级方式
 
@@ -162,6 +172,7 @@ release 安装器现在只做 bootstrap：
 真正的产品配置入口已经收敛到 WebSetup / Admin UI：
 
 - 飞书 App 新增、验证、启停
+- 企业微信通道运行配置通过统一 `config.json` 管理
 - 运行环境检查
 - 自动启动
 - 按需执行 VS Code `detect`
@@ -172,8 +183,9 @@ release 安装器现在只做 bootstrap：
 当前默认推荐顺序是：
 
 1. 先完成飞书 App 接入和运行环境检查
-2. 直接开始在飞书里用默认 `normal` 模式工作
-3. 只有在你明确需要“飞书跟着 VS Code 当前焦点走”时，再回到页面接入 VS Code
+2. 如果需要企业微信，同时写入 `wecom.enabled/botId/secret` 并重启 daemon
+3. 直接在已接入的 IM 通道里用默认 `normal` 模式工作
+4. 只有在你明确需要“飞书跟着 VS Code 当前焦点走”时，再回到页面接入 VS Code
 
 换句话说，VS Code 接入现在是可选增强，不再是开始使用前的默认前提。
 
@@ -355,6 +367,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
 - [架构说明](./docs/general/architecture.md)
 - [协议说明](./docs/general/relay-protocol-spec.md)
 - [飞书产品行为](./docs/general/feishu-product-design.md)
+- [多通道架构](./docs/general/messaging-channels.md)
 - [飞书 Markdown 预览设计](./docs/implemented/feishu-md-preview-design.md)
 - [安装与部署](./docs/general/install-deploy-design.md)
 - [测试策略](./docs/general/go-test-strategy.md)
