@@ -33,10 +33,11 @@ func TestDispatchMessageCarriesActorUserID(t *testing.T) {
 	}
 
 	frame := msgCallbackFrame{
-		ChatID:     " chat-1 ",
-		MsgID:      " msg-1 ",
-		FromUserID: " user-from ",
+		ChatID:  " chat-1 ",
+		MsgID:   " msg-1 ",
+		Headers: frameHeaders{ReqID: " req-1 "},
 	}
+	frame.From.UserID = " user-from "
 	frame.Text.Content = " hello "
 
 	ch.dispatchMessage(context.Background(), frame)
@@ -49,5 +50,34 @@ func TestDispatchMessageCarriesActorUserID(t *testing.T) {
 	}
 	if got.ChatID != "chat-1" || got.MessageID != "msg-1" || got.Text != "hello" {
 		t.Fatalf("unexpected action context: %+v", got)
+	}
+	if reqID := ch.responseReqID("chat-1"); reqID != "req-1" {
+		t.Fatalf("response req id = %q, want req-1", reqID)
+	}
+}
+
+func TestDispatchMessageFallsBackToSenderAsSingleChatID(t *testing.T) {
+	ch := NewChannel(Config{})
+	var got control.Action
+	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
+		got = action
+		return nil
+	}
+
+	frame := msgCallbackFrame{
+		MsgID:    " msg-1 ",
+		ChatType: "single",
+		Headers:  frameHeaders{ReqID: "req-single"},
+	}
+	frame.From.UserID = " user-single "
+	frame.Text.Content = " hello "
+
+	ch.dispatchMessage(context.Background(), frame)
+
+	if got.ChatID != "user-single" || got.ActorUserID != "user-single" {
+		t.Fatalf("unexpected single-chat action: %+v", got)
+	}
+	if reqID := ch.responseReqID("user-single"); reqID != "req-single" {
+		t.Fatalf("response req id = %q, want req-single", reqID)
 	}
 }

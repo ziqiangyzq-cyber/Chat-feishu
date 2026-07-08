@@ -19,8 +19,9 @@ type Channel struct {
 	client    *Client
 	projector *Projector
 
-	mu      sync.Mutex
-	handler surface.ActionHandler
+	mu                  sync.Mutex
+	handler             surface.ActionHandler
+	responseReqIDByChat map[string]string
 }
 
 // Compile-time assertion that *Channel satisfies surface.Channel.
@@ -28,7 +29,11 @@ var _ surface.Channel = (*Channel)(nil)
 
 // NewChannel constructs a WeCom Channel from the given aibot config.
 func NewChannel(config Config) *Channel {
-	return &Channel{client: NewClient(config), projector: NewProjector()}
+	return &Channel{
+		client:              NewClient(config),
+		projector:           NewProjector(),
+		responseReqIDByChat: make(map[string]string),
+	}
 }
 
 // Name returns the stable channel identifier.
@@ -76,9 +81,14 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 	if text == "" {
 		return
 	}
+	chatID := wecomMessageChatID(frame)
+	if chatID == "" {
+		return
+	}
+	c.rememberResponseReqID(chatID, frame.Headers.ReqID)
 	action := control.Action{
 		Kind:        control.ActionTextMessage,
-		ChatID:      strings.TrimSpace(frame.ChatID),
+		ChatID:      chatID,
 		ActorUserID: wecomMessageActorUserID(frame),
 		MessageID:   strings.TrimSpace(frame.MsgID),
 		Text:        text,
@@ -88,8 +98,18 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 	handler(ctx, action)
 }
 
+func wecomMessageChatID(frame msgCallbackFrame) string {
+	return firstNonEmpty(
+		strings.TrimSpace(frame.ChatID),
+		strings.TrimSpace(frame.From.UserID),
+		strings.TrimSpace(frame.FromUserID),
+		strings.TrimSpace(frame.UserID),
+	)
+}
+
 func wecomMessageActorUserID(frame msgCallbackFrame) string {
 	return firstNonEmpty(
+		strings.TrimSpace(frame.From.UserID),
 		strings.TrimSpace(frame.FromUserID),
 		strings.TrimSpace(frame.UserID),
 		strings.TrimSpace(frame.SenderUserID),
@@ -130,12 +150,35 @@ func (c *Channel) Deliver(ctx context.Context, chatID string, event eventcontrac
 	if strings.TrimSpace(chatID) == "" {
 		return errors.New("wecom: deliver requires a chatID")
 	}
+	responseReqID := c.responseReqID(chatID)
 	for _, frame := range c.projector.ProjectEvent(event) {
+		if responseReqID != "" {
+			if err := c.client.respondFrame(ctx, responseReqID, frame); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := c.client.sendFrame(ctx, chatID, frame); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *Channel) rememberResponseReqID(chatID, reqID string) {
+	reqID = strings.TrimSpace(reqID)
+	if chatID == "" || reqID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.responseReqIDByChat[chatID] = reqID
+}
+
+func (c *Channel) responseReqID(chatID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.responseReqIDByChat[chatID]
 }
 
 // Stop tears down the long connection.

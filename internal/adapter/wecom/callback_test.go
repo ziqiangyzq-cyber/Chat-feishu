@@ -8,7 +8,7 @@ import (
 
 func TestMapCardEventSelectWorkspace(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
-		Type:           frameTypeEventCallback,
+		Cmd:            frameCmdEventCallback,
 		ChatID:         "chat-1",
 		OperatorUserID: "user-9",
 		MessageID:      "msg-1",

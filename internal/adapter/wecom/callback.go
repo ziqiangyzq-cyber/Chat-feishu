@@ -26,9 +26,10 @@ import (
 //
 // PROVISIONAL: validate against real WeCom aibot traffic.
 type InboundCardEvent struct {
-	Type string `json:"type"`
+	Cmd     string       `json:"cmd,omitempty"`
+	Headers frameHeaders `json:"headers,omitempty"`
 	// BotID identifies the receiving aibot.
-	BotID string `json:"botid"`
+	BotID string `json:"aibotid"`
 	// ChatID is the conversation the interaction happened in.
 	ChatID string `json:"chatid"`
 	// EventType is the callback sub-discriminator (e.g. a template_card event).
