@@ -191,6 +191,8 @@ func (p *Projector) ProjectEvent(event eventcontract.Event) []Frame {
 		return p.projectTargetPicker(payload.View)
 	case eventcontract.RequestPayload:
 		return p.projectRequest(payload.View)
+	case eventcontract.ImageOutputPayload:
+		return projectImageOutput(payload.ImageOutput)
 	default:
 		return nil
 	}
@@ -543,7 +545,50 @@ func (p *Projector) projectRequest(view control.FeishuRequestView) []Frame {
 }
 
 func requestBody(view control.FeishuRequestView) string {
-	return strings.TrimSpace(view.HintText)
+	var parts []string
+	for _, section := range view.Sections {
+		if label := strings.TrimSpace(section.Label); label != "" {
+			parts = append(parts, "**"+label+"**")
+		}
+		for _, line := range section.Lines {
+			if line = strings.TrimSpace(line); line != "" {
+				parts = append(parts, line)
+			}
+		}
+	}
+	if h := strings.TrimSpace(view.HintText); h != "" {
+		parts = append(parts, h)
+	}
+	if s := strings.TrimSpace(view.StatusText); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// projectImageOutput is a minimal media fallback: WeCom binary upload is not
+// wired yet, so surface a path/prompt notice the user can act on. FileSend
+// capability stays false until real media frames land.
+func projectImageOutput(output control.ImageOutput) []Frame {
+	path := strings.TrimSpace(output.SavedPath)
+	prompt := strings.TrimSpace(output.Prompt)
+	var b strings.Builder
+	b.WriteString("**图片输出**")
+	if path != "" {
+		b.WriteString("\n路径：`")
+		b.WriteString(path)
+		b.WriteString("`")
+	}
+	if prompt != "" {
+		b.WriteString("\n")
+		b.WriteString(prompt)
+	}
+	if path == "" && strings.TrimSpace(output.ImageBase64) != "" {
+		b.WriteString("\n（图片内容已生成，但企业微信通道暂未上传二进制附件；请在本机打开工作区查看。）")
+	}
+	if b.Len() == len("**图片输出**") {
+		return nil
+	}
+	return []Frame{markdownFrame(b.String())}
 }
 
 func requestButtonStyle(style string) int {

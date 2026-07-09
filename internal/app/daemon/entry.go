@@ -116,8 +116,10 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 	if botID := strings.TrimSpace(cfg.WeComBotID); botID != "" {
 		if secret := strings.TrimSpace(cfg.WeComSecret); secret != "" {
 			app.SetWeComChannel(wecom.NewChannel(wecom.Config{
-				BotID:  botID,
-				Secret: secret,
+				BotID:       botID,
+				Secret:      secret,
+				SessionIdle: wecomDurationEnv("WECOM_SESSION_IDLE", 30*time.Minute),
+				MaxTurn:     wecomDurationEnv("WECOM_MAX_TURN", 0),
 			}))
 			log.Printf("wecom channel enabled (additive): bot=%s", botID)
 		}
@@ -410,4 +412,20 @@ func logStartupState(startup startupAccessPlan, services config.ServicesConfig, 
 	}
 	log.Printf("startup state: %s; configured_feishu_apps=%d admin=%s", phase, startup.ConfiguredAppCount, startup.AdminURL)
 	log.Printf("web admin: %s", startup.AdminURL)
+}
+
+// wecomDurationEnv reads a duration from env (Go duration strings like "30m",
+// "1h") and falls back to def when unset or invalid. Used for optional WeCom
+// idle / max-turn budgets without expanding the config schema.
+func wecomDurationEnv(key string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		log.Printf("wecom: ignore invalid %s=%q, using default %s", key, raw, def)
+		return def
+	}
+	return d
 }

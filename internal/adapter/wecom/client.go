@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,10 +79,12 @@ type msgCallbackFrame struct {
 }
 
 // streamMeta carries the streaming identity shared across a sequence of
-// respond/update frames. finish marks the terminal update.
+// respond/update frames. finish marks the terminal update; content carries the
+// cumulative markdown for update frames.
 type streamMeta struct {
-	ID     string `json:"id"`
-	Finish bool   `json:"finish"`
+	ID      string `json:"id"`
+	Finish  bool   `json:"finish"`
+	Content string `json:"content,omitempty"`
 }
 
 // respondMsgFrame is a new outbound message. Exactly one of Text / Markdown /
@@ -140,11 +143,26 @@ type Client struct {
 	mu      sync.Mutex
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+
+	// streamMu guards per-chat streaming state used by streamMarkdown.
+	streamMu sync.Mutex
+	streams  map[string]*chatStream
+}
+
+// chatStream tracks an open aibot stream.id for one chat.
+type chatStream struct {
+	ID        string
+	Started   bool
+	StartedAt time.Time
+	LastText  string
 }
 
 // NewClient constructs a Client for the given aibot credentials.
 func NewClient(config Config) *Client {
-	c := &Client{config: config}
+	c := &Client{
+		config:  config,
+		streams: make(map[string]*chatStream),
+	}
 	c.dialFn = c.dialDefault
 	return c
 }
@@ -327,14 +345,10 @@ func (c *Client) handleEventCallback(ctx context.Context, event InboundCardEvent
 	return nil
 }
 
-// sendFrame serialises an outbound projector Frame into the aibot respond wire
-// frame and writes it. Streaming semantics (aibot_respond_update_msg with a
-// shared stream id) are not implemented yet; a Frame flagged Stream is still
-// sent as a standalone message here.
-//
-// Future protocol support: honour Frame.Stream by emitting aibot_respond_msg +
-// aibot_respond_update_msg sequences sharing a stream id. Until that exists,
-// Channel.Capabilities reports Streaming=false.
+// sendFrame serialises an outbound projector Frame into the aibot send wire
+// frame and writes it. Incremental streaming uses streamMarkdown instead;
+// Frame.Stream only marks "text half of a split text+card event" and is still
+// sent as a standalone message so the following template_card is not coupled.
 func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) error {
 	wire := newSendMsgFrame(chatID, frame)
 	return c.writeJSON(ctx, wire)
@@ -343,6 +357,93 @@ func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) erro
 func (c *Client) respondFrame(ctx context.Context, reqID string, frame Frame) error {
 	wire := newRespondMsgFrame(reqID, frame)
 	return c.writeJSON(ctx, wire)
+}
+
+// streamMarkdown writes (or updates) a streaming markdown message for chatID.
+// Successive calls with finish=false share one stream id; finish=true ends it.
+func (c *Client) streamMarkdown(ctx context.Context, chatID, content string, finish bool) error {
+	chatID = strings.TrimSpace(chatID)
+	content = strings.TrimSpace(content)
+	if chatID == "" {
+		return errors.New("wecom: stream requires chatID")
+	}
+	if content == "" && !finish {
+		return nil
+	}
+
+	c.streamMu.Lock()
+	st := c.streams[chatID]
+	if st == nil {
+		st = &chatStream{ID: newReqID("stream"), StartedAt: time.Now()}
+		c.streams[chatID] = st
+	}
+	if content != "" {
+		st.LastText = content
+	}
+	streamID := st.ID
+	started := st.Started
+	if !started {
+		st.Started = true
+	}
+	if finish {
+		delete(c.streams, chatID)
+	}
+	c.streamMu.Unlock()
+
+	if !started {
+		wire := newSendMsgFrame(chatID, markdownFrame(content))
+		wire.Body.Stream = &streamMeta{ID: streamID, Finish: finish, Content: content}
+		return c.writeJSON(ctx, wire)
+	}
+	return c.writeJSON(ctx, newStreamUpdateFrame(chatID, streamID, content, finish))
+}
+
+func newStreamUpdateFrame(chatID, streamID, content string, finish bool) respondUpdateMsgFrame {
+	wire := respondUpdateMsgFrame{
+		Cmd:     frameCmdRespondUpdateMsg,
+		Headers: frameHeaders{ReqID: newReqID("upd")},
+	}
+	wire.Body.ChatID = chatID
+	wire.Body.MsgType = "markdown"
+	if content != "" {
+		wire.Body.Text = &textBody{Content: content}
+	}
+	wire.Body.Stream = &streamMeta{ID: streamID, Finish: finish, Content: content}
+	return wire
+}
+
+// dropStream forgets any open stream for chatID without sending a finish frame.
+func (c *Client) dropStream(chatID string) {
+	c.streamMu.Lock()
+	delete(c.streams, chatID)
+	c.streamMu.Unlock()
+}
+
+// streamAge returns how long the open stream for chatID has been active.
+func (c *Client) streamAge(chatID string, now time.Time) (time.Duration, bool) {
+	c.streamMu.Lock()
+	defer c.streamMu.Unlock()
+	st := c.streams[chatID]
+	if st == nil || !st.Started {
+		return 0, false
+	}
+	return now.Sub(st.StartedAt), true
+}
+
+// activeStreamChats returns chat ids with an open stream older than maxAge.
+func (c *Client) activeStreamChats(now time.Time, maxAge time.Duration) []string {
+	if maxAge <= 0 {
+		return nil
+	}
+	c.streamMu.Lock()
+	defer c.streamMu.Unlock()
+	out := make([]string, 0)
+	for chatID, st := range c.streams {
+		if st != nil && st.Started && now.Sub(st.StartedAt) > maxAge {
+			out = append(out, chatID)
+		}
+	}
+	return out
 }
 
 func newSubscribeFrame(config Config) subscribeFrame {

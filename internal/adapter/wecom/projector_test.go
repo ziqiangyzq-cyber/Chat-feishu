@@ -316,10 +316,57 @@ func TestProjectPlanUpdateMarkdown(t *testing.T) {
 }
 
 func TestProjectUnhandledEventReturnsNoFrames(t *testing.T) {
+	// Path picker is still Feishu-native; WeCom projector skips it.
 	frames := NewProjector().ProjectEvent(eventcontract.Event{
-		Payload: eventcontract.ImageOutputPayload{ImageOutput: control.ImageOutput{SavedPath: "/tmp/x.png"}},
+		Payload: eventcontract.PathPickerPayload{},
 	})
 	if len(frames) != 0 {
 		t.Fatalf("expected no frames for deferred kind, got %d", len(frames))
+	}
+}
+
+func TestProjectImageOutputAsMarkdownNotice(t *testing.T) {
+	p := NewProjector()
+	frames := p.ProjectEvent(eventcontract.Event{
+		Kind: eventcontract.KindImageOutput,
+		ImageOutput: &control.ImageOutput{
+			SavedPath: "/tmp/out.png",
+			Prompt:    "a diagram",
+		},
+	})
+	if len(frames) != 1 || frames[0].MsgType != "markdown" {
+		t.Fatalf("unexpected frames: %+v", frames)
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "/tmp/out.png") {
+		t.Fatalf("expected path in markdown, got %+v", frames[0].Markdown)
+	}
+}
+
+func TestProjectRequestIncludesSectionsInBody(t *testing.T) {
+	p := NewProjector()
+	frames := p.ProjectEvent(eventcontract.Event{
+		Kind: eventcontract.KindRequest,
+		RequestView: &control.FeishuRequestView{
+			RequestID: "req-1",
+			Title:     "确认执行",
+			Sections: []control.FeishuCardTextSection{{
+				Label: "风险",
+				Lines: []string{"将修改生产配置"},
+			}},
+			HintText: "请选择",
+			Options: []control.RequestPromptOption{
+				{OptionID: "approve", Label: "批准"},
+				{OptionID: "reject", Label: "拒绝"},
+			},
+		},
+	})
+	if len(frames) < 2 {
+		t.Fatalf("expected body + card frames, got %d", len(frames))
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "将修改生产配置") {
+		t.Fatalf("expected section body, got %+v", frames[0])
+	}
+	if frames[len(frames)-1].TemplateCard == nil || frames[len(frames)-1].TemplateCard.CardType != cardTypeButtonInteraction {
+		t.Fatalf("expected button card, got %+v", frames[len(frames)-1])
 	}
 }

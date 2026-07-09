@@ -54,18 +54,38 @@ WECOM_SECRET=YOUR_WECOM_SECRET
 
 环境变量优先级高于 `config.json`。只要任一 WeCom 环境变量存在，运行时就按环境变量解析 WeCom 凭据。
 
-## 当前能力
+## 当前能力（与飞书对齐情况）
 
-- 支持企业微信文本消息进入 Codex Remote。
-- 支持基础文本、Markdown、计划更新、目标选择卡、确认/拒绝请求卡输出到企业微信。
-- 支持 WeCom surface namespace，Feishu 和 WeCom 会话不会互相串线。
-- 支持长连接自动重连。
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 文本入站 / 出站 | ✅ | 单聊 / 群聊 |
+| Markdown 回复 | ✅ | |
+| 流式更新 | ✅ | `aibot_respond_msg` + `aibot_respond_update_msg` |
+| 计划更新 | ✅ | Markdown checklist |
+| 目标选择卡 | ✅ | button / dropdown template_card |
+| 审批 / 确认卡 | ✅ | 按钮 + 正文 sections |
+| 通用 slash 命令 | ✅ | `/stop` `/status` `/new` `/compact` `/help` 等与飞书同源解析 |
+| 图片输出 | ⚠️ 最小集 | 以 Markdown 路径提示展示，**不上传二进制** |
+| 文件发送 | ❌ | `FileSend=false`；`/sendfile` 可解析，企微侧无原生上传 |
+| WebSetup 自动配置 | ❌ | 需手写 botId/secret |
+| 会话 idle 清理 | ✅ | 默认 30 分钟清理 req_id / 流状态 |
+| 单轮 MaxTurn | ✅ 可选 | `Config.MaxTurn` 超时后结束流并提示 |
 
-当前暂不声明支持：
+## 常用命令（飞书 / 企微通用）
 
-- streaming 单消息增量更新
-- 文件发送
-- 企业微信侧 WebSetup 自动配置
+```
+/stop      中断当前执行
+/status    查看工作区与会话
+/new       新开会话
+/compact   压缩上下文
+/help      完整帮助
+/use       选择工作区 / 会话
+```
 
-这些能力没有实现前，项目不会在 `surface.Capabilities` 中声明可用，避免上层误走未实现路径。
+## 尚未实现（勿在 Capabilities 中声明）
 
+- 企业微信二进制图片 / 文件上传
+- 企业微信侧 WebSetup 扫码配置
+- 读超时 / pong 看门狗（连接仍依赖 ping + 读失败重连）
+
+这些能力没有实现前，项目不会在 `surface.Capabilities` 中把 `FileSend` 设为 true，避免上层误走未实现路径。
