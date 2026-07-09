@@ -87,7 +87,7 @@ func (s *Service) useAttachedVisibleThreadModeWithOverlayCleanup(surface *state.
 		}
 		return append(events, s.executeResolvedThreadTargetWithOverlayCleanup(surface, threadID, fallback, cleanup)...)
 	}
-	if owner := s.threadClaimSurface(threadID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.threadBusyOwnerForSurface(surface, threadID); owner != nil {
 		switch s.threadKickStatus(inst, owner, threadID) {
 		case threadKickIdle:
 			return append(events, s.presentKickThreadPrompt(surface, inst, threadID, owner)...)
@@ -169,7 +169,7 @@ func (s *Service) attachSurfaceToKnownThreadWithOverlayCleanup(surface *state.Su
 	if owner := s.workspaceBusyOwnerForSurface(surface, workspaceKey); owner != nil {
 		return attachSurfaceToKnownThreadWorkspaceBusyNotice(surface, mode)
 	}
-	if owner := s.instanceClaimSurface(inst.InstanceID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.instanceBusyOwnerForSurface(surface, inst.InstanceID); owner != nil {
 		return attachSurfaceToKnownThreadInstanceBusyNotice(surface, inst, mode)
 	}
 	s.persistCurrentClaudeWorkspaceProfileSnapshot(surface)

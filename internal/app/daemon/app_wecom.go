@@ -98,6 +98,10 @@ func (a *App) maybeAttachDefaultWeComWorkspaceLocked(ctx context.Context, action
 	if workspaceKey == "" {
 		return
 	}
+	if shared := a.sharedWeComAttachSurfaceLocked(workspaceKey); shared != nil {
+		a.attachSharedWeComSurfaceLocked(ctx, action, shared)
+		return
+	}
 	events := a.service.ApplySurfaceAction(control.Action{
 		Kind:             control.ActionAttachWorkspace,
 		GatewayID:        action.GatewayID,
@@ -107,6 +111,80 @@ func (a *App) maybeAttachDefaultWeComWorkspaceLocked(ctx context.Context, action
 		WorkspaceKey:     workspaceKey,
 	})
 	a.handleUIEventsLocked(ctx, events)
+}
+
+func (a *App) attachSharedWeComSurfaceLocked(ctx context.Context, action control.Action, owner *state.SurfaceConsoleRecord) {
+	if a == nil || a.service == nil || owner == nil {
+		return
+	}
+	surfaceID := strings.TrimSpace(action.SurfaceSessionID)
+	workspaceKey := state.NormalizeWorkspaceKey(owner.ClaimedWorkspaceKey)
+	instanceID := strings.TrimSpace(owner.AttachedInstanceID)
+	if surfaceID == "" || workspaceKey == "" || instanceID == "" {
+		return
+	}
+	inst := a.service.Instance(instanceID)
+	if inst == nil || !inst.Online {
+		return
+	}
+	a.service.MaterializeSurface(surfaceID, action.GatewayID, action.ChatID, action.ActorUserID)
+	surface := a.service.Surface(surfaceID)
+	if surface == nil {
+		return
+	}
+	surface.SharedAttach = true
+	surface.ClaimedWorkspaceKey = workspaceKey
+	if !a.service.TransitionSurfaceToSharedHeadless(surfaceID, instanceID, workspaceKey) {
+		surface.SharedAttach = false
+		surface.ClaimedWorkspaceKey = ""
+		events := a.service.ApplySurfaceAction(control.Action{
+			Kind:             control.ActionAttachWorkspace,
+			GatewayID:        action.GatewayID,
+			SurfaceSessionID: surfaceID,
+			ChatID:           action.ChatID,
+			ActorUserID:      action.ActorUserID,
+			WorkspaceKey:     workspaceKey,
+		})
+		a.handleUIEventsLocked(ctx, events)
+		return
+	}
+	a.handleUIEventsLocked(ctx, []eventcontract.Event{{
+		Kind:             eventcontract.KindNotice,
+		GatewayID:        action.GatewayID,
+		SurfaceSessionID: surfaceID,
+		SourceMessageID:  strings.TrimSpace(action.MessageID),
+		Notice: &control.Notice{
+			Code: "workspace_attached_shared",
+			Text: "已接入当前在线工作区，会继续复用现有会话上下文。",
+		},
+	}})
+}
+
+func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string) *state.SurfaceConsoleRecord {
+	if a == nil || a.service == nil {
+		return nil
+	}
+	workspaceKey = state.NormalizeWorkspaceKey(workspaceKey)
+	if workspaceKey == "" {
+		return nil
+	}
+	for _, surface := range a.service.Surfaces() {
+		if surface == nil || isWeComGateway(surface.GatewayID) {
+			continue
+		}
+		if strings.TrimSpace(surface.AttachedInstanceID) == "" {
+			continue
+		}
+		if state.NormalizeWorkspaceKey(surface.ClaimedWorkspaceKey) != workspaceKey {
+			continue
+		}
+		inst := a.service.Instance(surface.AttachedInstanceID)
+		if inst == nil || !inst.Online {
+			continue
+		}
+		return surface
+	}
+	return nil
 }
 
 func (a *App) defaultWeComWorkspaceKeyLocked() string {

@@ -361,6 +361,9 @@ func (s *Service) workspaceBusyOwnerForSurface(surface *state.SurfaceConsoleReco
 	if owner == nil || owner.SurfaceSessionID == surface.SurfaceSessionID {
 		return nil
 	}
+	if s.surfacesMayShareHeadlessAttachment(surface, owner) {
+		return nil
+	}
 	return owner
 }
 
@@ -386,6 +389,17 @@ func (s *Service) instanceClaimSurface(instanceID string) *state.SurfaceConsoleR
 		return nil
 	}
 	return surface
+}
+
+func (s *Service) instanceBusyOwnerForSurface(surface *state.SurfaceConsoleRecord, instanceID string) *state.SurfaceConsoleRecord {
+	owner := s.instanceClaimSurface(instanceID)
+	if owner == nil || surface == nil || owner.SurfaceSessionID == surface.SurfaceSessionID {
+		return nil
+	}
+	if s.surfacesMayShareHeadlessAttachment(surface, owner) {
+		return nil
+	}
+	return owner
 }
 
 func (s *Service) claimInstance(surface *state.SurfaceConsoleRecord, instanceID string) bool {
@@ -435,12 +449,30 @@ func (s *Service) threadClaimSurface(threadID string) *state.SurfaceConsoleRecor
 	return surface
 }
 
+func (s *Service) threadBusyOwnerForSurface(surface *state.SurfaceConsoleRecord, threadID string) *state.SurfaceConsoleRecord {
+	owner := s.threadClaimSurface(threadID)
+	if owner == nil || surface == nil || owner.SurfaceSessionID == surface.SurfaceSessionID {
+		return nil
+	}
+	if s.surfacesMayShareHeadlessAttachment(surface, owner) {
+		return nil
+	}
+	return owner
+}
+
 func (s *Service) surfaceOwnsThread(surface *state.SurfaceConsoleRecord, threadID string) bool {
 	if surface == nil || strings.TrimSpace(threadID) == "" {
 		return false
 	}
 	claim := s.threadClaims[threadID]
-	return claim != nil && claim.SurfaceSessionID == surface.SurfaceSessionID
+	if claim == nil {
+		return false
+	}
+	if claim.SurfaceSessionID == surface.SurfaceSessionID {
+		return true
+	}
+	owner := s.root.Surfaces[claim.SurfaceSessionID]
+	return s.surfacesMayShareHeadlessAttachment(surface, owner)
 }
 
 func (s *Service) claimThread(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord, threadID string) bool {
@@ -450,7 +482,7 @@ func (s *Service) claimThread(surface *state.SurfaceConsoleRecord, inst *state.I
 	if !threadVisible(inst.Threads[threadID]) {
 		return false
 	}
-	if owner := s.threadClaimSurface(threadID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.threadBusyOwnerForSurface(surface, threadID); owner != nil {
 		return false
 	}
 	s.threadClaims[threadID] = &threadClaimRecord{
@@ -465,7 +497,7 @@ func (s *Service) claimKnownThread(surface *state.SurfaceConsoleRecord, inst *st
 	if surface == nil || inst == nil || strings.TrimSpace(threadID) == "" {
 		return false
 	}
-	if owner := s.threadClaimSurface(threadID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.threadBusyOwnerForSurface(surface, threadID); owner != nil {
 		return false
 	}
 	s.threadClaims[threadID] = &threadClaimRecord{
@@ -569,4 +601,39 @@ func (s *Service) threadKickStatus(inst *state.InstanceRecord, owner *state.Surf
 		return threadKickQueued
 	}
 	return threadKickIdle
+}
+
+func (s *Service) surfacesMayShareHeadlessAttachment(surface, owner *state.SurfaceConsoleRecord) bool {
+	if surface == nil || owner == nil {
+		return false
+	}
+	if surface.SurfaceSessionID == owner.SurfaceSessionID {
+		return true
+	}
+	if !s.surfaceIsSharedAttach(surface) {
+		return false
+	}
+	if s.surfaceIsSharedAttach(owner) {
+		return false
+	}
+	if !s.surfaceIsHeadless(surface) || !s.surfaceIsHeadless(owner) {
+		return false
+	}
+	ownerInstanceID := strings.TrimSpace(owner.AttachedInstanceID)
+	if ownerInstanceID == "" {
+		return false
+	}
+	surfaceInstanceID := strings.TrimSpace(surface.AttachedInstanceID)
+	if surfaceInstanceID != "" && surfaceInstanceID != ownerInstanceID {
+		return false
+	}
+	surfaceWorkspace := s.surfaceCurrentWorkspaceKey(surface)
+	return surfaceWorkspace != "" && surfaceWorkspace == s.surfaceCurrentWorkspaceKey(owner)
+}
+
+func (s *Service) surfaceIsSharedAttach(surface *state.SurfaceConsoleRecord) bool {
+	if surface == nil || !surface.SharedAttach {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(surface.GatewayID), "wecom:")
 }

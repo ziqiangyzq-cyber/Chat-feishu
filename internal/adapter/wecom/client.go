@@ -379,11 +379,6 @@ func fillRespondMsgBody(wire *respondMsgFrame, frame Frame) {
 	wire.Body.Text = frame.Text
 	wire.Body.Markdown = frame.Markdown
 	wire.Body.TemplateCard = frame.TemplateCard
-	if wire.Body.MsgType == "text" && wire.Body.Text != nil {
-		wire.Body.MsgType = "markdown"
-		wire.Body.Markdown = &markdownBody{Content: wire.Body.Text.Content}
-		wire.Body.Text = nil
-	}
 }
 
 func newReqID(prefix string) string {

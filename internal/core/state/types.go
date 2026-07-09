@@ -255,6 +255,7 @@ type SurfaceConsoleRecord struct {
 	GatewayID        string
 	ChatID           string
 	ActorUserID      string
+	SharedAttach     bool
 	// ProductMode carries the outer runtime shape: headless vs vscode.
 	// Backend carries the inner provider choice inside that shape.
 	ProductMode          ProductMode

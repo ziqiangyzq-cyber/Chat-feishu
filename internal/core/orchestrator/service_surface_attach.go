@@ -139,7 +139,7 @@ func (s *Service) attachInstanceWithMode(surface *state.SurfaceConsoleRecord, in
 	if owner := s.workspaceBusyOwnerForSurface(surface, workspaceKey); owner != nil {
 		return notice(surface, "workspace_busy", "目标 workspace 当前已被其他飞书会话接管，请等待对方 /detach。")
 	}
-	if owner := s.instanceClaimSurface(instanceID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.instanceBusyOwnerForSurface(surface, instanceID); owner != nil {
 		return notice(surface, "instance_busy", fmt.Sprintf("%s 当前已被其他飞书会话接管，请等待对方 /detach。", inst.DisplayName))
 	}
 	s.persistCurrentClaudeWorkspaceProfileSnapshot(surface)

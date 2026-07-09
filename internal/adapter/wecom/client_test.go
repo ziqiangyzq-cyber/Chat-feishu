@@ -94,15 +94,12 @@ func TestNewSendMsgFrameUsesOfficialEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatalf("body missing or wrong shape: %s", raw)
 	}
-	if body["chatid"] != "chat-1" || body["msgtype"] != "markdown" {
+	if body["chatid"] != "chat-1" || body["msgtype"] != "text" {
 		t.Fatalf("unexpected body metadata: %#v", body)
 	}
-	if _, ok := body["text"]; ok {
-		t.Fatalf("plain text frame should be converted to markdown for long connection: %s", raw)
-	}
-	markdown, ok := body["markdown"].(map[string]any)
-	if !ok || markdown["content"] != "hello" {
-		t.Fatalf("unexpected markdown body: %#v", body["markdown"])
+	text, ok := body["text"].(map[string]any)
+	if !ok || text["content"] != "hello" {
+		t.Fatalf("unexpected text body: %#v", body["text"])
 	}
 }
 
@@ -134,7 +131,7 @@ func TestNewRespondMsgFrameUsesCallbackReqID(t *testing.T) {
 	if _, ok := body["chatid"]; ok {
 		t.Fatalf("callback response frame must not include chatid: %s", raw)
 	}
-	if body["msgtype"] != "markdown" {
-		t.Fatalf("msgtype = %v, want markdown", body["msgtype"])
+	if body["msgtype"] != "text" {
+		t.Fatalf("msgtype = %v, want text", body["msgtype"])
 	}
 }

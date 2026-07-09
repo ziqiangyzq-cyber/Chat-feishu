@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
@@ -37,6 +38,19 @@ func (s *Service) Surfaces() []*state.SurfaceConsoleRecord {
 		return surfaces[i].SurfaceSessionID < surfaces[j].SurfaceSessionID
 	})
 	return surfaces
+}
+
+func (s *Service) TransitionSurfaceToSharedHeadless(surfaceID, instanceID, workspaceKey string) bool {
+	surface := s.root.Surfaces[strings.TrimSpace(surfaceID)]
+	inst := s.root.Instances[strings.TrimSpace(instanceID)]
+	if surface == nil || inst == nil {
+		return false
+	}
+	return s.transitionSurfaceRouteCore(surface, inst, surfaceRouteCoreState{
+		AttachedInstanceID: strings.TrimSpace(instanceID),
+		WorkspaceKey:       normalizeWorkspaceClaimKey(workspaceKey),
+		RouteMode:          state.RouteModeUnbound,
+	})
 }
 
 func (s *Service) SurfaceUIRuntime(surfaceID string) SurfaceUIRuntimeSummary {

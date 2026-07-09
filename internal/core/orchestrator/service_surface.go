@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"strings"
+
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
@@ -99,7 +101,7 @@ func (s *Service) ensureSurface(action control.Action) *state.SurfaceConsoleReco
 
 	surface = &state.SurfaceConsoleRecord{
 		SurfaceSessionID:    action.SurfaceSessionID,
-		Platform:            "feishu",
+		Platform:            surfacePlatformFromGatewayID(action.GatewayID),
 		GatewayID:           action.GatewayID,
 		ChatID:              action.ChatID,
 		ActorUserID:         action.ActorUserID,
@@ -118,6 +120,13 @@ func (s *Service) ensureSurface(action control.Action) *state.SurfaceConsoleReco
 	}
 	s.root.Surfaces[action.SurfaceSessionID] = surface
 	return surface
+}
+
+func surfacePlatformFromGatewayID(gatewayID string) string {
+	if strings.HasPrefix(strings.TrimSpace(gatewayID), "wecom:") {
+		return "wecom"
+	}
+	return "feishu"
 }
 
 func (s *Service) pendingHeadlessActionBlocked(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {

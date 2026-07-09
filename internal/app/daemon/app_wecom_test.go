@@ -211,6 +211,85 @@ func TestWeComTextAutoAttachesDefaultWorkspace(t *testing.T) {
 	if surface.AttachedInstanceID != "inst-work" || surface.ClaimedWorkspaceKey != "/data/work" {
 		t.Fatalf("expected default workspace attach to /data/work, got surface=%#v", surface)
 	}
+	if surface.Platform != "wecom" {
+		t.Fatalf("expected wecom platform, got %#v", surface)
+	}
+}
+
+func TestWeComTextAutoAttachesSharedWorkspaceWhenFeishuOwnsIt(t *testing.T) {
+	gateway := &messageIDAssigningGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+	t.Setenv("HOME", t.TempDir())
+
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-shadow",
+		DisplayName:   "shadow",
+		WorkspaceRoot: "/data/work",
+		WorkspaceKey:  "/data/work",
+		ShortName:     "shadow",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+		Threads: map[string]*state.ThreadRecord{
+			"thread-shadow": {ThreadID: "thread-shadow", CWD: "/data/work", Loaded: true},
+		},
+	})
+
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-work",
+		DisplayName:   "work",
+		WorkspaceRoot: "/data/work",
+		WorkspaceKey:  "/data/work",
+		ShortName:     "work",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", CWD: "/data/work", Loaded: true},
+		},
+	})
+
+	app.service.MaterializeSurface("feishu:app-1:chat:1", "app-1", "chat-1", "user-1")
+	owner := app.service.Surface("feishu:app-1:chat:1")
+	if owner == nil {
+		t.Fatal("expected feishu owner surface")
+	}
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachWorkspace,
+		SurfaceSessionID: "feishu:app-1:chat:1",
+		GatewayID:        "app-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		WorkspaceKey:     "/data/work",
+	})
+	if owner.AttachedInstanceID == "" {
+		t.Fatalf("expected owner attach to choose an online instance, got %#v", owner)
+	}
+
+	action := tagWeComInboundAction(control.Action{
+		Kind:        control.ActionTextMessage,
+		ChatID:      "wcchat-1",
+		ActorUserID: "wecom-user",
+		MessageID:   "msg-1",
+		Text:        "你好",
+	})
+	app.service.MaterializeSurface(action.SurfaceSessionID, action.GatewayID, action.ChatID, action.ActorUserID)
+	app.mu.Lock()
+	app.maybeAttachDefaultWeComWorkspaceLocked(context.Background(), action)
+	app.mu.Unlock()
+
+	surface := app.service.Surface(wecomSurfaceID("wcchat-1"))
+	if surface == nil {
+		t.Fatal("expected wecom surface")
+	}
+	if surface.AttachedInstanceID != owner.AttachedInstanceID || surface.ClaimedWorkspaceKey != "/data/work" {
+		t.Fatalf("expected shared workspace attach to follow owner instance %q, got surface=%#v owner=%#v", owner.AttachedInstanceID, surface, owner)
+	}
+	if !surface.SharedAttach {
+		t.Fatalf("expected shared attach flag, got %#v", surface)
+	}
 }
 
 func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {

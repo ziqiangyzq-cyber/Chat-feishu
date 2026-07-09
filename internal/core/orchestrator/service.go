@@ -767,6 +767,12 @@ func (s *Service) ApplyAgentEvent(instanceID string, event agentproto.Event) []e
 		if remoteSurface != nil {
 			events = append(events, s.finishSurfaceAfterWork(remoteSurface)...)
 			events = append(events, s.dispatchNext(remoteSurface)...)
+			for _, otherSurface := range s.findAttachedSurfaces(instanceID) {
+				if otherSurface == nil || otherSurface.SurfaceSessionID == remoteSurface.SurfaceSessionID {
+					continue
+				}
+				events = append(events, s.dispatchNext(otherSurface)...)
+			}
 		}
 		events = append(events, compactEvents...)
 		return s.filterEventsForSurfaceVisibility(events)

@@ -164,7 +164,7 @@ func (s *Service) reusableManagedHeadlessForResolution(surface *state.SurfaceCon
 		if backend != "" && state.EffectiveInstanceBackend(inst) != backend {
 			continue
 		}
-		if owner := s.instanceClaimSurface(inst.InstanceID); owner != nil && (surface == nil || owner.SurfaceSessionID != surface.SurfaceSessionID) {
+		if owner := s.instanceBusyOwnerForSurface(surface, inst.InstanceID); owner != nil {
 			continue
 		}
 		candidates = append(candidates, inst)

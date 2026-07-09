@@ -22,6 +22,7 @@ func (s *Service) finalizeDetachedSurfaceWithOverlayCleanup(surface *state.Surfa
 	clearAutoContinueRuntime(surface)
 	s.clearRemoteOwnership(surface)
 	s.transitionSurfaceRouteCore(surface, nil, surfaceRouteCoreState{})
+	surface.SharedAttach = false
 	events = append(events, s.cleanupContextBoundSurfaceOverlays(surface, "当前工作目标已断开", surfaceOverlayRouteCleanupOptions{
 		PreserveTargetPicker:  cleanup.PreserveTargetPicker,
 		ForceClearReviewState: true,

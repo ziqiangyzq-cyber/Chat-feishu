@@ -89,11 +89,13 @@ func (s *Service) transitionSurfaceRouteCore(surface *state.SurfaceConsoleRecord
 	currentWorkspaceKey := s.surfaceCurrentWorkspaceKeyRaw(surface)
 	sameWorkspaceClaim := sameAttachment && surfaceUsesWorkspaceClaimsRaw(surface) && currentWorkspaceKey != "" && currentWorkspaceKey == next.WorkspaceKey
 
+	sharedAttach := s.surfaceIsSharedAttach(surface)
+
 	s.releaseSurfaceThreadClaim(surface)
-	if !sameAttachment || next.AttachedInstanceID == "" {
+	if !sharedAttach && (!sameAttachment || next.AttachedInstanceID == "") {
 		s.releaseSurfaceInstanceClaim(surface)
 	}
-	if !sameWorkspaceClaim || next.AttachedInstanceID == "" || !surfaceUsesWorkspaceClaimsRaw(surface) {
+	if !sharedAttach && (!sameWorkspaceClaim || next.AttachedInstanceID == "" || !surfaceUsesWorkspaceClaimsRaw(surface)) {
 		s.releaseSurfaceWorkspaceClaim(surface)
 	}
 
@@ -109,7 +111,7 @@ func (s *Service) transitionSurfaceRouteCore(surface *state.SurfaceConsoleRecord
 	switch {
 	case next.AttachedInstanceID != "" && surfaceUsesWorkspaceClaimsRaw(surface):
 		surface.ClaimedWorkspaceKey = next.WorkspaceKey
-		if !sameWorkspaceClaim {
+		if !sharedAttach && !sameWorkspaceClaim {
 			s.workspaceClaims[next.WorkspaceKey] = &workspaceClaimRecord{
 				WorkspaceKey:     next.WorkspaceKey,
 				SurfaceSessionID: surface.SurfaceSessionID,
@@ -121,13 +123,13 @@ func (s *Service) transitionSurfaceRouteCore(surface *state.SurfaceConsoleRecord
 		surface.ClaimedWorkspaceKey = ""
 	}
 
-	if next.AttachedInstanceID != "" && !sameAttachment {
+	if next.AttachedInstanceID != "" && !sameAttachment && !sharedAttach {
 		s.instanceClaims[next.AttachedInstanceID] = &instanceClaimRecord{
 			InstanceID:       next.AttachedInstanceID,
 			SurfaceSessionID: surface.SurfaceSessionID,
 		}
 	}
-	if next.SelectedThreadID != "" {
+	if next.SelectedThreadID != "" && !sharedAttach {
 		s.threadClaims[next.SelectedThreadID] = &threadClaimRecord{
 			ThreadID:         next.SelectedThreadID,
 			InstanceID:       next.AttachedInstanceID,
@@ -223,12 +225,12 @@ func (s *Service) canTransitionSurfaceRouteCore(surface *state.SurfaceConsoleRec
 	currentAttachedInstanceID := strings.TrimSpace(surface.AttachedInstanceID)
 	sameAttachment := currentAttachedInstanceID != "" && currentAttachedInstanceID == next.AttachedInstanceID
 	if surfaceUsesWorkspaceClaimsRaw(surface) && !sameAttachment {
-		if owner := s.workspaceClaimSurfaceRaw(next.WorkspaceKey); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+		if owner := s.workspaceBusyOwnerForSurface(surface, next.WorkspaceKey); owner != nil {
 			return false
 		}
 	}
 	if !sameAttachment {
-		if owner := s.instanceClaimSurface(next.AttachedInstanceID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+		if owner := s.instanceBusyOwnerForSurface(surface, next.AttachedInstanceID); owner != nil {
 			return false
 		}
 	}
@@ -240,7 +242,7 @@ func (s *Service) canTransitionSurfaceRouteCore(surface *state.SurfaceConsoleRec
 			return false
 		}
 	}
-	if owner := s.threadClaimSurface(next.SelectedThreadID); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
+	if owner := s.threadBusyOwnerForSurface(surface, next.SelectedThreadID); owner != nil {
 		return false
 	}
 	switch next.ThreadClaimPolicy {

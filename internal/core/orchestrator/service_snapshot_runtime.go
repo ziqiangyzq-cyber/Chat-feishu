@@ -14,7 +14,7 @@ import (
 
 func (s *Service) findAttachedSurface(instanceID string) *state.SurfaceConsoleRecord {
 	for _, surface := range s.root.Surfaces {
-		if surface.AttachedInstanceID == instanceID {
+		if surface.AttachedInstanceID == instanceID && !surface.SharedAttach {
 			return surface
 		}
 	}
