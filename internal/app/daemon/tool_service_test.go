@@ -12,28 +12,40 @@ import (
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
+	"github.com/kxn/codex-remote-feishu/internal/adapter/wecom"
 	toolruntime "github.com/kxn/codex-remote-feishu/internal/app/daemon/toolruntime"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
+	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
+	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
 	"github.com/kxn/codex-remote-feishu/internal/testutil"
 )
 
 type fakeToolSender struct {
-	fileSendFn    func(context.Context, feishu.IMFileSendRequest) (feishu.IMFileSendResult, error)
-	imageSendFn   func(context.Context, feishu.IMImageSendRequest) (feishu.IMImageSendResult, error)
-	videoSendFn   func(context.Context, feishu.IMVideoSendRequest) (feishu.IMVideoSendResult, error)
-	commentReadFn func(context.Context, feishu.DriveFileCommentReadRequest) (feishu.DriveFileCommentReadResult, error)
-	fileCalls     []feishu.IMFileSendRequest
-	imageCalls    []feishu.IMImageSendRequest
-	videoCalls    []feishu.IMVideoSendRequest
-	commentCalls  []feishu.DriveFileCommentReadRequest
+	fileSendFn      func(context.Context, feishu.IMFileSendRequest) (feishu.IMFileSendResult, error)
+	imageSendFn     func(context.Context, feishu.IMImageSendRequest) (feishu.IMImageSendResult, error)
+	videoSendFn     func(context.Context, feishu.IMVideoSendRequest) (feishu.IMVideoSendResult, error)
+	commentReadFn   func(context.Context, feishu.DriveFileCommentReadRequest) (feishu.DriveFileCommentReadResult, error)
+	fileCalls       []feishu.IMFileSendRequest
+	imageCalls      []feishu.IMImageSendRequest
+	videoCalls      []feishu.IMVideoSendRequest
+	commentCalls    []feishu.DriveFileCommentReadRequest
+	wecomFileCalls  []wecom.IMFileSendRequest
+	wecomImageCalls []wecom.IMImageSendRequest
+	wecomVideoCalls []wecom.IMVideoSendRequest
 }
 
 type fakeToolFileSender struct {
 	sendFn func(context.Context, feishu.IMFileSendRequest) (feishu.IMFileSendResult, error)
 	calls  []feishu.IMFileSendRequest
+}
+
+type fakeToolWeComChannel struct {
+	fileCalls  []wecom.IMFileSendRequest
+	imageCalls []wecom.IMImageSendRequest
+	videoCalls []wecom.IMVideoSendRequest
 }
 
 func (f *fakeToolSender) Start(context.Context, feishu.ActionHandler) error { return nil }
@@ -109,6 +121,39 @@ func (f *fakeToolSender) ReadDriveFileComments(ctx context.Context, req feishu.D
 	}, nil
 }
 
+func (f *fakeToolSender) SendIMFileWeCom(ctx context.Context, req wecom.IMFileSendRequest) (wecom.IMFileSendResult, error) {
+	f.wecomFileCalls = append(f.wecomFileCalls, req)
+	return wecom.IMFileSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		FileName:         filepath.Base(req.Path),
+		MediaID:          "wecom-file-media",
+		MessageID:        "msg-wecom-file",
+	}, nil
+}
+
+func (f *fakeToolSender) SendIMImageWeCom(ctx context.Context, req wecom.IMImageSendRequest) (wecom.IMImageSendResult, error) {
+	f.wecomImageCalls = append(f.wecomImageCalls, req)
+	return wecom.IMImageSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		ImageName:        filepath.Base(req.Path),
+		MediaID:          "wecom-image-media",
+		MessageID:        "msg-wecom-image",
+	}, nil
+}
+
+func (f *fakeToolSender) SendIMVideoWeCom(ctx context.Context, req wecom.IMVideoSendRequest) (wecom.IMVideoSendResult, error) {
+	f.wecomVideoCalls = append(f.wecomVideoCalls, req)
+	return wecom.IMVideoSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		VideoName:        filepath.Base(req.Path),
+		MediaID:          "wecom-video-media",
+		MessageID:        "msg-wecom-video",
+	}, nil
+}
+
 func (f *fakeToolFileSender) Start(context.Context, feishu.ActionHandler) error { return nil }
 func (f *fakeToolFileSender) Apply(context.Context, []feishu.Operation) error   { return nil }
 func (f *fakeToolFileSender) SendIMFile(ctx context.Context, req feishu.IMFileSendRequest) (feishu.IMFileSendResult, error) {
@@ -122,6 +167,53 @@ func (f *fakeToolFileSender) SendIMFile(ctx context.Context, req feishu.IMFileSe
 		FileName:         filepath.Base(req.Path),
 		FileKey:          "file-key",
 		MessageID:        "msg-file",
+	}, nil
+}
+
+func (f *fakeToolWeComChannel) Name() string { return "wecom" }
+
+func (f *fakeToolWeComChannel) Start(context.Context, surface.ActionHandler) error { return nil }
+
+func (f *fakeToolWeComChannel) Deliver(context.Context, string, eventcontract.Event) error {
+	return nil
+}
+
+func (f *fakeToolWeComChannel) Stop(context.Context) error { return nil }
+
+func (f *fakeToolWeComChannel) Capabilities() surface.Capabilities {
+	return surface.Capabilities{FileSend: true, MaxButtons: 6}
+}
+
+func (f *fakeToolWeComChannel) SendIMFile(ctx context.Context, req wecom.IMFileSendRequest) (wecom.IMFileSendResult, error) {
+	f.fileCalls = append(f.fileCalls, req)
+	return wecom.IMFileSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		FileName:         filepath.Base(req.Path),
+		MediaID:          "wecom-file-media",
+		MessageID:        "msg-wecom-file",
+	}, nil
+}
+
+func (f *fakeToolWeComChannel) SendIMImage(ctx context.Context, req wecom.IMImageSendRequest) (wecom.IMImageSendResult, error) {
+	f.imageCalls = append(f.imageCalls, req)
+	return wecom.IMImageSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		ImageName:        filepath.Base(req.Path),
+		MediaID:          "wecom-image-media",
+		MessageID:        "msg-wecom-image",
+	}, nil
+}
+
+func (f *fakeToolWeComChannel) SendIMVideo(ctx context.Context, req wecom.IMVideoSendRequest) (wecom.IMVideoSendResult, error) {
+	f.videoCalls = append(f.videoCalls, req)
+	return wecom.IMVideoSendResult{
+		GatewayID:        req.GatewayID,
+		SurfaceSessionID: req.SurfaceSessionID,
+		VideoName:        filepath.Base(req.Path),
+		MediaID:          "wecom-video-media",
+		MessageID:        "msg-wecom-video",
 	}, nil
 }
 
@@ -579,6 +671,116 @@ func TestSendIMImageToolMapsUploadAndSendFailures(t *testing.T) {
 				t.Fatalf("expected %s, got %#v", tc.wantCode, toolErr)
 			}
 		})
+	}
+}
+
+func TestSendIMFileToolRoutesToWeComSurface(t *testing.T) {
+	sender := &fakeToolSender{}
+	app, _ := newToolServiceTestApp(t, sender)
+	wecomChannel := &fakeToolWeComChannel{}
+	app.SetWeComChannelWithGateway("wecom:ops", wecomChannel)
+	if err := app.Bind(); err != nil {
+		t.Fatalf("Bind() error = %v", err)
+	}
+	defer func() {
+		_ = app.Shutdown(context.Background())
+	}()
+
+	workspaceRoot := t.TempDir()
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		WorkspaceRoot: workspaceRoot,
+		WorkspaceKey:  workspaceRoot,
+		Source:        "headless",
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+	app.HandleAction(context.Background(), control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-wecom",
+		GatewayID:        "wecom:ops",
+		ChatID:           "chat-wecom",
+		ActorUserID:      "user-wecom",
+		InstanceID:       "inst-1",
+	})
+	startToolTestRemoteTurn(t, app, "surface-wecom", "inst-1", "thread-1", "turn-1")
+
+	filePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(filePath, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, toolErr := app.sendIMFileTool(withToolCallerInstanceID(context.Background(), "inst-1"), map[string]any{
+		"path": filePath,
+	})
+	if toolErr != nil {
+		t.Fatalf("sendIMFileTool() error = %#v", toolErr)
+	}
+	if len(wecomChannel.fileCalls) != 1 {
+		t.Fatalf("expected one wecom file send call, got %#v", wecomChannel.fileCalls)
+	}
+	if len(sender.fileCalls) != 0 {
+		t.Fatalf("expected feishu sender not used, got %#v", sender.fileCalls)
+	}
+	if result["gateway_id"] != "wecom:ops" || result["message_id"] != "msg-wecom-file" {
+		t.Fatalf("unexpected send result: %#v", result)
+	}
+	if result["delivery_kind"] != "wecom_attachment" || result["delivery_note"] != "已通过企业微信附件消息发送。" {
+		t.Fatalf("expected wecom delivery metadata, got %#v", result)
+	}
+}
+
+func TestSendIMImageToolRoutesToWeComSurface(t *testing.T) {
+	sender := &fakeToolSender{}
+	app, _ := newToolServiceTestApp(t, sender)
+	wecomChannel := &fakeToolWeComChannel{}
+	app.SetWeComChannelWithGateway("wecom:ops", wecomChannel)
+	if err := app.Bind(); err != nil {
+		t.Fatalf("Bind() error = %v", err)
+	}
+	defer func() {
+		_ = app.Shutdown(context.Background())
+	}()
+
+	workspaceRoot := t.TempDir()
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		WorkspaceRoot: workspaceRoot,
+		WorkspaceKey:  workspaceRoot,
+		Source:        "headless",
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+	app.HandleAction(context.Background(), control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-wecom",
+		GatewayID:        "wecom:ops",
+		ChatID:           "chat-wecom",
+		ActorUserID:      "user-wecom",
+		InstanceID:       "inst-1",
+	})
+	startToolTestRemoteTurn(t, app, "surface-wecom", "inst-1", "thread-1", "turn-1")
+
+	imagePath := filepath.Join(t.TempDir(), "preview.png")
+	if err := os.WriteFile(imagePath, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, toolErr := app.sendIMImageTool(withToolCallerInstanceID(context.Background(), "inst-1"), map[string]any{
+		"path": imagePath,
+	})
+	if toolErr != nil {
+		t.Fatalf("sendIMImageTool() error = %#v", toolErr)
+	}
+	if len(wecomChannel.imageCalls) != 1 {
+		t.Fatalf("expected one wecom image send call, got %#v", wecomChannel.imageCalls)
+	}
+	if len(sender.imageCalls) != 0 {
+		t.Fatalf("expected feishu image sender not used, got %#v", sender.imageCalls)
+	}
+	if result["gateway_id"] != "wecom:ops" || result["message_id"] != "msg-wecom-image" {
+		t.Fatalf("unexpected send result: %#v", result)
+	}
+	if result["delivery_kind"] != "wecom_image" || result["delivery_note"] != "已通过企业微信图片消息发送。" {
+		t.Fatalf("expected wecom image delivery metadata, got %#v", result)
 	}
 }
 

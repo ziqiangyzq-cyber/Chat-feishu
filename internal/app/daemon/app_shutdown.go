@@ -66,6 +66,19 @@ func (a *App) setGatewayRuntime(cancel context.CancelFunc, done chan struct{}) {
 	defer a.shutdownMu.Unlock()
 	a.gatewayRunCancel = cancel
 	a.gatewayRunDone = done
+	a.gatewayRunCtx = nil
+}
+
+func (a *App) setGatewayRuntimeContext(ctx context.Context) {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
+	a.gatewayRunCtx = ctx
+}
+
+func (a *App) gatewayRuntimeContext() context.Context {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
+	return a.gatewayRunCtx
 }
 
 func (a *App) shutdownForConsoleClose() error {
@@ -85,6 +98,7 @@ func (a *App) stopGatewayRuntime(wait bool) {
 	done := a.gatewayRunDone
 	a.gatewayRunCancel = nil
 	a.gatewayRunDone = nil
+	a.gatewayRunCtx = nil
 	a.shutdownMu.Unlock()
 
 	if cancel != nil {

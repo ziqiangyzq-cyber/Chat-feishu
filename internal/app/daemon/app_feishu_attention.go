@@ -77,8 +77,10 @@ func (a *App) applyFeishuTimeSensitiveLocked(ctx context.Context, operation feis
 			log.Printf("feishu permission gap observed during time-sensitive apply: gateway=%s surface=%s err=%v", operation.GatewayID, operation.SurfaceSessionID, err)
 			return nil
 		}
+		a.recordDeliveryFailureLocked("feishu", operation.GatewayID, operation.SurfaceSessionID, string(operation.Kind), err)
 		return err
 	}
+	a.recordDeliverySuccessLocked("feishu", operation.GatewayID)
 	return nil
 }
 

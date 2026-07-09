@@ -104,3 +104,10 @@ func actionTextPreview(text string) string {
 	}
 	return text[:117] + "..."
 }
+
+func daemonErrString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

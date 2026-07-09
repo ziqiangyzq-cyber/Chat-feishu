@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"fmt"
-
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +11,11 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/frontstagecontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
+)
+
+const (
+	requestControlStructuredPrevious = "structured_previous"
+	requestControlStructuredNext     = "structured_next"
 )
 
 func (s *Service) respondRequest(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {
@@ -51,6 +55,14 @@ func (s *Service) controlRequest(surface *state.SurfaceConsoleRecord, action con
 	request, followup := resolveSurfacePendingRequest(surface, requestControl.RequestID, requestControl.RequestRevision)
 	if followup != nil {
 		return followup
+	}
+	if request.StructuredForm != nil {
+		switch normalizedRequestControl(requestControl.Control) {
+		case normalizedRequestControl(requestControlStructuredPrevious):
+			return s.navigateRequestStructuredForm(surface, request, -1)
+		case normalizedRequestControl(requestControlStructuredNext):
+			return s.advanceRequestStructuredForm(surface, request)
+		}
 	}
 	switch normalizedRequestControl(requestControl.Control) {
 	case normalizedRequestControl(frontstagecontract.RequestControlSkipOptional):
@@ -251,6 +263,27 @@ func (s *Service) buildRequestResponse(surface *state.SurfaceConsoleRecord, requ
 		if response, complete, followup, handled := s.maybeHandlePlanConfirmationRequestAction(surface, request, action, optionID, requestAnswers); handled {
 			return response, complete, followup
 		}
+		if request.StructuredForm != nil {
+			updatedFields, errText := applyRequestStructuredFormAnswers(request, requestAnswers)
+			if errText != "" {
+				return nil, false, notice(surface, "request_invalid", errText)
+			}
+			if optionID == "" {
+				if requestPromptStructuredFormComplete(request) {
+					if response, complete, errText := buildPlanConfirmationPermissionSelectionResponse(request, nil); errText != "" {
+						return nil, false, notice(surface, "request_invalid", errText)
+					} else {
+						return response, complete, nil
+					}
+				}
+				if len(updatedFields) == 0 {
+					return nil, false, notice(surface, "request_invalid", currentStructuredFormFieldPendingText(request))
+				}
+				bumpRequestCardRevision(request)
+				setRequestPromptCurrentQuestionIndex(request, firstIncompleteStructuredFormFieldIndex(request))
+				return nil, false, []eventcontract.Event{s.requestPromptInlineEvent(surface, request, "")}
+			}
+		}
 		if optionID == "" {
 			return nil, false, notice(surface, "request_invalid", "这个确认按钮缺少有效的处理选项。")
 		}
@@ -440,28 +473,43 @@ func requestPromptQuestionCount(request *state.RequestPromptRecord) int {
 	return len(request.Questions)
 }
 
+func requestPromptEditableItemCount(request *state.RequestPromptRecord) int {
+	if request == nil {
+		return 0
+	}
+	if len(request.Questions) != 0 {
+		return len(request.Questions)
+	}
+	if request.StructuredForm != nil {
+		return len(request.StructuredForm.Fields)
+	}
+	return 0
+}
+
 func normalizedRequestPromptCurrentQuestionIndex(request *state.RequestPromptRecord) int {
-	if request == nil || len(request.Questions) == 0 {
+	count := requestPromptEditableItemCount(request)
+	if count == 0 {
 		return 0
 	}
 	if request.CurrentQuestionIndex < 0 {
 		return 0
 	}
-	if request.CurrentQuestionIndex >= len(request.Questions) {
-		return len(request.Questions) - 1
+	if request.CurrentQuestionIndex >= count {
+		return count - 1
 	}
 	return request.CurrentQuestionIndex
 }
 
 func setRequestPromptCurrentQuestionIndex(request *state.RequestPromptRecord, index int) {
-	if request == nil || len(request.Questions) == 0 {
+	count := requestPromptEditableItemCount(request)
+	if count == 0 {
 		return
 	}
 	if index < 0 {
 		index = 0
 	}
-	if index >= len(request.Questions) {
-		index = len(request.Questions) - 1
+	if index >= count {
+		index = count - 1
 	}
 	request.CurrentQuestionIndex = index
 }
@@ -533,6 +581,168 @@ func requestPromptCurrentQuestionRecord(request *state.RequestPromptRecord) (sta
 	}
 	index := normalizedRequestPromptCurrentQuestionIndex(request)
 	return request.Questions[index], index, true
+}
+
+func requestPromptCurrentStructuredFormField(request *state.RequestPromptRecord) (state.RequestPromptFormFieldRecord, int, bool) {
+	if request == nil || request.StructuredForm == nil || len(request.StructuredForm.Fields) == 0 {
+		return state.RequestPromptFormFieldRecord{}, 0, false
+	}
+	index := normalizedRequestPromptCurrentQuestionIndex(request)
+	return request.StructuredForm.Fields[index], index, true
+}
+
+func requestPromptStructuredFormFieldByName(form *state.RequestPromptStructuredFormRecord, fieldName string) *state.RequestPromptFormFieldRecord {
+	if form == nil {
+		return nil
+	}
+	fieldName = strings.TrimSpace(fieldName)
+	for i := range form.Fields {
+		if strings.TrimSpace(form.Fields[i].Name) == fieldName {
+			return &form.Fields[i]
+		}
+	}
+	return nil
+}
+
+func normalizeStructuredFormInputValues(field state.RequestPromptFormFieldRecord, raw []string) []string {
+	switch field.Kind {
+	case state.RequestPromptFormFieldText, state.RequestPromptFormFieldSelectStatic:
+		if value := firstTrimmedAnswer(raw); value != "" {
+			return []string{value}
+		}
+		return nil
+	default:
+		return normalizedStructuredDraftValues(raw)
+	}
+}
+
+func validateStructuredFormFieldValues(field state.RequestPromptFormFieldRecord, values []string) string {
+	label := firstNonEmpty(strings.TrimSpace(field.Label), strings.TrimSpace(field.Name))
+	if label == "" {
+		label = "当前字段"
+	}
+	switch field.Kind {
+	case state.RequestPromptFormFieldText:
+		if len(values) > 1 {
+			return fmt.Sprintf("“%s”一次只能填写一条文本。", label)
+		}
+	case state.RequestPromptFormFieldSelectStatic:
+		if len(values) > 1 {
+			return fmt.Sprintf("“%s”只能选择一项。", label)
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	if len(field.Options) == 0 {
+		return ""
+	}
+	allowed := make(map[string]bool, len(field.Options))
+	for _, option := range field.Options {
+		allowed[strings.TrimSpace(option.Value)] = true
+	}
+	for _, value := range values {
+		if !allowed[strings.TrimSpace(value)] {
+			return fmt.Sprintf("“%s”的选择项无效。", label)
+		}
+	}
+	return ""
+}
+
+func structuredFormFieldCurrentValues(request *state.RequestPromptRecord, field state.RequestPromptFormFieldRecord) []string {
+	if request == nil {
+		return nil
+	}
+	fieldName := strings.TrimSpace(field.Name)
+	if fieldName == "" {
+		return nil
+	}
+	if values := normalizedStructuredDraftValues(request.StructuredDraftAnswers[fieldName]); len(values) != 0 {
+		return values
+	}
+	if values := normalizedStructuredDraftValues(field.DefaultValues); len(values) != 0 {
+		return values
+	}
+	if value := strings.TrimSpace(field.DefaultValue); value != "" {
+		return []string{value}
+	}
+	return nil
+}
+
+func requestPromptStructuredFormFieldAnswered(request *state.RequestPromptRecord, field state.RequestPromptFormFieldRecord) bool {
+	return len(structuredFormFieldCurrentValues(request, field)) != 0
+}
+
+func requestPromptStructuredFormComplete(request *state.RequestPromptRecord) bool {
+	if request == nil || request.StructuredForm == nil || len(request.StructuredForm.Fields) == 0 {
+		return false
+	}
+	for _, field := range request.StructuredForm.Fields {
+		if !requestPromptStructuredFormFieldAnswered(request, field) {
+			return false
+		}
+	}
+	return true
+}
+
+func firstIncompleteStructuredFormFieldIndex(request *state.RequestPromptRecord) int {
+	if request == nil || request.StructuredForm == nil || len(request.StructuredForm.Fields) == 0 {
+		return 0
+	}
+	for index, field := range request.StructuredForm.Fields {
+		if !requestPromptStructuredFormFieldAnswered(request, field) {
+			return index
+		}
+	}
+	return normalizedRequestPromptCurrentQuestionIndex(request)
+}
+
+func currentStructuredFormFieldPendingText(request *state.RequestPromptRecord) string {
+	field, _, ok := requestPromptCurrentStructuredFormField(request)
+	if !ok {
+		return "当前没有可处理的表单字段。"
+	}
+	label := firstNonEmpty(strings.TrimSpace(field.Label), strings.TrimSpace(field.Name))
+	if label == "" {
+		label = "当前字段"
+	}
+	switch field.Kind {
+	case state.RequestPromptFormFieldMultiSelectStatic:
+		return fmt.Sprintf("字段“%s”还没有完成选择。请先选择至少一项，再继续。", label)
+	default:
+		return fmt.Sprintf("字段“%s”还没有填写完成。", label)
+	}
+}
+
+func applyRequestStructuredFormAnswers(request *state.RequestPromptRecord, rawAnswers map[string][]string) ([]string, string) {
+	if request == nil || request.StructuredForm == nil {
+		return nil, "当前结构化表单已经失效，请重新打开后再试。"
+	}
+	if request.StructuredDraftAnswers == nil {
+		request.StructuredDraftAnswers = map[string][]string{}
+	}
+	updated := make([]string, 0, len(rawAnswers))
+	for fieldName, rawValues := range rawAnswers {
+		fieldName = strings.TrimSpace(fieldName)
+		if fieldName == "" {
+			continue
+		}
+		field := requestPromptStructuredFormFieldByName(request.StructuredForm, fieldName)
+		if field == nil {
+			return nil, "当前表单字段已变化，请使用最新卡片继续。"
+		}
+		values := normalizeStructuredFormInputValues(*field, rawValues)
+		if errText := validateStructuredFormFieldValues(*field, values); errText != "" {
+			return nil, errText
+		}
+		if len(values) == 0 {
+			delete(request.StructuredDraftAnswers, fieldName)
+		} else {
+			request.StructuredDraftAnswers[fieldName] = values
+		}
+		updated = append(updated, fieldName)
+	}
+	return updated, ""
 }
 
 func markRequestQuestionSkipped(request *state.RequestPromptRecord, questionID string) {
@@ -874,6 +1084,45 @@ func (s *Service) skipOptionalRequestQuestion(surface *state.SurfaceConsoleRecor
 	}
 	bumpRequestCardRevision(request)
 	setRequestPromptCurrentQuestionIndex(request, firstIncompleteRequestQuestionIndex(request))
+	return []eventcontract.Event{s.requestPromptInlineEvent(surface, request, "")}
+}
+
+func (s *Service) navigateRequestStructuredForm(surface *state.SurfaceConsoleRecord, request *state.RequestPromptRecord, delta int) []eventcontract.Event {
+	if request == nil || request.StructuredForm == nil || len(request.StructuredForm.Fields) == 0 {
+		return notice(surface, "request_invalid", "当前请求没有可切换的结构化字段。")
+	}
+	current := normalizedRequestPromptCurrentQuestionIndex(request)
+	next := current + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(request.StructuredForm.Fields) {
+		next = len(request.StructuredForm.Fields) - 1
+	}
+	if next == current {
+		return nil
+	}
+	setRequestPromptCurrentQuestionIndex(request, next)
+	bumpRequestCardRevision(request)
+	return []eventcontract.Event{s.requestPromptInlineEvent(surface, request, "")}
+}
+
+func (s *Service) advanceRequestStructuredForm(surface *state.SurfaceConsoleRecord, request *state.RequestPromptRecord) []eventcontract.Event {
+	if request == nil || request.StructuredForm == nil || len(request.StructuredForm.Fields) == 0 {
+		return notice(surface, "request_invalid", "当前请求没有可继续的结构化字段。")
+	}
+	field, _, ok := requestPromptCurrentStructuredFormField(request)
+	if !ok {
+		return notice(surface, "request_invalid", "当前没有可继续的结构化字段。")
+	}
+	if !requestPromptStructuredFormFieldAnswered(request, field) {
+		return notice(surface, "request_invalid", currentStructuredFormFieldPendingText(request))
+	}
+	if requestPromptStructuredFormComplete(request) {
+		return notice(surface, "request_invalid", "当前表单已填写完成，可直接提交。")
+	}
+	setRequestPromptCurrentQuestionIndex(request, firstIncompleteStructuredFormFieldIndex(request))
+	bumpRequestCardRevision(request)
 	return []eventcontract.Event{s.requestPromptInlineEvent(surface, request, "")}
 }
 

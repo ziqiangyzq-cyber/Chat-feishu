@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
+	"github.com/kxn/codex-remote-feishu/internal/adapter/wecom"
 )
 
 func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (map[string]any, *toolError) {
@@ -37,22 +38,8 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 		}
 	}
 
-	sender, ok := a.gateway.(feishu.IMVideoSender)
-	if !ok {
-		return nil, &toolError{
-			Code:    "tool_unavailable",
-			Message: "Feishu IM video sending is not available in this runtime",
-		}
-	}
-	result, err := sender.SendIMVideo(ctx, feishu.IMVideoSendRequest{
-		GatewayID:        resolved.GatewayID,
-		SurfaceSessionID: resolved.SurfaceSessionID,
-		ChatID:           resolved.ChatID,
-		ActorUserID:      resolved.ActorUserID,
-		Path:             path,
-	})
+	result, err := a.sendSurfaceVideo(ctx, resolved, path)
 	if err != nil {
-		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
 		var sendErr *feishu.IMVideoSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -62,6 +49,15 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 				return nil, &toolError{Code: "send_failed", Message: sendErr.Error(), Retryable: true}
 			}
 		}
+		var wecomErr *wecom.IMMediaSendError
+		if errors.As(err, &wecomErr) {
+			switch wecomErr.Code {
+			case wecom.IMMediaSendErrorUploadFailed:
+				return nil, &toolError{Code: "upload_failed", Message: wecomErr.Error()}
+			case wecom.IMMediaSendErrorSendFailed, wecom.IMMediaSendErrorNotConnected:
+				return nil, &toolError{Code: "send_failed", Message: wecomErr.Error(), Retryable: true}
+			}
+		}
 		return nil, &toolError{
 			Code:      "send_failed",
 			Message:   err.Error(),
@@ -69,13 +65,18 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 		}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMVideoToolName, resolved.SurfaceSessionID, path, result.MessageID)
-	return map[string]any{
+	response := map[string]any{
 		"surface_session_id": result.SurfaceSessionID,
 		"gateway_id":         result.GatewayID,
-		"video_name":         result.VideoName,
+		"video_name":         result.FileName,
 		"file_key":           result.FileKey,
 		"message_id":         result.MessageID,
-	}, nil
+	}
+	if isWeComGateway(result.GatewayID) {
+		response["delivery_kind"] = "wecom_attachment_video"
+		response["delivery_note"] = "已通过企业微信附件消息发送 MP4。"
+	}
+	return response, nil
 }
 
 func validateSendVideoPath(path string) *toolError {
@@ -104,4 +105,55 @@ func validateSendVideoPath(path string) *toolError {
 		}
 	}
 	return nil
+}
+
+func (a *App) sendSurfaceVideo(ctx context.Context, resolved resolvedToolSurfaceContext, path string) (surfaceFileSendResult, error) {
+	if isWeComGateway(resolved.GatewayID) {
+		a.mu.Lock()
+		channel := a.wecomChannelForGatewayLocked(resolved.GatewayID)
+		a.mu.Unlock()
+		sender, ok := channel.(wecom.IMVideoSender)
+		if !ok {
+			return surfaceFileSendResult{}, errors.New("wecom IM video sending is not available in this runtime")
+		}
+		result, err := sender.SendIMVideo(ctx, wecom.IMVideoSendRequest{
+			GatewayID:        resolved.GatewayID,
+			SurfaceSessionID: resolved.SurfaceSessionID,
+			ChatID:           resolved.ChatID,
+			ActorUserID:      resolved.ActorUserID,
+			Path:             path,
+		})
+		if err != nil {
+			return surfaceFileSendResult{}, err
+		}
+		return surfaceFileSendResult{
+			GatewayID:        result.GatewayID,
+			SurfaceSessionID: result.SurfaceSessionID,
+			FileName:         result.VideoName,
+			FileKey:          result.MediaID,
+			MessageID:        result.MessageID,
+		}, nil
+	}
+	sender, ok := a.gateway.(feishu.IMVideoSender)
+	if !ok {
+		return surfaceFileSendResult{}, errors.New("Feishu IM video sending is not available in this runtime")
+	}
+	result, err := sender.SendIMVideo(ctx, feishu.IMVideoSendRequest{
+		GatewayID:        resolved.GatewayID,
+		SurfaceSessionID: resolved.SurfaceSessionID,
+		ChatID:           resolved.ChatID,
+		ActorUserID:      resolved.ActorUserID,
+		Path:             path,
+	})
+	if err != nil {
+		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
+		return surfaceFileSendResult{}, err
+	}
+	return surfaceFileSendResult{
+		GatewayID:        result.GatewayID,
+		SurfaceSessionID: result.SurfaceSessionID,
+		FileName:         result.VideoName,
+		FileKey:          result.FileKey,
+		MessageID:        result.MessageID,
+	}, nil
 }

@@ -104,6 +104,12 @@ func snapshotSections(snapshot control.Snapshot, daemonBinary, currentDirectory 
 			Lines: headlessLines,
 		})
 	}
+	if peerLines := snapshotPeerSurfaceLines(snapshot.PeerSurfaces); len(peerLines) != 0 {
+		sections = append(sections, control.FeishuCardTextSection{
+			Label: "同实例其他入口",
+			Lines: peerLines,
+		})
+	}
 	return sections
 }
 
@@ -456,6 +462,80 @@ func snapshotDispatchText(summary control.DispatchSummary) string {
 		return fmt.Sprintf("当前 %d 条排队", summary.QueuedCount)
 	}
 	return "空闲"
+}
+
+func snapshotPeerSurfaceLines(peers []control.PeerSurfaceSummary) []string {
+	if len(peers) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(peers))
+	for _, peer := range peers {
+		label := firstNonEmpty(snapshotPeerPlatformLabel(peer.Platform, peer.GatewayID), "unknown")
+		parts := []string{label}
+		if peer.SharedAttach {
+			parts = append(parts, "shared")
+		} else {
+			parts = append(parts, "primary")
+		}
+		if gate := snapshotPeerGateText(peer); gate != "" {
+			parts = append(parts, gate)
+		}
+		if thread := strings.TrimSpace(peer.SelectedThreadID); thread != "" {
+			parts = append(parts, "thread "+thread)
+		}
+		if msg := strings.TrimSpace(firstNonEmpty(peer.ReplyTargetMessageID, peer.SourceMessageID)); msg != "" {
+			parts = append(parts, "reply "+compactSnapshotStatusText(msg, 18))
+		}
+		if !peer.LastInboundAt.IsZero() {
+			parts = append(parts, "last "+peer.LastInboundAt.Format("01-02 15:04"))
+		}
+		lines = append(lines, strings.Join(parts, " · "))
+	}
+	return lines
+}
+
+func snapshotPeerPlatformLabel(platform, gatewayID string) string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	gatewayID = strings.ToLower(strings.TrimSpace(gatewayID))
+	switch {
+	case strings.Contains(gatewayID, "wecom"):
+		return "WeCom"
+	case strings.Contains(gatewayID, "feishu"), platform == "feishu":
+		return "Feishu"
+	case platform != "":
+		return platform
+	default:
+		return gatewayID
+	}
+}
+
+func snapshotPeerGateText(peer control.PeerSurfaceSummary) string {
+	switch {
+	case peer.ActiveRemoteTurn:
+		if peer.QueuedCount > 0 {
+			return fmt.Sprintf("active turn + %d queued", peer.QueuedCount)
+		}
+		return "active turn"
+	case peer.PendingRemoteTurn:
+		if peer.QueuedCount > 0 {
+			return fmt.Sprintf("dispatching + %d queued", peer.QueuedCount)
+		}
+		return "dispatching"
+	case peer.HasPendingRequest:
+		if peer.PendingRequestCount > 1 {
+			return fmt.Sprintf("%d pending requests", peer.PendingRequestCount)
+		}
+		return "pending request"
+	case peer.ActiveItemStatus != "":
+		if peer.QueuedCount > 0 {
+			return peer.ActiveItemStatus + fmt.Sprintf(" + %d queued", peer.QueuedCount)
+		}
+		return peer.ActiveItemStatus
+	case peer.QueuedCount > 0:
+		return fmt.Sprintf("%d queued", peer.QueuedCount)
+	default:
+		return "idle"
+	}
 }
 
 func displayAttachmentObjectType(value string) string {

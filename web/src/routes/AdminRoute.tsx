@@ -27,6 +27,14 @@ import type {
   LogsStorageStatusResponse,
   PreviewDriveCleanupResponse,
   PreviewDriveStatusResponse,
+  RuntimePeerSurfaceStatus,
+  RuntimeSurfaceStatus,
+  RuntimeStatus,
+  RuntimeWeComStatus,
+  WeComBotResponse,
+  WeComBotsResponse,
+  WeComBotSummary,
+  WeComBotWriteRequest,
   VSCodeDetectResponse,
 } from "../lib/types";
 import {
@@ -74,7 +82,23 @@ type NewRobotForm = {
   appSecret: string;
 };
 
+type WeComBotForm = {
+  id: string;
+  name: string;
+  botId: string;
+  secret: string;
+  enabled: boolean;
+};
+
 const newRobotID = "new";
+const emptyWeComBotForm: WeComBotForm = {
+  id: "",
+  name: "",
+  botId: "",
+  secret: "",
+  enabled: true,
+};
+
 export function AdminRoute() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -111,6 +135,12 @@ export function AdminRoute() {
     Record<string, PreviewDriveStatusResponse>
   >({});
   const [previewError, setPreviewError] = useState("");
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [runtimeStatusError, setRuntimeStatusError] = useState("");
+  const [wecomBots, setWeComBots] = useState<WeComBotSummary[]>([]);
+  const [wecomBotsError, setWeComBotsError] = useState("");
+  const [wecomBotForm, setWeComBotForm] = useState<WeComBotForm>(emptyWeComBotForm);
+  const [editingWeComBotID, setEditingWeComBotID] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState("");
   const [deleteTargetID, setDeleteTargetID] = useState<string | null>(null);
   const [publishTargetID, setPublishTargetID] = useState<string | null>(null);
@@ -202,6 +232,8 @@ export function AdminRoute() {
       appList,
       codexProvidersResult,
       claudeProfilesResult,
+      runtimeStatusResult,
+      wecomBotsResult,
       autostartState,
       vscodeState,
       imageResult,
@@ -211,6 +243,8 @@ export function AdminRoute() {
       requestJSON<FeishuAppsResponse>("/api/admin/feishu/apps"),
       safeRequest<CodexProvidersResponse>("/api/admin/codex/providers"),
       safeRequest<ClaudeProfilesResponse>("/api/admin/claude/profiles"),
+      safeRequest<RuntimeStatus>("/api/admin/runtime-status"),
+      safeRequest<WeComBotsResponse>("/api/admin/wecom/bots"),
       loadAutostartState("/api/admin/autostart/detect"),
       loadVSCodeState("/api/admin/vscode/detect"),
       safeRequest<ImageStagingStatusResponse>("/api/admin/storage/image-staging"),
@@ -249,6 +283,10 @@ export function AdminRoute() {
     setCodexProvidersError(codexProvidersResult.error);
     setClaudeProfiles(claudeProfilesResult.data?.profiles || []);
     setClaudeProfilesError(claudeProfilesResult.error);
+    setRuntimeStatus(runtimeStatusResult.data || null);
+    setRuntimeStatusError(runtimeStatusResult.error);
+    setWeComBots(wecomBotsResult.data?.bots || []);
+    setWeComBotsError(wecomBotsResult.error);
     setAutostart(autostartState.data);
     setAutostartError(autostartState.error);
     setVSCode(vscodeState.data);
@@ -364,6 +402,113 @@ export function AdminRoute() {
         "配置已经保存，但当前运行中的机器人还没有同步完成。请稍后刷新状态后再继续。",
     });
     return true;
+  }
+
+  async function refreshWeComBots() {
+    const result = await safeRequest<WeComBotsResponse>("/api/admin/wecom/bots");
+    setWeComBots(result.data?.bots || []);
+    setWeComBotsError(result.error);
+  }
+
+  function resetWeComBotForm() {
+    setWeComBotForm(emptyWeComBotForm);
+    setEditingWeComBotID(null);
+  }
+
+  function startEditWeComBot(bot: WeComBotSummary) {
+    setEditingWeComBotID(bot.id);
+    setWeComBotForm({
+      id: bot.id,
+      name: bot.name || "",
+      botId: bot.botId || "",
+      secret: "",
+      enabled: bot.enabled,
+    });
+    setDetailNotice(null);
+  }
+
+  async function saveWeComBot() {
+    if (!wecomBotForm.botId.trim()) {
+      setDetailNotice({ tone: "danger", message: "请填写完整的企微 Bot ID。" });
+      return;
+    }
+    if (!editingWeComBotID && !wecomBotForm.secret.trim()) {
+      setDetailNotice({ tone: "danger", message: "新增企微机器人时必须填写 Secret。" });
+      return;
+    }
+    const busyKey = editingWeComBotID ? `update-wecom-${editingWeComBotID}` : "create-wecom-bot";
+    setActionBusy(busyKey);
+    try {
+      const payload: WeComBotWriteRequest = {
+        id: blankToUndefined(wecomBotForm.id),
+        name: blankToUndefined(wecomBotForm.name),
+        botId: blankToUndefined(wecomBotForm.botId),
+        enabled: wecomBotForm.enabled,
+      };
+      if (wecomBotForm.secret.trim()) {
+        payload.secret = blankToUndefined(wecomBotForm.secret);
+      }
+      if (editingWeComBotID) {
+        await sendJSON<WeComBotResponse>(
+          `/api/admin/wecom/bots/${encodeURIComponent(editingWeComBotID)}`,
+          "PUT",
+          payload,
+        );
+      } else {
+        await sendJSON<WeComBotResponse>("/api/admin/wecom/bots", "POST", payload);
+      }
+      await refreshWeComBots();
+      await loadAdminPage({ preferredRobotID: selectedRobotID });
+      resetWeComBotForm();
+      setDetailNotice({
+        tone: "good",
+        message: editingWeComBotID ? "企微机器人配置已更新。" : "企微机器人已创建并接入运行态。",
+      });
+    } catch {
+      setDetailNotice({
+        tone: "danger",
+        message: editingWeComBotID ? "当前还不能更新这个企微机器人，请稍后重试。" : "当前还不能保存这个企微机器人，请稍后重试。",
+      });
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  async function reconnectWeComBot(botID: string) {
+    setActionBusy(`reconnect-wecom-${botID}`);
+    try {
+      await sendJSON<WeComBotResponse>(
+        `/api/admin/wecom/bots/${encodeURIComponent(botID)}/reconnect`,
+        "POST",
+      );
+      await refreshWeComBots();
+      await loadAdminPage({ preferredRobotID: selectedRobotID });
+      setDetailNotice({ tone: "good", message: "已请求企微机器人重连。" });
+    } catch {
+      setDetailNotice({ tone: "danger", message: "当前还不能重连这个企微机器人，请稍后重试。" });
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  async function deleteWeComBot(botID: string) {
+    setActionBusy(`delete-wecom-${botID}`);
+    try {
+      await sendJSON<WeComBotResponse>(
+        `/api/admin/wecom/bots/${encodeURIComponent(botID)}`,
+        "DELETE",
+      );
+      await refreshWeComBots();
+      await loadAdminPage({ preferredRobotID: selectedRobotID });
+      if (editingWeComBotID === botID) {
+        resetWeComBotForm();
+      }
+      setDetailNotice({ tone: "good", message: "企微机器人已删除。" });
+    } catch {
+      setDetailNotice({ tone: "danger", message: "当前还不能删除这个企微机器人，请稍后重试。" });
+    } finally {
+      setActionBusy("");
+    }
   }
 
   function syncAppSummary(app: FeishuAppSummary) {
@@ -653,6 +798,341 @@ export function AdminRoute() {
           })}
         </div>
       </div>
+    );
+  }
+
+  function renderRuntimePanel() {
+    const statuses = runtimeStatus?.surfaceStatuses || [];
+    const instances = runtimeStatus?.instanceStatuses || [];
+    const gateways = runtimeStatus?.gateways || [];
+    const wecomBots = runtimeStatus?.wecomBots || [];
+    const recentFailures = runtimeStatus?.recentFailures || [];
+    const activeRemoteTurns = runtimeStatus?.activeRemoteTurns || [];
+    const pendingRemoteTurns = runtimeStatus?.pendingRemoteTurns || [];
+    const successRate = runtimeStatus?.deliverySuccessRate || 0;
+    const successCount = runtimeStatus?.deliverySuccessCount || 0;
+    const failureCount = runtimeStatus?.deliveryFailureCount || 0;
+
+    return (
+      <section className="panel">
+        <div className="step-stage-head">
+          <h2>运行态总览</h2>
+          <p>实例、入口、队列、重连与最近失败</p>
+        </div>
+        <div className="soft-grid" style={{ marginTop: "1rem" }}>
+          <article className="soft-card-v2">
+            <h4>入口与队列</h4>
+            <p>
+              {runtimeStatus
+                ? `已接管 ${runtimeStatus.attachedSurfaceCount || 0} 个入口，排队 ${runtimeStatus.queuedMessageCount || 0} 条消息。`
+                : "暂未读取到运行态摘要。"}
+            </p>
+            <div className="definition-list">
+              <div>
+                <dt>Surface</dt>
+                <dd>{statuses.length}</dd>
+              </div>
+              <div>
+                <dt>待投递请求</dt>
+                <dd>{runtimeStatus?.pendingRequestCount || 0}</dd>
+              </div>
+              <div>
+                <dt>远端进行中</dt>
+                <dd>{activeRemoteTurns.length}</dd>
+              </div>
+              <div>
+                <dt>远端待派发</dt>
+                <dd>{pendingRemoteTurns.length}</dd>
+              </div>
+            </div>
+          </article>
+          <article className="soft-card-v2">
+            <h4>投递与 Gateway</h4>
+            <p>
+              {runtimeStatus
+                ? `连接 ${runtimeStatus.connectedGatewayCount || 0}，降级 ${runtimeStatus.degradedGatewayCount || 0}，离线 ${runtimeStatus.offlineGatewayCount || 0}。`
+                : "暂未读取到 gateway 状态。"}
+            </p>
+            <div className="definition-list">
+              <div>
+                <dt>成功率</dt>
+                <dd>{formatPercent(successRate)}</dd>
+              </div>
+              <div>
+                <dt>成功 / 失败</dt>
+                <dd>{`${successCount} / ${failureCount}`}</dd>
+              </div>
+              <div>
+                <dt>在线实例</dt>
+                <dd>{runtimeStatus?.onlineInstanceCount || 0}</dd>
+              </div>
+              <div>
+                <dt>Managed 实例</dt>
+                <dd>{runtimeStatus?.managedInstanceCount || 0}</dd>
+              </div>
+              <div>
+                <dt>需重投递</dt>
+                <dd>{runtimeStatus?.redeliveryRequestCount || 0}</dd>
+              </div>
+              <div>
+                <dt>Gateway 总数</dt>
+                <dd>{gateways.length}</dd>
+              </div>
+            </div>
+          </article>
+        </div>
+        {runtimeStatusError ? (
+          <div className="notice-banner warn" style={{ marginTop: "1rem" }}>
+            {runtimeStatusError}
+          </div>
+        ) : null}
+        <div className="card-grid card-grid-two-column" style={{ marginTop: "1rem" }}>
+          <article className="soft-card-v2">
+            <h4>企微通道</h4>
+            {wecomBots.length === 0 ? (
+              <p>当前没有企微运行态。</p>
+            ) : (
+              <div className="detail-stack">
+                {wecomBots.map((wecom) => (
+                  <div key={wecom.gatewayId || wecom.name || "wecom"} className="admin-subpanel">
+                    <div className="inline-status-row">
+                      <strong>{wecom.name || wecom.gatewayId || "WeCom Bot"}</strong>
+                      <span className={`status-badge ${wecomStateTone(wecom)}`}>
+                        {wecomStateLabel(wecom)}
+                      </span>
+                    </div>
+                    <p className="support-copy">
+                      {wecom.lastError?.trim()
+                        ? `最近失败：${wecom.lastError}`
+                        : wecom.lastConnectedAt
+                          ? `最近连通：${formatTimestamp(wecom.lastConnectedAt)}`
+                          : "还没有连通记录"}
+                    </p>
+                    <div className="definition-list">
+                      <div>
+                        <dt>重连次数</dt>
+                        <dd>{wecom.reconnectTries}</dd>
+                      </div>
+                      <div>
+                        <dt>下一次重试</dt>
+                        <dd>{wecom.nextRetryAt ? formatTimestamp(wecom.nextRetryAt) : "无"}</dd>
+                      </div>
+                      <div>
+                        <dt>文件发送</dt>
+                        <dd>{wecom.capabilities.fileSend ? "已支持" : "未支持"}</dd>
+                      </div>
+                      <div>
+                        <dt>按钮上限</dt>
+                        <dd>{wecom.capabilities.maxButtons || 0}</dd>
+                      </div>
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={!wecom.gatewayId || actionBusy === `reconnect-wecom-${wecom.gatewayId}`}
+                        onClick={() => {
+                          const botID = (wecom.gatewayId || "").replace(/^wecom:/, "");
+                          if (botID) {
+                            void reconnectWeComBot(botID);
+                          }
+                        }}
+                      >
+                        重新连接
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+          <article className="soft-card-v2">
+            <h4>Gateway 状态</h4>
+            {gateways.length === 0 ? (
+              <p>当前没有可见 gateway。</p>
+            ) : (
+              <div className="detail-stack">
+                {gateways.map((gateway) => (
+                  <div key={gateway.gatewayId} className="admin-subpanel">
+                    <div className="inline-status-row">
+                      <strong>{gateway.name || gateway.gatewayId}</strong>
+                      <span
+                        className={`status-badge ${gatewayStateTone(gateway.state, gateway.disabled)}`}
+                      >
+                        {gatewayStateLabel(gateway.state, gateway.disabled)}
+                      </span>
+                    </div>
+                    <p className="support-copy">
+                      {gateway.lastError?.trim()
+                        ? gateway.lastError
+                        : gateway.lastConnectedAt
+                          ? `最近连接：${formatTimestamp(gateway.lastConnectedAt)}`
+                          : "还没有连接记录"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
+        <div className="card-grid card-grid-two-column" style={{ marginTop: "1rem" }}>
+          <article className="soft-card-v2">
+            <h4>最近失败</h4>
+            {recentFailures.length === 0 ? (
+              <p>当前没有记录到最近失败。</p>
+            ) : (
+              <div className="detail-stack">
+                {recentFailures.map((failure, index) => (
+                  <div
+                    key={`${failure.occurredAt}-${failure.surfaceSessionId || failure.gatewayId || index}`}
+                    className="admin-subpanel"
+                  >
+                    <div className="inline-status-row">
+                      <strong>{failure.reason || "unknown failure"}</strong>
+                      <span className="status-badge warn">{failure.channel || "unknown"}</span>
+                    </div>
+                    <p className="support-copy">
+                      {[failure.gatewayId || "", failure.surfaceSessionId || "", failure.eventKind || ""]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p className="support-copy">{formatTimestamp(failure.occurredAt)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+          <article className="soft-card-v2">
+            <h4>实例状态</h4>
+            {instances.length === 0 ? (
+              <p>当前没有实例摘要。</p>
+            ) : (
+              <div className="detail-stack">
+                {instances.map((instance) => (
+                  <div key={instance.instanceId} className="admin-subpanel">
+                    <div className="inline-status-row">
+                      <strong>{instance.displayName || instance.instanceId}</strong>
+                      <span
+                        className={`status-badge ${instance.online ? "good" : "warn"}`}
+                      >
+                        {instance.status || (instance.online ? "online" : "offline")}
+                      </span>
+                    </div>
+                    <p className="support-copy">
+                      {instance.workspaceRoot || "未绑定工作区"}
+                    </p>
+                    <p className="support-copy">
+                      {instance.lastError?.trim()
+                        ? `最近失败：${instance.lastError}`
+                        : instance.lastHelloAt
+                          ? `最近心跳：${formatTimestamp(instance.lastHelloAt)}`
+                          : "还没有心跳记录"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
+        <div className="detail-stack" style={{ marginTop: "1rem" }}>
+          <h4 style={{ margin: 0 }}>入口视图</h4>
+          {statuses.length === 0 ? (
+            <p className="support-copy">当前没有 surface 运行态。</p>
+          ) : (
+            <div className="detail-stack">
+              {statuses.map((surface) => (
+                <article key={surface.surfaceSessionId} className="soft-card-v2">
+                  <div className="inline-status-row">
+                    <strong>{surface.displayTitle}</strong>
+                    <span
+                      className={`status-badge ${surfaceTone(surface)}`}
+                    >
+                      {surfaceBadgeLabel(surface)}
+                    </span>
+                  </div>
+                  <p className="support-copy">
+                    {[
+                      surface.platform || "unknown",
+                      surface.ownerSurface ? "owner" : "shared",
+                      surface.instanceDisplayName || surface.instanceId || "未接管",
+                    ].join(" · ")}
+                  </p>
+                  <div className="definition-list">
+                    <div>
+                      <dt>当前线程</dt>
+                      <dd>{surface.threadTitle || surface.nextThreadTitle || "未选择"}</dd>
+                    </div>
+                    <div>
+                      <dt>队列</dt>
+                      <dd>{surface.queuedCount}</dd>
+                    </div>
+                    <div>
+                      <dt>Pending Request</dt>
+                      <dd>{surface.pendingRequestCount}</dd>
+                    </div>
+                    <div>
+                      <dt>最近活跃</dt>
+                      <dd>{surface.lastActiveAt ? formatTimestamp(surface.lastActiveAt) : "无"}</dd>
+                    </div>
+                  </div>
+                  {surface.pendingRequest ? (
+                    <div className="admin-subpanel" style={{ marginTop: "0.75rem" }}>
+                      <div className="inline-status-row">
+                        <strong>{surface.pendingRequest.title || "待处理请求"}</strong>
+                        <span className={`status-badge ${surface.pendingRequest.needsRedelivery ? "warn" : "neutral"}`}>
+                          {[
+                            surface.pendingRequest.requestType || "request",
+                            surface.pendingRequest.lifecycleState || "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </div>
+                      <p className="support-copy">
+                        {formatPendingRequestProgress(surface.pendingRequest)}
+                      </p>
+                      {surface.pendingRequest.lastDeliveryError ? (
+                        <p className="support-copy">
+                          投递异常：{surface.pendingRequest.lastDeliveryError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {surface.lastDeliveryError ? (
+                    <div className="notice-banner warn">
+                      最近失败：{surface.lastDeliveryError}
+                    </div>
+                  ) : null}
+                  {surface.peerSurfaces && surface.peerSurfaces.length > 0 ? (
+                    <div className="detail-stack" style={{ marginTop: "0.75rem" }}>
+                      <strong>同实例其他入口</strong>
+                      {surface.peerSurfaces.map((peer) => (
+                        <div key={peer.surfaceSessionId} className="admin-subpanel">
+                          <div className="inline-status-row">
+                            <strong>{peer.platform || peer.gatewayId || peer.surfaceSessionId}</strong>
+                            <span className={`status-badge ${peerTone(peer)}`}>
+                              {peer.sharedAttach ? "shared" : "owner"}
+                            </span>
+                          </div>
+                          <p className="support-copy">
+                            {[
+                              peer.activeRemoteTurn ? "active turn" : peer.pendingRemoteTurn ? "dispatching" : peer.activeItemStatus || "idle",
+                              peer.queuedCount > 0 ? `${peer.queuedCount} queued` : "",
+                              peer.hasPendingRequest ? `${peer.pendingRequestCount} requests` : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
     );
   }
 
@@ -1060,6 +1540,8 @@ export function AdminRoute() {
         <p>飞书机器人、系统集成与本地存储</p>
       </header>
 
+      {renderRuntimePanel()}
+
       <section className="panel">
         <div className="step-stage-head">
           <h2>机器人管理</h2>
@@ -1116,6 +1598,163 @@ export function AdminRoute() {
             </button>
           </div>
           {renderRobotDetail()}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="step-stage-head">
+          <h2>企微机器人</h2>
+          <p>多账号管理、重连与运行态联动</p>
+        </div>
+        {wecomBotsError ? <div className="notice-banner warn">{wecomBotsError}</div> : null}
+        <div className="soft-grid two-column" style={{ marginTop: "1rem" }}>
+          <article className="soft-card-v2">
+            <h4>{editingWeComBotID ? "编辑企微机器人" : "新增企微机器人"}</h4>
+            <div className="form-grid">
+              <label className="field">
+                <span>标识 ID（可选）</span>
+                <input
+                  aria-label="企微标识 ID"
+                  placeholder="例如 ops"
+                  value={wecomBotForm.id}
+                  onChange={(event) =>
+                    setWeComBotForm((current) => ({ ...current, id: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>企微别名（可选）</span>
+                <input
+                  aria-label="企微别名"
+                  placeholder="例如 Ops Bot"
+                  value={wecomBotForm.name}
+                  onChange={(event) =>
+                    setWeComBotForm((current) => ({ ...current, name: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>
+                  Bot ID <em className="field-required">*</em>
+                </span>
+                <input
+                  aria-label="企微 Bot ID"
+                  placeholder="请输入企微 Bot ID"
+                  value={wecomBotForm.botId}
+                  onChange={(event) =>
+                    setWeComBotForm((current) => ({ ...current, botId: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>
+                  Secret {!editingWeComBotID ? <em className="field-required">*</em> : null}
+                </span>
+                <input
+                  aria-label="企微 Secret"
+                  placeholder={editingWeComBotID ? "留空则保持原 Secret" : "请输入企微 Secret"}
+                  value={wecomBotForm.secret}
+                  onChange={(event) =>
+                    setWeComBotForm((current) => ({ ...current, secret: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>运行状态</span>
+                <input
+                  aria-label="企微启用状态"
+                  type="checkbox"
+                  checked={wecomBotForm.enabled}
+                  onChange={(event) =>
+                    setWeComBotForm((current) => ({ ...current, enabled: event.target.checked }))
+                  }
+                />
+              </label>
+            </div>
+            {editingWeComBotID ? (
+              <p className="support-copy">编辑时 Secret 留空会保留当前值。</p>
+            ) : null}
+            <div className="button-row">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={
+                  actionBusy === "create-wecom-bot" ||
+                  actionBusy === `update-wecom-${editingWeComBotID || ""}`
+                }
+                onClick={() => void saveWeComBot()}
+              >
+                {editingWeComBotID ? "保存企微机器人" : "新增企微机器人"}
+              </button>
+              {editingWeComBotID ? (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  disabled={actionBusy === `update-wecom-${editingWeComBotID}`}
+                  onClick={() => resetWeComBotForm()}
+                >
+                  取消编辑
+                </button>
+              ) : null}
+            </div>
+          </article>
+          <article className="soft-card-v2">
+            <h4>已配置账号</h4>
+            {wecomBots.length === 0 ? (
+              <p>当前没有已配置的企微机器人。</p>
+            ) : (
+              <div className="detail-stack">
+                {wecomBots.map((bot) => (
+                  <div key={bot.id} className="admin-subpanel">
+                    <div className="inline-status-row">
+                      <strong>{bot.name || bot.id}</strong>
+                      <span className={`status-badge ${wecomStateTone(bot.runtime)}`}>
+                        {wecomStateLabel(bot.runtime)}
+                      </span>
+                    </div>
+                    <p className="support-copy">
+                      {[bot.id, bot.botId || "", bot.persisted ? "persisted" : "runtime"]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p className="support-copy">
+                      {bot.runtime?.lastError?.trim()
+                        ? `最近失败：${bot.runtime.lastError}`
+                        : bot.runtime?.lastConnectedAt
+                          ? `最近连通：${formatTimestamp(bot.runtime.lastConnectedAt)}`
+                          : "还没有连通记录"}
+                    </p>
+                    <div className="button-row">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={!bot.persisted}
+                        onClick={() => startEditWeComBot(bot)}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={actionBusy === `reconnect-wecom-${bot.id}`}
+                        onClick={() => void reconnectWeComBot(bot.id)}
+                      >
+                        重连
+                      </button>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        disabled={actionBusy === `delete-wecom-${bot.id}` || !bot.persisted}
+                        onClick={() => void deleteWeComBot(bot.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
         </div>
       </section>
 
@@ -1356,6 +1995,94 @@ function describeConnectionState(app: FeishuAppSummary): string {
   }
 }
 
+function gatewayStateTone(state: string | undefined, disabled: boolean | undefined) {
+  if (disabled || state === "disabled") {
+    return "neutral";
+  }
+  if (state === "connected") {
+    return "good";
+  }
+  return "warn";
+}
+
+function gatewayStateLabel(state: string | undefined, disabled: boolean | undefined): string {
+  if (disabled || state === "disabled") {
+    return "disabled";
+  }
+  if (state === "connected") {
+    return "connected";
+  }
+  return state?.trim() || "unknown";
+}
+
+function wecomStateTone(wecom: RuntimeWeComStatus | null | undefined) {
+  if (!wecom || !wecom.enabled) {
+    return "neutral";
+  }
+  if (wecom.connected || wecom.state === "connected") {
+    return "good";
+  }
+  if (wecom.state === "connecting") {
+    return "neutral";
+  }
+  return "warn";
+}
+
+function wecomStateLabel(wecom: RuntimeWeComStatus | null | undefined): string {
+  if (!wecom || !wecom.enabled) {
+    return "disabled";
+  }
+  return wecom.state?.trim() || (wecom.connected ? "connected" : "unknown");
+}
+
+function surfaceTone(surface: RuntimeSurfaceStatus | undefined) {
+  if (!surface) {
+    return "neutral";
+  }
+  if (surface.lastDeliveryError || surface.needsRedelivery) {
+    return "warn";
+  }
+  if (surface.activeRemoteTurn || surface.pendingRemoteTurn || surface.queuedCount > 0) {
+    return "good";
+  }
+  return "neutral";
+}
+
+function surfaceBadgeLabel(surface: RuntimeSurfaceStatus | undefined): string {
+  if (!surface) {
+    return "idle";
+  }
+  if (surface.lastDeliveryError || surface.needsRedelivery) {
+    return "delivery issue";
+  }
+  if (surface.activeRemoteTurn) {
+    return "active turn";
+  }
+  if (surface.pendingRemoteTurn) {
+    return "dispatching";
+  }
+  if (surface.hasPendingRequest) {
+    return "pending request";
+  }
+  if (surface.queuedCount > 0) {
+    return `${surface.queuedCount} queued`;
+  }
+  return "idle";
+}
+
+function peerTone(peer: RuntimePeerSurfaceStatus | undefined) {
+  if (!peer) {
+    return "neutral";
+  }
+  if (peer.activeRemoteTurn) {
+    return "good";
+  }
+  if (peer.pendingRemoteTurn || peer.hasPendingRequest || peer.queuedCount > 0) {
+    return "warn";
+  }
+  return "neutral";
+}
+
 function describeAutostart(
   autostart: AutostartDetectResponse | null,
   error: string,
@@ -1370,6 +2097,13 @@ function describeAutostart(
     return "当前系统不支持。";
   }
   return autostart.enabled ? "当前已启用。" : "当前未启用。";
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0%";
+  }
+  return `${(value * 100).toFixed(value >= 0.995 ? 0 : 1)}%`;
 }
 
 function describeVSCode(
@@ -1403,6 +2137,32 @@ function formatBytes(value: number): string {
 
 function formatFileSummary(fileCount: number, bytes: number): string {
   return `${fileCount} 个文件，约 ${formatBytes(bytes)}`;
+}
+
+function formatPendingRequestProgress(request: {
+  currentQuestionIndex?: number;
+  questionCount?: number;
+  answeredCount?: number;
+  skippedCount?: number;
+  pendingDispatch?: boolean;
+  visible?: boolean;
+}) {
+  const parts: string[] = [];
+  if ((request.questionCount || 0) > 0) {
+    parts.push(`第 ${(request.currentQuestionIndex || 0) + 1} / ${request.questionCount} 题`);
+  }
+  if ((request.answeredCount || 0) > 0 || (request.skippedCount || 0) > 0) {
+    parts.push(`已答 ${request.answeredCount || 0}`);
+    if ((request.skippedCount || 0) > 0) {
+      parts.push(`跳过 ${request.skippedCount || 0}`);
+    }
+  }
+  if (request.pendingDispatch) {
+    parts.push("等待回写");
+  } else if (request.visible) {
+    parts.push("已投影到当前入口");
+  }
+  return parts.join(" · ") || "待处理请求";
 }
 
 function formatTimestamp(value: string): string {

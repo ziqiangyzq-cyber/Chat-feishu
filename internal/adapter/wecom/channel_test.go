@@ -15,8 +15,8 @@ func TestChannelCapabilitiesMatchImplementedTransport(t *testing.T) {
 	if caps.Streaming {
 		t.Fatal("streaming must remain false until aibot update frames are implemented")
 	}
-	if caps.FileSend {
-		t.Fatal("file send must remain false until file projection/upload is implemented")
+	if !caps.FileSend {
+		t.Fatal("file send should be enabled after file projection/upload is implemented")
 	}
 	if caps.InteractiveSameFrame {
 		t.Fatal("wecom cannot combine text streaming and interactive template cards in one frame")

@@ -127,7 +127,7 @@ func TestMapCardEventCancel(t *testing.T) {
 func TestMapCardEventRequestRespond(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
 		TaskID:   "req-7",
-		EventKey: keyPrefixRequestRespond + keyValueSep + "approve",
+		EventKey: composeEncodedKey(keyPrefixRequestRespond, "3", "approve"),
 	})
 	if !ok || action.Kind != control.ActionRespondRequest {
 		t.Fatalf("unexpected result: ok=%v kind=%q", ok, action.Kind)
@@ -135,7 +135,7 @@ func TestMapCardEventRequestRespond(t *testing.T) {
 	if action.Request == nil {
 		t.Fatal("expected Request payload")
 	}
-	if action.Request.RequestID != "req-7" || action.Request.RequestOptionID != "approve" {
+	if action.Request.RequestID != "req-7" || action.Request.RequestOptionID != "approve" || action.Request.RequestRevision != 3 {
 		t.Fatalf("unexpected request payload: %+v", action.Request)
 	}
 }
@@ -143,10 +143,74 @@ func TestMapCardEventRequestRespond(t *testing.T) {
 func TestMapCardEventRejectSemanticallyEquivalent(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
 		TaskID:   "req-7",
-		EventKey: keyPrefixRequestRespond + keyValueSep + "reject",
+		EventKey: composeEncodedKey(keyPrefixRequestRespond, "4", "reject"),
 	})
-	if !ok || action.Request == nil || action.Request.RequestOptionID != "reject" {
+	if !ok || action.Request == nil || action.Request.RequestOptionID != "reject" || action.Request.RequestRevision != 4 {
 		t.Fatalf("unexpected reject mapping: ok=%v action=%+v", ok, action)
+	}
+}
+
+func TestMapCardEventRequestSubmitCarriesRevision(t *testing.T) {
+	action, ok := MapCardEventToAction(InboundCardEvent{
+		TaskID:   "req-8",
+		EventKey: composeEncodedKey(keyPrefixRequestSubmit, "5"),
+	})
+	if !ok || action.Kind != control.ActionRespondRequest || action.Request == nil {
+		t.Fatalf("unexpected result: ok=%v action=%+v", ok, action)
+	}
+	if action.Request.RequestID != "req-8" || action.Request.RequestRevision != 5 || action.Request.RequestOptionID != "" {
+		t.Fatalf("unexpected submit payload: %+v", action.Request)
+	}
+}
+
+func TestMapCardEventRequestAnswerButtonBuildsAnswers(t *testing.T) {
+	action, ok := MapCardEventToAction(InboundCardEvent{
+		TaskID:   "req-9",
+		EventKey: composeEncodedKey(keyPrefixRequestAnswer, "2", "model", "gpt-5.4"),
+	})
+	if !ok || action.Kind != control.ActionRespondRequest || action.Request == nil {
+		t.Fatalf("unexpected result: ok=%v action=%+v", ok, action)
+	}
+	if action.Request.RequestRevision != 2 {
+		t.Fatalf("expected revision 2, got %+v", action.Request)
+	}
+	answers := action.Request.Answers
+	if len(answers) != 1 || len(answers["model"]) != 1 || answers["model"][0] != "gpt-5.4" {
+		t.Fatalf("unexpected answer payload: %+v", answers)
+	}
+}
+
+func TestMapCardEventRequestAnswerSubmitRecoversDropdownSelection(t *testing.T) {
+	action, ok := MapCardEventToAction(InboundCardEvent{
+		TaskID:   "req-10",
+		EventKey: composeEncodedKey(keyPrefixRequestAnswerSubmit, "7", "model"),
+		Selections: []InboundSelection{{
+			QuestionKey: requestAnswerQuestionKey("model"),
+			OptionIDs:   []string{"gpt-5.3"},
+		}},
+	})
+	if !ok || action.Kind != control.ActionRespondRequest || action.Request == nil {
+		t.Fatalf("unexpected result: ok=%v action=%+v", ok, action)
+	}
+	if action.Request.RequestRevision != 7 {
+		t.Fatalf("expected revision 7, got %+v", action.Request)
+	}
+	answers := action.Request.Answers
+	if len(answers["model"]) != 1 || answers["model"][0] != "gpt-5.3" {
+		t.Fatalf("unexpected dropdown answers: %+v", answers)
+	}
+}
+
+func TestMapCardEventRequestControlCarriesQuestionAndRevision(t *testing.T) {
+	action, ok := MapCardEventToAction(InboundCardEvent{
+		TaskID:   "req-11",
+		EventKey: composeEncodedKey(keyPrefixRequestControl, "9", "skip_optional", "notes"),
+	})
+	if !ok || action.Kind != control.ActionControlRequest || action.RequestControl == nil {
+		t.Fatalf("unexpected result: ok=%v action=%+v", ok, action)
+	}
+	if action.RequestControl.RequestID != "req-11" || action.RequestControl.Control != "skip_optional" || action.RequestControl.QuestionID != "notes" || action.RequestControl.RequestRevision != 9 {
+		t.Fatalf("unexpected request control payload: %+v", action.RequestControl)
 	}
 }
 

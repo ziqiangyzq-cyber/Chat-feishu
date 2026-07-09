@@ -265,7 +265,21 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 			log.Printf("feishu permission gap observed during ui delivery: gateway=%s surface=%s event=%s err=%v", gatewayID, event.SurfaceSessionID, event.Kind, err)
 			return nil
 		}
+		if appLocked {
+			a.recordDeliveryFailureLocked("feishu", gatewayID, event.SurfaceSessionID, string(event.Kind), err)
+		} else {
+			a.mu.Lock()
+			a.recordDeliveryFailureLocked("feishu", gatewayID, event.SurfaceSessionID, string(event.Kind), err)
+			a.mu.Unlock()
+		}
 		return err
+	}
+	if appLocked {
+		a.recordDeliverySuccessLocked("feishu", gatewayID)
+	} else {
+		a.mu.Lock()
+		a.recordDeliverySuccessLocked("feishu", gatewayID)
+		a.mu.Unlock()
 	}
 	a.recordUIEventDelivery(event, operations)
 	if didPreview {

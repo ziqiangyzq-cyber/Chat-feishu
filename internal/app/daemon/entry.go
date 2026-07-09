@@ -110,17 +110,21 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		gateway,
 		identity,
 	)
-	// Optional WeCom second channel. It is constructed only when runtime
+	// Optional WeCom sidecar channels. They are constructed only when runtime
 	// credentials are present, so a default install remains Feishu-only while a
-	// configured install can run Feishu and WeCom side by side.
-	if botID := strings.TrimSpace(cfg.WeComBotID); botID != "" {
-		if secret := strings.TrimSpace(cfg.WeComSecret); secret != "" {
-			app.SetWeComChannel(wecom.NewChannel(wecom.Config{
-				BotID:  botID,
-				Secret: secret,
-			}))
-			log.Printf("wecom channel enabled (additive): bot=%s", botID)
+	// configured install can run Feishu and one or more WeCom bots side by side.
+	for _, bot := range cfg.WeComBots {
+		botID := strings.TrimSpace(bot.BotID)
+		secret := strings.TrimSpace(bot.Secret)
+		if botID == "" || secret == "" {
+			continue
 		}
+		gatewayID := wecomGatewayIDForBot(bot.ID)
+		app.SetWeComChannelWithGateway(gatewayID, wecom.NewChannel(wecom.Config{
+			BotID:  botID,
+			Secret: secret,
+		}))
+		log.Printf("wecom channel enabled (additive): gateway=%s bot=%s", gatewayID, botID)
 	}
 	baseEnv := buildDaemonHeadlessBaseEnv(os.Environ(), capturedProxyEnv)
 	app.SetHeadlessRuntime(HeadlessRuntimeConfig{

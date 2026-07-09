@@ -201,6 +201,11 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 		}
 		return s.consumeCapturedRequestFeedback(surface, action, text)
 	}
+	if text != "" {
+		if events, consumed := s.maybeConsumePendingRequestFreeText(surface, action, text); consumed {
+			return events
+		}
+	}
 	if pending := activePendingRequest(surface); pending != nil {
 		return notice(surface, "request_pending", pendingRequestNoticeText(pending))
 	}

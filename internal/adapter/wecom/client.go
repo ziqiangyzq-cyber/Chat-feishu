@@ -1,11 +1,17 @@
 package wecom
 
 import (
+	"crypto/md5"
+	"encoding/base64"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +24,20 @@ const wsEndpoint = "wss://openws.work.weixin.qq.com"
 // pingInterval is the keepalive cadence for the long connection.
 const pingInterval = 30 * time.Second
 
+// tcpKeepAlivePeriod sets the OS-level TCP keepalive idle/interval on the long
+// connection. Unlike an application read deadline, kernel keepalive probes are
+// answered by any live peer, so this detects a genuinely dead peer without
+// false-positiving on a healthy-but-idle connection (WeCom sends nothing while
+// idle and does not answer WS pings with pongs, so app-level read timing cannot
+// distinguish idle from dead).
+const tcpKeepAlivePeriod = 30 * time.Second
+
 // writeTimeout bounds a single frame write.
 const writeTimeout = 10 * time.Second
+
+// ackWait bounds how long writeEnvelopeAndWait blocks for the server's reply to
+// a request frame before giving up, so a missing ack cannot wedge the caller.
+const ackWait = 30 * time.Second
 
 // Frame type discriminators exchanged over the aibot long connection.
 const (
@@ -29,6 +47,9 @@ const (
 	frameCmdRespondMsg       = "aibot_respond_msg"
 	frameCmdSendMsg          = "aibot_send_msg"
 	frameCmdRespondUpdateMsg = "aibot_respond_update_msg"
+	frameCmdUploadMediaInit  = "aibot_upload_media_init"
+	frameCmdUploadMediaChunk = "aibot_upload_media_chunk"
+	frameCmdUploadMediaFinish = "aibot_upload_media_finish"
 )
 
 // frameEnvelope is the common shape used to peek at an inbound frame's command
@@ -43,6 +64,14 @@ type frameEnvelope struct {
 
 type frameHeaders struct {
 	ReqID string `json:"req_id,omitempty"`
+}
+
+type replyEnvelope struct {
+	Cmd     string       `json:"cmd,omitempty"`
+	Headers frameHeaders `json:"headers,omitempty"`
+	Body    json.RawMessage `json:"body,omitempty"`
+	ErrCode int          `json:"errcode,omitempty"`
+	ErrMsg  string       `json:"errmsg,omitempty"`
 }
 
 // subscribeFrame registers this aibot for its event stream. It is the first
@@ -95,6 +124,8 @@ type respondMsgFrame struct {
 		MsgType      string        `json:"msgtype"`
 		Text         *textBody     `json:"text,omitempty"`
 		Markdown     *markdownBody `json:"markdown,omitempty"`
+		File         *mediaBody    `json:"file,omitempty"`
+		Image        *mediaBody    `json:"image,omitempty"`
 		TemplateCard *templateCard `json:"template_card,omitempty"`
 		Stream       *streamMeta   `json:"stream,omitempty"`
 	} `json:"body"`
@@ -132,6 +163,8 @@ type Client struct {
 	// dialFn is injectable for testing; defaults to dialDefault.
 	dialFn func(ctx context.Context) (*websocket.Conn, error)
 
+	onState func(string, error)
+
 	// onMessage receives decoded inbound user messages.
 	onMessage func(ctx context.Context, frame msgCallbackFrame)
 	// onCardEvent receives decoded inbound template_card interactions.
@@ -140,13 +173,39 @@ type Client struct {
 	mu      sync.Mutex
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	pendingReply map[string]chan replyEnvelope
+	lastAck      replyEnvelope
 }
 
 // NewClient constructs a Client for the given aibot credentials.
 func NewClient(config Config) *Client {
-	c := &Client{config: config}
+	c := &Client{
+		config:       config,
+		pendingReply: map[string]chan replyEnvelope{},
+	}
 	c.dialFn = c.dialDefault
 	return c
+}
+
+func (c *Client) SetStateHook(hook func(string, error)) {
+	c.mu.Lock()
+	c.onState = hook
+	c.mu.Unlock()
+}
+
+// enableTCPKeepAlive turns on OS-level TCP keepalive for the WebSocket's
+// underlying socket so a dead peer is detected without an application read
+// deadline. Best-effort: a non-TCP transport (e.g. a test fake) is left as-is.
+func enableTCPKeepAlive(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	tcp, ok := conn.UnderlyingConn().(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcp.SetKeepAlive(true)
+	_ = tcp.SetKeepAlivePeriod(tcpKeepAlivePeriod)
 }
 
 // dialDefault establishes the raw WebSocket connection to the aibot endpoint.
@@ -160,17 +219,22 @@ func (c *Client) dialDefault(ctx context.Context) (*websocket.Conn, error) {
 
 // Dial opens the long connection and sends the initial subscribe frame.
 func (c *Client) Dial(ctx context.Context) error {
+	c.emitState("connecting", nil)
 	conn, err := c.dialFn(ctx)
 	if err != nil {
+		c.emitState("degraded", err)
 		return err
 	}
+	enableTCPKeepAlive(conn)
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
 	if err := c.subscribe(ctx); err != nil {
 		_ = c.Close()
+		c.emitState("degraded", err)
 		return err
 	}
+	c.emitState("connected", nil)
 	return nil
 }
 
@@ -244,6 +308,11 @@ func (c *Client) Run(ctx context.Context) error {
 	err := c.readLoop(ctx)
 	cancel()
 	wg.Wait()
+	if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+		c.emitState("stopped", nil)
+	} else {
+		c.emitState("degraded", err)
+	}
 	return err
 }
 
@@ -254,6 +323,12 @@ func (c *Client) readLoop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// No application-level read deadline here: WeCom does not answer our WS pings
+	// with pongs and sends nothing on an idle connection, so a read deadline
+	// cannot tell "healthy but idle" from "dead" and just tears down good
+	// connections every pongWait (observed as ~90s i/o-timeout churn). Dead
+	// connections are instead caught by TCP keepalive (set in Dial) and by a
+	// failed ping write (pingLoop), both of which only fire on real death.
 	for {
 		select {
 		case <-ctx.Done():
@@ -299,7 +374,22 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		return c.handleEventCallback(ctx, event)
 	default:
 		if env.ErrCode != 0 {
+			if c.deliverReply(replyEnvelope{
+				Cmd: env.Cmd,
+				Headers: env.Headers,
+				ErrCode: env.ErrCode,
+				ErrMsg: env.ErrMsg,
+			}) {
+				return nil
+			}
 			log.Printf("wecom: received response errcode=%d errmsg=%q req=%s", env.ErrCode, env.ErrMsg, env.Headers.ReqID)
+			return nil
+		}
+		if c.deliverReply(replyEnvelope{
+			Cmd: env.Cmd,
+			Headers: env.Headers,
+			Body: rawBodyFromEnvelope(raw),
+		}) {
 			return nil
 		}
 		if env.Cmd != "" {
@@ -337,12 +427,14 @@ func (c *Client) handleEventCallback(ctx context.Context, event InboundCardEvent
 // Channel.Capabilities reports Streaming=false.
 func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) error {
 	wire := newSendMsgFrame(chatID, frame)
-	return c.writeJSON(ctx, wire)
+	_, err := c.writeEnvelopeAndWait(ctx, wire.Headers.ReqID, wire.Cmd, wire)
+	return err
 }
 
 func (c *Client) respondFrame(ctx context.Context, reqID string, frame Frame) error {
 	wire := newRespondMsgFrame(reqID, frame)
-	return c.writeJSON(ctx, wire)
+	_, err := c.writeEnvelopeAndWait(ctx, wire.Headers.ReqID, wire.Cmd, wire)
+	return err
 }
 
 func newSubscribeFrame(config Config) subscribeFrame {
@@ -378,6 +470,8 @@ func fillRespondMsgBody(wire *respondMsgFrame, frame Frame) {
 	wire.Body.MsgType = frame.MsgType
 	wire.Body.Text = frame.Text
 	wire.Body.Markdown = frame.Markdown
+	wire.Body.File = frame.File
+	wire.Body.Image = frame.Image
 	wire.Body.TemplateCard = frame.TemplateCard
 }
 
@@ -397,6 +491,10 @@ func (c *Client) pingLoop(ctx context.Context) {
 		case <-ticker.C:
 			if err := c.ping(); err != nil {
 				log.Printf("wecom: ping failed: %v", err)
+				// A failed ping means the connection is dead. Close it so the
+				// blocked ReadMessage returns immediately, letting Run return and
+				// the supervisor re-dial rather than waiting out pongWait.
+				_ = c.Close()
 				return
 			}
 		}
@@ -428,4 +526,199 @@ func (c *Client) Close() error {
 		return nil
 	}
 	return conn.Close()
+}
+
+func (c *Client) emitState(state string, err error) {
+	c.mu.Lock()
+	hook := c.onState
+	c.mu.Unlock()
+	if hook != nil {
+		hook(state, err)
+	}
+}
+
+type uploadMediaInitBody struct {
+	Type        mediaType `json:"type"`
+	Filename    string    `json:"filename"`
+	TotalSize   int       `json:"total_size"`
+	TotalChunks int       `json:"total_chunks"`
+	MD5         string    `json:"md5,omitempty"`
+}
+
+type uploadMediaInitResult struct {
+	UploadID string `json:"upload_id"`
+}
+
+type uploadMediaChunkBody struct {
+	UploadID   string `json:"upload_id"`
+	ChunkIndex int    `json:"chunk_index"`
+	Base64Data string `json:"base64_data"`
+}
+
+type uploadMediaFinishBody struct {
+	UploadID string `json:"upload_id"`
+}
+
+type uploadMediaFinishResult struct {
+	Type    mediaType `json:"type"`
+	MediaID string    `json:"media_id"`
+}
+
+func (c *Client) uploadMedia(ctx context.Context, path string, mediaType mediaType) (string, string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", errors.New("wecom: upload media path is required")
+	}
+	buffer, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("wecom: read media file: %w", err)
+	}
+	fileName := strings.TrimSpace(filepath.Base(path))
+	if fileName == "" {
+		fileName = "artifact"
+	}
+	const chunkSize = 512 * 1024
+	totalChunks := (len(buffer) + chunkSize - 1) / chunkSize
+	if totalChunks <= 0 {
+		totalChunks = 1
+	}
+	if totalChunks > 100 {
+		return "", fileName, fmt.Errorf("wecom: file too large: %d chunks", totalChunks)
+	}
+	initReqID := newReqID("upload-init")
+	initReply, err := c.sendReplyJSON(ctx, initReqID, frameCmdUploadMediaInit, uploadMediaInitBody{
+		Type:        mediaType,
+		Filename:    fileName,
+		TotalSize:   len(buffer),
+		TotalChunks: totalChunks,
+		MD5:         fmt.Sprintf("%x", md5.Sum(buffer)),
+	})
+	if err != nil {
+		return "", fileName, err
+	}
+	var initResult uploadMediaInitResult
+	if err := json.Unmarshal(initReply.Body, &initResult); err != nil {
+		return "", fileName, fmt.Errorf("wecom: decode upload init: %w", err)
+	}
+	if strings.TrimSpace(initResult.UploadID) == "" {
+		return "", fileName, errors.New("wecom: upload init returned empty upload_id")
+	}
+	for i := 0; i < totalChunks; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(buffer) {
+			end = len(buffer)
+		}
+		_, err := c.sendReplyJSON(ctx, newReqID("upload-chunk"), frameCmdUploadMediaChunk, uploadMediaChunkBody{
+			UploadID:   initResult.UploadID,
+			ChunkIndex: i,
+			Base64Data: base64.StdEncoding.EncodeToString(buffer[start:end]),
+		})
+		if err != nil {
+			return "", fileName, err
+		}
+	}
+	finishReply, err := c.sendReplyJSON(ctx, newReqID("upload-finish"), frameCmdUploadMediaFinish, uploadMediaFinishBody{
+		UploadID: initResult.UploadID,
+	})
+	if err != nil {
+		return "", fileName, err
+	}
+	var finishResult uploadMediaFinishResult
+	if err := json.Unmarshal(finishReply.Body, &finishResult); err != nil {
+		return "", fileName, fmt.Errorf("wecom: decode upload finish: %w", err)
+	}
+	if strings.TrimSpace(finishResult.MediaID) == "" {
+		return "", fileName, errors.New("wecom: upload finish returned empty media_id")
+	}
+	return strings.TrimSpace(finishResult.MediaID), fileName, nil
+}
+
+func (c *Client) sendReplyJSON(ctx context.Context, reqID, cmd string, body any) (replyEnvelope, error) {
+	payload := struct {
+		Cmd     string       `json:"cmd"`
+		Headers frameHeaders `json:"headers,omitempty"`
+		Body    any          `json:"body,omitempty"`
+	}{
+		Cmd:     cmd,
+		Headers: frameHeaders{ReqID: reqID},
+		Body:    body,
+	}
+	return c.writeEnvelopeAndWait(ctx, reqID, cmd, payload)
+}
+
+func (c *Client) writeEnvelopeAndWait(ctx context.Context, reqID, label string, payload any) (replyEnvelope, error) {
+	replyCh := make(chan replyEnvelope, 1)
+	c.mu.Lock()
+	c.pendingReply[reqID] = replyCh
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pendingReply, reqID)
+		c.mu.Unlock()
+	}()
+	if err := c.writeJSON(ctx, payload); err != nil {
+		return replyEnvelope{}, err
+	}
+	// Bound the wait so a missing/lost server ack can never wedge the caller
+	// indefinitely (the worker goroutine that runs deliveries, or the read loop
+	// for pre-connection setup frames). The ack normally arrives within one RTT.
+	timer := time.NewTimer(ackWait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return replyEnvelope{}, ctx.Err()
+	case <-timer.C:
+		return replyEnvelope{}, fmt.Errorf("wecom: %s timed out waiting for ack", label)
+	case reply := <-replyCh:
+		if reply.ErrCode != 0 {
+			return reply, fmt.Errorf("wecom: %s failed: %s", label, strings.TrimSpace(reply.ErrMsg))
+		}
+		return reply, nil
+	}
+}
+
+func (c *Client) deliverReply(reply replyEnvelope) bool {
+	reqID := strings.TrimSpace(reply.Headers.ReqID)
+	if reqID == "" {
+		return false
+	}
+	c.mu.Lock()
+	replyCh := c.pendingReply[reqID]
+	if replyCh != nil {
+		select {
+		case replyCh <- reply:
+		default:
+		}
+		c.lastAck = reply
+	}
+	c.mu.Unlock()
+	return replyCh != nil
+}
+
+func (c *Client) lastAckMessageID() (string, error) {
+	c.mu.Lock()
+	reply := c.lastAck
+	c.mu.Unlock()
+	if len(reply.Body) == 0 {
+		return "", errors.New("wecom: no reply ack available")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(reply.Body, &body); err != nil {
+		return "", err
+	}
+	if value, ok := body["msgid"].(string); ok {
+		return strings.TrimSpace(value), nil
+	}
+	return "", errors.New("wecom: ack missing msgid")
+}
+
+func rawBodyFromEnvelope(raw []byte) json.RawMessage {
+	var wire struct {
+		Body json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil
+	}
+	return wire.Body
 }

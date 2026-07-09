@@ -126,6 +126,15 @@ type WeComSettings struct {
 	Enabled *bool  `json:"enabled,omitempty"`
 	BotID   string `json:"botId,omitempty"`
 	Secret  string `json:"secret,omitempty"`
+	Bots    []WeComBotConfig `json:"bots,omitempty"`
+}
+
+type WeComBotConfig struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	BotID   string `json:"botId,omitempty"`
+	Secret  string `json:"secret,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 type DebugSettings struct {
@@ -428,6 +437,7 @@ func (cfg AppConfig) normalized() AppConfig {
 
 	cfg.Codex.Providers = NormalizeCodexProviders(cfg.Codex.Providers)
 	cfg.Claude.Profiles = NormalizeClaudeProfiles(cfg.Claude.Profiles)
+	cfg.WeCom = cfg.WeCom.normalized()
 
 	if cfg.Debug.Pprof != nil {
 		normalized := cfg.Debug.Pprof.normalized()
@@ -460,4 +470,61 @@ func (cfg PprofSettings) normalized() PprofSettings {
 
 func (cfg PprofSettings) isZero() bool {
 	return !cfg.Enabled && strings.TrimSpace(cfg.ListenHost) == "" && cfg.ListenPort <= 0
+}
+
+func (cfg WeComSettings) normalized() WeComSettings {
+	normalizedBots := make([]WeComBotConfig, 0, len(cfg.Bots)+1)
+	seen := map[string]bool{}
+	appendBot := func(bot WeComBotConfig) {
+		bot = bot.normalized()
+		if strings.TrimSpace(bot.ID) == "" && strings.TrimSpace(bot.BotID) == "" {
+			return
+		}
+		key := strings.TrimSpace(bot.ID)
+		if key == "" {
+			key = strings.TrimSpace(bot.BotID)
+		}
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		normalizedBots = append(normalizedBots, bot)
+	}
+	if strings.TrimSpace(cfg.BotID) != "" || strings.TrimSpace(cfg.Secret) != "" {
+		appendBot(WeComBotConfig{
+			ID:      "bot",
+			Name:    "WeCom Bot",
+			BotID:   cfg.BotID,
+			Secret:  cfg.Secret,
+			Enabled: cfg.Enabled,
+		})
+	}
+	for _, bot := range cfg.Bots {
+		appendBot(bot)
+	}
+	cfg.Bots = normalizedBots
+	return cfg
+}
+
+func (cfg WeComBotConfig) normalized() WeComBotConfig {
+	cfg.ID = strings.TrimSpace(cfg.ID)
+	cfg.Name = strings.TrimSpace(cfg.Name)
+	cfg.BotID = strings.TrimSpace(cfg.BotID)
+	cfg.Secret = strings.TrimSpace(cfg.Secret)
+	if cfg.ID == "" {
+		cfg.ID = cfg.BotID
+	}
+	if cfg.Name == "" {
+		cfg.Name = configFirstNonEmpty(cfg.ID, cfg.BotID, "WeCom Bot")
+	}
+	return cfg
+}
+
+func configFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

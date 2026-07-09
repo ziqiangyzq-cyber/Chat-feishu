@@ -235,6 +235,129 @@ func TestAttachFallsBackToActiveThreadWhenFocusedThreadUnknown(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshotIncludesPeerSurfaceStatusForSharedAttach(t *testing.T) {
+	now := time.Date(2026, 7, 9, 8, 30, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "repo",
+		WorkspaceRoot:           "/data/repo",
+		WorkspaceKey:            "/data/repo",
+		ShortName:               "repo",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "主线", CWD: "/data/repo", Loaded: true},
+		},
+	})
+
+	svc.MaterializeSurface("surface-feishu", "app-1", "chat-feishu", "user-feishu")
+	svc.MaterializeSurface("surface-wecom", "wecom:bot", "chat-wecom", "user-wecom")
+
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachWorkspace,
+		SurfaceSessionID: "surface-feishu",
+		GatewayID:        "app-1",
+		ChatID:           "chat-feishu",
+		ActorUserID:      "user-feishu",
+		WorkspaceKey:     "/data/repo",
+	})
+
+	primary := svc.root.Surfaces["surface-feishu"]
+	peer := svc.root.Surfaces["surface-wecom"]
+	peer.SharedAttach = true
+	peer.ClaimedWorkspaceKey = "/data/repo"
+	peer.LastInboundAt = now.Add(-2 * time.Minute)
+	if !svc.transitionSurfaceRouteCore(peer, svc.root.Instances["inst-1"], surfaceRouteCoreState{
+		AttachedInstanceID: "inst-1",
+		WorkspaceKey:       "/data/repo",
+		RouteMode:          state.RouteModeUnbound,
+	}) {
+		t.Fatal("expected shared attach to succeed")
+	}
+
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-feishu",
+		MessageID:        "msg-feishu-1",
+		Text:             "first",
+	})
+	started := svc.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:      agentproto.EventTurnStarted,
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorUnknown},
+	})
+	if len(started) == 0 {
+		t.Fatal("expected turn start")
+	}
+
+	peer.PendingRequests["req-1"] = &state.RequestPromptRecord{
+		RequestID:       "req-1",
+		RequestType:     "approval",
+		InstanceID:      "inst-1",
+		ThreadID:        "thread-1",
+		TurnID:          "turn-1",
+		LifecycleState:  requestLifecycleAwaitingBackendConsume,
+		VisibilityState: requestVisibilityVisible,
+	}
+	peer.PendingRequestOrder = []string{"req-1"}
+	peer.ActiveQueueItemID = "queue-wecom-1"
+	peer.QueueItems = map[string]*state.QueueItemRecord{
+		"queue-wecom-1": {
+			ID:               "queue-wecom-1",
+			SurfaceSessionID: "surface-wecom",
+			SourceMessageID:  "msg-wecom-1",
+			ReplyToMessageID: "msg-wecom-1",
+			Status:           state.QueueItemDispatching,
+		},
+	}
+	peer.QueuedQueueItemIDs = []string{"queue-wecom-2"}
+	peer.QueueItems["queue-wecom-2"] = &state.QueueItemRecord{
+		ID:               "queue-wecom-2",
+		SurfaceSessionID: "surface-wecom",
+		SourceMessageID:  "msg-wecom-2",
+		Status:           state.QueueItemQueued,
+	}
+	svc.bindPendingRemoteTurn("inst-1", &remoteTurnBinding{
+		InstanceID:       "inst-1",
+		SurfaceSessionID: "surface-wecom",
+		QueueItemID:      "queue-wecom-1",
+		SourceMessageID:  "msg-wecom-1",
+		ReplyToMessageID: "msg-wecom-1",
+	})
+
+	snapshot := svc.buildSnapshot(primary)
+	if snapshot == nil {
+		t.Fatal("expected snapshot")
+	}
+	if snapshot.Surface.Platform != "feishu" || snapshot.Surface.GatewayID != "app-1" || snapshot.Surface.ChatID != "chat-feishu" {
+		t.Fatalf("unexpected current surface summary: %#v", snapshot.Surface)
+	}
+	if len(snapshot.PeerSurfaces) != 1 {
+		t.Fatalf("expected one peer surface, got %#v", snapshot.PeerSurfaces)
+	}
+	got := snapshot.PeerSurfaces[0]
+	if got.Platform != "wecom" || got.GatewayID != "wecom:bot" || !got.SharedAttach {
+		t.Fatalf("unexpected peer identity summary: %#v", got)
+	}
+	if !got.HasPendingRequest || got.PendingRequestCount != 1 || got.PendingRequestLifecycle != requestLifecycleAwaitingBackendConsume {
+		t.Fatalf("expected peer pending request details, got %#v", got)
+	}
+	if !got.PendingRemoteTurn || got.ActiveRemoteTurn {
+		t.Fatalf("expected peer pending remote turn only, got %#v", got)
+	}
+	if got.RouteMode != string(state.RouteModeUnbound) || got.SelectedThreadID != "" {
+		t.Fatalf("expected shared attach peer to stay unbound in this setup, got %#v", got)
+	}
+	if got.QueuedCount != 1 || got.ActiveItemStatus != string(state.QueueItemDispatching) {
+		t.Fatalf("expected peer queue status, got %#v", got)
+	}
+	if got.SourceMessageID != "msg-wecom-1" || got.ReplyTargetMessageID != "msg-wecom-1" {
+		t.Fatalf("expected peer reply binding details, got %#v", got)
+	}
+}
+
 func TestWorkspaceSelectionEventCarriesFeishuTargetPickerContext(t *testing.T) {
 	now := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

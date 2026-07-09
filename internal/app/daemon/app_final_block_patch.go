@@ -164,6 +164,9 @@ func (a *App) runSecondChanceFinalPatch(job secondChanceFinalPatchJob) {
 			log.Printf("second-chance final patch observed feishu permission gap: gateway=%s surface=%s err=%v", job.GatewayID, job.SurfaceSessionID, err)
 			return
 		}
+		a.mu.Lock()
+		a.recordDeliveryFailureLocked("feishu", job.GatewayID, job.SurfaceSessionID, string(op.Kind), err)
+		a.mu.Unlock()
 		log.Printf(
 			"second-chance final patch apply failed: surface=%s thread=%s turn=%s item=%s message=%s err=%v",
 			job.SurfaceSessionID,
@@ -175,6 +178,9 @@ func (a *App) runSecondChanceFinalPatch(job secondChanceFinalPatchJob) {
 		)
 		return
 	}
+	a.mu.Lock()
+	a.recordDeliverySuccessLocked("feishu", job.GatewayID)
+	a.mu.Unlock()
 }
 
 func secondChanceFinalPreviewTimeout(base time.Duration) time.Duration {

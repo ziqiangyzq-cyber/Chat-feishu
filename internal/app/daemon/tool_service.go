@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
+	"github.com/kxn/codex-remote-feishu/internal/adapter/wecom"
 	"github.com/kxn/codex-remote-feishu/internal/app/adminauth"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
@@ -23,9 +24,9 @@ const feishuSendIMImageToolName = "feishu_send_im_image"
 const feishuSendIMVideoToolName = "feishu_send_im_video"
 const feishuReadDriveFileCommentsToolName = "feishu_read_drive_file_comments"
 
-const feishuSendIMFileDescription = "Send a local file to the Feishu conversation that started the current remote turn. Use this when the artifact should be delivered as a downloadable file rather than rendered inline. For screenshots and other user-facing images, prefer feishu_send_im_image. For MP4 videos that should render as videos in chat, prefer feishu_send_im_video. Use a real local file path; the target Feishu conversation is resolved automatically from the running turn."
-const feishuSendIMImageDescription = "Send a local image to the Feishu conversation that started the current remote turn as an inline IM image message. Use this proactively when you created or saved a screenshot, visual diff, rendered preview, chart, mockup, or another image artifact that would directly help the current conversation. Prefer this tool over feishu_send_im_file for PNG, JPEG, GIF, WebP, or BMP images because the image will render directly in chat. Use a real local image path; the target Feishu conversation is resolved automatically from the running turn."
-const feishuSendIMVideoDescription = "Send a local MP4 video to the Feishu conversation that started the current remote turn as an inline IM video message. Use this when the artifact should render as a video in chat instead of appearing as a downloadable file attachment. Use a real local .mp4 file path; the target Feishu conversation is resolved automatically from the running turn."
+const feishuSendIMFileDescription = "Send a local file to the conversation that started the current remote turn. The target channel is resolved automatically from the running surface, including Feishu and WeCom. Use this when the artifact should be delivered as a downloadable file rather than rendered inline. For screenshots and other user-facing images, prefer feishu_send_im_image. For MP4 videos that should render as videos in chat, prefer feishu_send_im_video. Use a real local file path."
+const feishuSendIMImageDescription = "Send a local image to the conversation that started the current remote turn as an inline image message. The target channel is resolved automatically from the running surface, including Feishu and WeCom. Use this proactively when you created or saved a screenshot, visual diff, rendered preview, chart, mockup, or another image artifact that would directly help the current conversation. Prefer this tool over feishu_send_im_file for PNG, JPEG, GIF, WebP, or BMP images because the image will render directly in chat. Use a real local image path."
+const feishuSendIMVideoDescription = "Send a local MP4 video to the conversation that started the current remote turn. The target channel is resolved automatically from the running surface, including Feishu and WeCom. Feishu will send it as an inline IM video message when supported; WeCom currently delivers the MP4 as a chat attachment. Use a real local .mp4 file path."
 const feishuReadDriveFileCommentsDescription = "Read comments from a Feishu file or document URL using the Feishu app context for the conversation that started the current remote turn. Use this when the user gives you a Feishu link, or asks you to review comments on a markdown preview link that was already uploaded to Feishu. Pass the exact Feishu URL; this tool will extract the token and file type for supported URL forms such as /file/, /drive/file/, /docx/, /doc/, /sheets/, and /slides/. Do not manually extract tokens, and do not guess from wiki URLs in this version."
 
 type toolDefinition struct {
@@ -218,22 +219,8 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 		}
 	}
 
-	sender, ok := a.gateway.(feishu.IMFileSender)
-	if !ok {
-		return nil, &toolError{
-			Code:    "tool_unavailable",
-			Message: "Feishu IM file sending is not available in this runtime",
-		}
-	}
-	result, err := sender.SendIMFile(ctx, feishu.IMFileSendRequest{
-		GatewayID:        resolved.GatewayID,
-		SurfaceSessionID: resolved.SurfaceSessionID,
-		ChatID:           resolved.ChatID,
-		ActorUserID:      resolved.ActorUserID,
-		Path:             path,
-	})
+	result, err := a.sendSurfaceFile(ctx, resolved, path)
 	if err != nil {
-		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
 		var sendErr *feishu.IMFileSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -245,6 +232,15 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 				return nil, &toolError{Code: "send_failed", Message: sendErr.Error(), Retryable: true}
 			}
 		}
+		var wecomErr *wecom.IMMediaSendError
+		if errors.As(err, &wecomErr) {
+			switch wecomErr.Code {
+			case wecom.IMMediaSendErrorUploadFailed:
+				return nil, &toolError{Code: "upload_failed", Message: wecomErr.Error()}
+			case wecom.IMMediaSendErrorSendFailed, wecom.IMMediaSendErrorNotConnected:
+				return nil, &toolError{Code: "send_failed", Message: wecomErr.Error(), Retryable: true}
+			}
+		}
 		return nil, &toolError{
 			Code:      "send_failed",
 			Message:   err.Error(),
@@ -252,13 +248,18 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 		}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMFileToolName, resolved.SurfaceSessionID, path, result.MessageID)
-	return map[string]any{
+	response := map[string]any{
 		"surface_session_id": result.SurfaceSessionID,
 		"gateway_id":         result.GatewayID,
 		"file_name":          result.FileName,
 		"file_key":           result.FileKey,
 		"message_id":         result.MessageID,
-	}, nil
+	}
+	if isWeComGateway(result.GatewayID) {
+		response["delivery_kind"] = "wecom_attachment"
+		response["delivery_note"] = "已通过企业微信附件消息发送。"
+	}
+	return response, nil
 }
 
 func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (map[string]any, *toolError) {
@@ -287,22 +288,8 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 		}
 	}
 
-	sender, ok := a.gateway.(feishu.IMImageSender)
-	if !ok {
-		return nil, &toolError{
-			Code:    "tool_unavailable",
-			Message: "Feishu IM image sending is not available in this runtime",
-		}
-	}
-	result, err := sender.SendIMImage(ctx, feishu.IMImageSendRequest{
-		GatewayID:        resolved.GatewayID,
-		SurfaceSessionID: resolved.SurfaceSessionID,
-		ChatID:           resolved.ChatID,
-		ActorUserID:      resolved.ActorUserID,
-		Path:             path,
-	})
+	result, err := a.sendSurfaceImage(ctx, resolved, path)
 	if err != nil {
-		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
 		var sendErr *feishu.IMImageSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -312,6 +299,15 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 				return nil, &toolError{Code: "send_failed", Message: sendErr.Error(), Retryable: true}
 			}
 		}
+		var wecomErr *wecom.IMMediaSendError
+		if errors.As(err, &wecomErr) {
+			switch wecomErr.Code {
+			case wecom.IMMediaSendErrorUploadFailed:
+				return nil, &toolError{Code: "upload_failed", Message: wecomErr.Error()}
+			case wecom.IMMediaSendErrorSendFailed, wecom.IMMediaSendErrorNotConnected:
+				return nil, &toolError{Code: "send_failed", Message: wecomErr.Error(), Retryable: true}
+			}
+		}
 		return nil, &toolError{
 			Code:      "send_failed",
 			Message:   err.Error(),
@@ -319,13 +315,18 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 		}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMImageToolName, resolved.SurfaceSessionID, path, result.MessageID)
-	return map[string]any{
+	response := map[string]any{
 		"surface_session_id": result.SurfaceSessionID,
 		"gateway_id":         result.GatewayID,
 		"image_name":         result.ImageName,
 		"image_key":          result.ImageKey,
 		"message_id":         result.MessageID,
-	}, nil
+	}
+	if isWeComGateway(result.GatewayID) {
+		response["delivery_kind"] = "wecom_image"
+		response["delivery_note"] = "已通过企业微信图片消息发送。"
+	}
+	return response, nil
 }
 
 func validateSendImagePath(path string) *toolError {
@@ -442,6 +443,124 @@ func (a *App) resolveToolSurfaceContextLocked(surfaceID string) (resolvedToolSur
 
 func writeToolError(w http.ResponseWriter, status int, apiErr toolError) {
 	writeJSON(w, status, toolErrorPayload{Error: apiErr})
+}
+
+type surfaceFileSendResult struct {
+	GatewayID        string
+	SurfaceSessionID string
+	FileName         string
+	FileKey          string
+	MessageID        string
+}
+
+type surfaceImageSendResult struct {
+	GatewayID        string
+	SurfaceSessionID string
+	ImageName        string
+	ImageKey         string
+	MessageID        string
+}
+
+func (a *App) sendSurfaceFile(ctx context.Context, resolved resolvedToolSurfaceContext, path string) (surfaceFileSendResult, error) {
+	if isWeComGateway(resolved.GatewayID) {
+		a.mu.Lock()
+		channel := a.wecomChannelForGatewayLocked(resolved.GatewayID)
+		a.mu.Unlock()
+		sender, ok := channel.(wecom.IMFileSender)
+		if !ok {
+			return surfaceFileSendResult{}, errors.New("wecom IM file sending is not available in this runtime")
+		}
+		result, err := sender.SendIMFile(ctx, wecom.IMFileSendRequest{
+			GatewayID:        resolved.GatewayID,
+			SurfaceSessionID: resolved.SurfaceSessionID,
+			ChatID:           resolved.ChatID,
+			ActorUserID:      resolved.ActorUserID,
+			Path:             path,
+		})
+		if err != nil {
+			return surfaceFileSendResult{}, err
+		}
+		return surfaceFileSendResult{
+			GatewayID:        result.GatewayID,
+			SurfaceSessionID: result.SurfaceSessionID,
+			FileName:         result.FileName,
+			FileKey:          result.MediaID,
+			MessageID:        result.MessageID,
+		}, nil
+	}
+	sender, ok := a.gateway.(feishu.IMFileSender)
+	if !ok {
+		return surfaceFileSendResult{}, errors.New("Feishu IM file sending is not available in this runtime")
+	}
+	result, err := sender.SendIMFile(ctx, feishu.IMFileSendRequest{
+		GatewayID:        resolved.GatewayID,
+		SurfaceSessionID: resolved.SurfaceSessionID,
+		ChatID:           resolved.ChatID,
+		ActorUserID:      resolved.ActorUserID,
+		Path:             path,
+	})
+	if err != nil {
+		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
+		return surfaceFileSendResult{}, err
+	}
+	return surfaceFileSendResult{
+		GatewayID:        result.GatewayID,
+		SurfaceSessionID: result.SurfaceSessionID,
+		FileName:         result.FileName,
+		FileKey:          result.FileKey,
+		MessageID:        result.MessageID,
+	}, nil
+}
+
+func (a *App) sendSurfaceImage(ctx context.Context, resolved resolvedToolSurfaceContext, path string) (surfaceImageSendResult, error) {
+	if isWeComGateway(resolved.GatewayID) {
+		a.mu.Lock()
+		channel := a.wecomChannelForGatewayLocked(resolved.GatewayID)
+		a.mu.Unlock()
+		sender, ok := channel.(wecom.IMImageSender)
+		if !ok {
+			return surfaceImageSendResult{}, errors.New("wecom IM image sending is not available in this runtime")
+		}
+		result, err := sender.SendIMImage(ctx, wecom.IMImageSendRequest{
+			GatewayID:        resolved.GatewayID,
+			SurfaceSessionID: resolved.SurfaceSessionID,
+			ChatID:           resolved.ChatID,
+			ActorUserID:      resolved.ActorUserID,
+			Path:             path,
+		})
+		if err != nil {
+			return surfaceImageSendResult{}, err
+		}
+		return surfaceImageSendResult{
+			GatewayID:        result.GatewayID,
+			SurfaceSessionID: result.SurfaceSessionID,
+			ImageName:        result.ImageName,
+			ImageKey:         result.MediaID,
+			MessageID:        result.MessageID,
+		}, nil
+	}
+	sender, ok := a.gateway.(feishu.IMImageSender)
+	if !ok {
+		return surfaceImageSendResult{}, errors.New("Feishu IM image sending is not available in this runtime")
+	}
+	result, err := sender.SendIMImage(ctx, feishu.IMImageSendRequest{
+		GatewayID:        resolved.GatewayID,
+		SurfaceSessionID: resolved.SurfaceSessionID,
+		ChatID:           resolved.ChatID,
+		ActorUserID:      resolved.ActorUserID,
+		Path:             path,
+	})
+	if err != nil {
+		_ = a.observeFeishuPermissionError(resolved.GatewayID, err)
+		return surfaceImageSendResult{}, err
+	}
+	return surfaceImageSendResult{
+		GatewayID:        result.GatewayID,
+		SurfaceSessionID: result.SurfaceSessionID,
+		ImageName:        result.ImageName,
+		ImageKey:         result.ImageKey,
+		MessageID:        result.MessageID,
+	}, nil
 }
 
 func writeJSONFileAtomic(path string, payload any, mode os.FileMode) error {

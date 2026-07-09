@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
@@ -38,5 +39,19 @@ func TestRequestPromptPendingDispatchStatusTextForCanUseTool(t *testing.T) {
 	request.LifecycleState = requestLifecycleAwaitingBackendConsume
 	if got, want := requestPromptPendingDispatchStatusText(request), "已提交当前工具调用确认，等待 Claude 继续。"; got != want {
 		t.Fatalf("awaiting status = %q, want %q", got, want)
+	}
+}
+
+func TestRequestVisibilityRefreshStatusTextMentionsLatestRecoveryCopy(t *testing.T) {
+	request := &state.RequestPromptRecord{
+		VisibilityState:   requestVisibilityDeliveryDegraded,
+		LastDeliveryError: "network timeout",
+	}
+	got := requestVisibilityRefreshStatusText(request)
+	if !strings.Contains(got, "以最新一张为准") {
+		t.Fatalf("expected latest-copy guidance, got %q", got)
+	}
+	if !strings.Contains(got, "network timeout") {
+		t.Fatalf("expected original delivery error, got %q", got)
 	}
 }

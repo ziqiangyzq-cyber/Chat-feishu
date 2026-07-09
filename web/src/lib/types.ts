@@ -51,9 +51,168 @@ export interface BootstrapState {
 export interface RuntimeStatus {
   instances: Array<Record<string, unknown>>;
   surfaces: Array<Record<string, unknown>>;
+  instanceStatuses?: RuntimeInstanceStatus[];
+  surfaceStatuses?: RuntimeSurfaceStatus[];
   gateways?: GatewayStatus[];
+  wecomBots?: RuntimeWeComStatus[];
+  recentFailures?: RuntimeFailureSummary[];
   pendingRemoteTurns: Array<Record<string, unknown>>;
   activeRemoteTurns: Array<Record<string, unknown>>;
+  connectedGatewayCount?: number;
+  degradedGatewayCount?: number;
+  offlineGatewayCount?: number;
+  managedInstanceCount?: number;
+  onlineInstanceCount?: number;
+  attachedSurfaceCount?: number;
+  queuedMessageCount?: number;
+  pendingRequestCount?: number;
+  redeliveryRequestCount?: number;
+  deliverySuccessCount?: number;
+  deliveryFailureCount?: number;
+  deliverySuccessRate?: number;
+}
+
+export interface RuntimeFailureSummary {
+  occurredAt: string;
+  channel?: string;
+  gatewayId?: string;
+  surfaceSessionId?: string;
+  eventKind?: string;
+  reason?: string;
+}
+
+export interface RuntimeWeComStatus {
+  gatewayId?: string;
+  name?: string;
+  enabled: boolean;
+  connected: boolean;
+  state?: string;
+  lastError?: string;
+  lastConnectedAt?: string;
+  lastStateChange?: string;
+  nextRetryAt?: string;
+  lastRetryDelay?: string;
+  reconnectTries: number;
+  capabilities: {
+    streaming: boolean;
+    interactiveSameFrame: boolean;
+    fileSend: boolean;
+    maxButtons: number;
+  };
+}
+
+export interface WeComBotSummary {
+  id: string;
+  name?: string;
+  botId?: string;
+  hasSecret: boolean;
+  enabled: boolean;
+  persisted: boolean;
+  runtime?: RuntimeWeComStatus;
+}
+
+export interface WeComBotsResponse {
+  bots: WeComBotSummary[];
+}
+
+export interface WeComBotResponse {
+  bot: WeComBotSummary;
+}
+
+export interface WeComBotWriteRequest {
+  id?: string;
+  name?: string;
+  botId?: string;
+  secret?: string;
+  enabled?: boolean;
+}
+
+export interface RuntimeInstanceStatus {
+  instanceId: string;
+  displayName?: string;
+  workspaceRoot?: string;
+  source?: string;
+  managed: boolean;
+  online: boolean;
+  pid?: number;
+  status: string;
+  requestedAt?: string;
+  startedAt?: string;
+  idleSince?: string;
+  lastHelloAt?: string;
+  lastRefreshRequestedAt?: string;
+  lastRefreshCompletedAt?: string;
+  refreshInFlight?: boolean;
+  lastError?: string;
+}
+
+export interface RuntimePeerSurfaceStatus {
+  surfaceSessionId: string;
+  platform?: string;
+  gatewayId?: string;
+  sharedAttach: boolean;
+  selectedThreadId?: string;
+  routeMode?: string;
+  queuedCount: number;
+  activeItemStatus?: string;
+  hasPendingRequest: boolean;
+  pendingRequestCount: number;
+  pendingRemoteTurn: boolean;
+  activeRemoteTurn: boolean;
+  replyTargetMessageId?: string;
+  lastInboundAt?: string;
+}
+
+export interface RuntimePendingRequestSummary {
+  requestId: string;
+  requestType?: string;
+  title?: string;
+  lifecycleState?: string;
+  phase?: string;
+  cardRevision?: number;
+  currentQuestionIndex?: number;
+  questionCount?: number;
+  answeredCount?: number;
+  skippedCount?: number;
+  visible: boolean;
+  needsRedelivery: boolean;
+  lastDeliveryError?: string;
+  pendingDispatch: boolean;
+  createdAt?: string;
+}
+
+export interface RuntimeSurfaceStatus {
+  surfaceSessionId: string;
+  platform?: string;
+  gatewayId?: string;
+  productMode?: string;
+  displayTitle: string;
+  threadTitle?: string;
+  firstUserMessage?: string;
+  lastUserMessage?: string;
+  workspacePath?: string;
+  instanceId?: string;
+  instanceDisplayName?: string;
+  ownerSurface: boolean;
+  sharedAttach: boolean;
+  routeMode?: string;
+  dispatchMode?: string;
+  activeItemStatus?: string;
+  queuedCount: number;
+  hasPendingRequest: boolean;
+  pendingRequestCount: number;
+  pendingRequest?: RuntimePendingRequestSummary;
+  pendingRemoteTurn: boolean;
+  activeRemoteTurn: boolean;
+  replyTargetMessageId?: string;
+  nextThreadId?: string;
+  nextThreadTitle?: string;
+  lastDeliveryError?: string;
+  lastDeliveryAttemptAt?: string;
+  needsRedelivery: boolean;
+  deliveryAttemptCount: number;
+  lastActiveAt?: string;
+  peerSurfaces?: RuntimePeerSurfaceStatus[];
 }
 
 export interface FeishuAppSummary {

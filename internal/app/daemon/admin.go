@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/app/daemon/adminui"
 	"github.com/kxn/codex-remote-feishu/internal/branding"
 	"github.com/kxn/codex-remote-feishu/internal/config"
+	"github.com/kxn/codex-remote-feishu/internal/core/frontstagecontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
+	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 )
 
 type AdminRuntimeOptions struct {
@@ -136,6 +139,7 @@ type adminConfigView struct {
 	Codex   adminCodexSettingsView  `json:"codex,omitempty"`
 	Claude  adminClaudeSettingsView `json:"claude,omitempty"`
 	Feishu  adminFeishuSettingsView `json:"feishu"`
+	WeCom   adminWeComSettingsView  `json:"wecom,omitempty"`
 	Debug   config.DebugSettings    `json:"debug"`
 	Storage config.StorageSettings  `json:"storage,omitempty"`
 }
@@ -155,12 +159,130 @@ type adminFeishuAppView struct {
 }
 
 type runtimeStatusPayload struct {
-	Instances          []*state.InstanceRecord         `json:"instances"`
-	Surfaces           []*state.SurfaceConsoleRecord   `json:"surfaces"`
-	SurfaceStatuses    []adminSurfaceStatusSummary     `json:"surfaceStatuses,omitempty"`
-	Gateways           []feishu.GatewayStatus          `json:"gateways,omitempty"`
-	PendingRemoteTurns []orchestrator.RemoteTurnStatus `json:"pendingRemoteTurns"`
-	ActiveRemoteTurns  []orchestrator.RemoteTurnStatus `json:"activeRemoteTurns"`
+	Instances              []*state.InstanceRecord         `json:"instances"`
+	Surfaces               []*state.SurfaceConsoleRecord   `json:"surfaces"`
+	InstanceStatuses       []adminInstanceSummary          `json:"instanceStatuses,omitempty"`
+	SurfaceStatuses        []adminSurfaceStatusSummary     `json:"surfaceStatuses,omitempty"`
+	Gateways               []feishu.GatewayStatus          `json:"gateways,omitempty"`
+	WeComBots              []adminWeComRuntimeSummary      `json:"wecomBots,omitempty"`
+	RecentFailures         []adminRuntimeFailureSummary    `json:"recentFailures,omitempty"`
+	PendingRemoteTurns     []orchestrator.RemoteTurnStatus `json:"pendingRemoteTurns"`
+	ActiveRemoteTurns      []orchestrator.RemoteTurnStatus `json:"activeRemoteTurns"`
+	ConnectedGatewayCount  int                             `json:"connectedGatewayCount"`
+	DegradedGatewayCount   int                             `json:"degradedGatewayCount"`
+	OfflineGatewayCount    int                             `json:"offlineGatewayCount"`
+	ManagedInstanceCount   int                             `json:"managedInstanceCount"`
+	OnlineInstanceCount    int                             `json:"onlineInstanceCount"`
+	AttachedSurfaceCount   int                             `json:"attachedSurfaceCount"`
+	QueuedMessageCount     int                             `json:"queuedMessageCount"`
+	PendingRequestCount    int                             `json:"pendingRequestCount"`
+	RedeliveryRequestCount int                             `json:"redeliveryRequestCount"`
+	DeliverySuccessCount   int                             `json:"deliverySuccessCount"`
+	DeliveryFailureCount   int                             `json:"deliveryFailureCount"`
+	DeliverySuccessRate    float64                         `json:"deliverySuccessRate"`
+}
+
+type adminPendingRequestSummary struct {
+	RequestID            string     `json:"requestId"`
+	RequestType          string     `json:"requestType,omitempty"`
+	Title                string     `json:"title,omitempty"`
+	LifecycleState       string     `json:"lifecycleState,omitempty"`
+	Phase                string     `json:"phase,omitempty"`
+	CardRevision         int        `json:"cardRevision,omitempty"`
+	CurrentQuestionIndex int        `json:"currentQuestionIndex,omitempty"`
+	QuestionCount        int        `json:"questionCount,omitempty"`
+	AnsweredCount        int        `json:"answeredCount,omitempty"`
+	SkippedCount         int        `json:"skippedCount,omitempty"`
+	Visible              bool       `json:"visible"`
+	NeedsRedelivery      bool       `json:"needsRedelivery"`
+	LastDeliveryError    string     `json:"lastDeliveryError,omitempty"`
+	PendingDispatch      bool       `json:"pendingDispatch"`
+	CreatedAt            *time.Time `json:"createdAt,omitempty"`
+}
+
+type adminRuntimeFailureSummary struct {
+	OccurredAt       time.Time `json:"occurredAt"`
+	Channel          string    `json:"channel,omitempty"`
+	GatewayID        string    `json:"gatewayId,omitempty"`
+	SurfaceSessionID string    `json:"surfaceSessionId,omitempty"`
+	EventKind        string    `json:"eventKind,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+}
+
+type adminWeComRuntimeSummary struct {
+	GatewayID       string                  `json:"gatewayId,omitempty"`
+	Name            string                  `json:"name,omitempty"`
+	Enabled         bool                    `json:"enabled"`
+	Connected       bool                    `json:"connected"`
+	State           string                  `json:"state,omitempty"`
+	LastError       string                  `json:"lastError,omitempty"`
+	LastConnectedAt *time.Time              `json:"lastConnectedAt,omitempty"`
+	LastStateChange *time.Time              `json:"lastStateChange,omitempty"`
+	NextRetryAt     *time.Time              `json:"nextRetryAt,omitempty"`
+	LastRetryDelay  string                  `json:"lastRetryDelay,omitempty"`
+	ReconnectTries  int                     `json:"reconnectTries"`
+	Capabilities    surfaceCapabilitiesView `json:"capabilities"`
+}
+
+func summarizePendingRequest(request *state.RequestPromptRecord) *adminPendingRequestSummary {
+	request = normalizeAdminPendingRequestRecord(request)
+	if request == nil {
+		return nil
+	}
+	summary := &adminPendingRequestSummary{
+		RequestID:            strings.TrimSpace(request.RequestID),
+		RequestType:          strings.TrimSpace(request.RequestType),
+		Title:                strings.TrimSpace(request.Title),
+		LifecycleState:       strings.TrimSpace(request.LifecycleState),
+		Phase:                strings.TrimSpace(string(request.Phase)),
+		CardRevision:         request.CardRevision,
+		CurrentQuestionIndex: request.CurrentQuestionIndex,
+		QuestionCount:        len(request.Questions),
+		Visible:              strings.TrimSpace(request.VisibleMessageID) != "",
+		NeedsRedelivery:      request.NeedsRedelivery,
+		LastDeliveryError:    strings.TrimSpace(request.LastDeliveryError),
+		PendingDispatch:      strings.TrimSpace(request.PendingDispatchCommandID) != "",
+	}
+	if !request.CreatedAt.IsZero() {
+		value := request.CreatedAt
+		summary.CreatedAt = &value
+	}
+	if len(request.DraftAnswers) > 0 {
+		summary.AnsweredCount = len(request.DraftAnswers)
+	}
+	if len(request.SkippedQuestionIDs) > 0 {
+		summary.SkippedCount = len(request.SkippedQuestionIDs)
+	}
+	return summary
+}
+
+func normalizeAdminPendingRequestRecord(request *state.RequestPromptRecord) *state.RequestPromptRecord {
+	if request == nil {
+		return nil
+	}
+	copy := *request
+	copy.RequestID = strings.TrimSpace(copy.RequestID)
+	copy.RequestType = strings.TrimSpace(copy.RequestType)
+	copy.Title = strings.TrimSpace(copy.Title)
+	copy.LifecycleState = strings.TrimSpace(copy.LifecycleState)
+	copy.Phase = frontstagecontract.Phase(strings.TrimSpace(string(copy.Phase)))
+	copy.VisibleMessageID = strings.TrimSpace(copy.VisibleMessageID)
+	copy.LastDeliveryError = strings.TrimSpace(copy.LastDeliveryError)
+	copy.PendingDispatchCommandID = strings.TrimSpace(copy.PendingDispatchCommandID)
+	if copy.DraftAnswers == nil {
+		copy.DraftAnswers = map[string]string{}
+	}
+	if copy.SkippedQuestionIDs == nil {
+		copy.SkippedQuestionIDs = map[string]bool{}
+	}
+	return &copy
+}
+
+type surfaceCapabilitiesView struct {
+	Streaming            bool `json:"streaming"`
+	InteractiveSameFrame bool `json:"interactiveSameFrame"`
+	FileSend             bool `json:"fileSend"`
+	MaxButtons           int  `json:"maxButtons"`
 }
 
 func (a *App) registerAPIRoutes(mux *http.ServeMux) {
@@ -227,6 +349,11 @@ func (a *App) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/feishu/manifest", a.requireAdmin(a.handleFeishuManifest))
 	mux.HandleFunc("GET /api/admin/feishu/apps", a.requireAdmin(a.handleFeishuAppsList))
 	mux.HandleFunc("POST /api/admin/feishu/apps", a.requireAdmin(a.handleFeishuAppCreate))
+	mux.HandleFunc("GET /api/admin/wecom/bots", a.requireAdmin(a.handleWeComBotsList))
+	mux.HandleFunc("POST /api/admin/wecom/bots", a.requireAdmin(a.handleWeComBotCreate))
+	mux.HandleFunc("PUT /api/admin/wecom/bots/{id}", a.requireAdmin(a.handleWeComBotUpdate))
+	mux.HandleFunc("DELETE /api/admin/wecom/bots/{id}", a.requireAdmin(a.handleWeComBotDelete))
+	mux.HandleFunc("POST /api/admin/wecom/bots/{id}/reconnect", a.requireAdmin(a.handleWeComBotReconnect))
 	mux.HandleFunc("POST /api/admin/feishu/onboarding/sessions", a.requireAdmin(a.handleFeishuOnboardingSessionCreate))
 	mux.HandleFunc("GET /api/admin/feishu/onboarding/sessions/{id}", a.requireAdmin(a.handleFeishuOnboardingSessionGet))
 	mux.HandleFunc("POST /api/admin/feishu/onboarding/sessions/{id}/complete", a.requireAdmin(a.handleFeishuOnboardingSessionComplete))
@@ -660,6 +787,9 @@ func redactAdminConfig(cfg config.AppConfig) adminConfigView {
 		Feishu: adminFeishuSettingsView{
 			UseSystemProxy: cfg.Feishu.UseSystemProxy,
 		},
+		WeCom: adminWeComSettingsView{
+			Enabled: cfg.WeCom.Enabled == nil || *cfg.WeCom.Enabled,
+		},
 	}
 	for _, app := range cfg.Feishu.Apps {
 		view.Feishu.Apps = append(view.Feishu.Apps, adminFeishuAppView{
@@ -671,21 +801,252 @@ func redactAdminConfig(cfg config.AppConfig) adminConfigView {
 			VerifiedAt: app.VerifiedAt,
 		})
 	}
+	for _, bot := range cfg.WeCom.Bots {
+		view.WeCom.Bots = append(view.WeCom.Bots, adminWeComBotView{
+			ID:        strings.TrimSpace(bot.ID),
+			Name:      strings.TrimSpace(bot.Name),
+			BotID:     strings.TrimSpace(bot.BotID),
+			HasSecret: strings.TrimSpace(bot.Secret) != "",
+			Enabled:   bot.Enabled == nil || *bot.Enabled,
+		})
+	}
 	return view
 }
 
 func (a *App) runtimeStatusPayload() runtimeStatusPayload {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.syncManagedHeadlessLocked(time.Now().UTC())
 	surfaces := a.service.Surfaces()
+	instances := a.service.Instances()
+	instanceStatuses := a.runtimeInstanceStatusesLocked(instances)
+	gateways := gatewayStatuses(a.gateway)
+	connectedGatewayCount, degradedGatewayCount, offlineGatewayCount := summarizeGatewayHealth(gateways)
+	attachedSurfaceCount, queuedMessageCount, pendingRequestCount, redeliveryRequestCount := summarizeSurfaceHealth(surfaces)
+	managedInstanceCount, onlineInstanceCount := summarizeInstanceHealth(instanceStatuses)
+	deliverySuccessCount := a.opsRuntime.delivery.successCount
+	deliveryFailureCount := a.opsRuntime.delivery.failureCount
+	deliverySuccessRate := summarizeDeliverySuccessRate(deliverySuccessCount, deliveryFailureCount)
 	return runtimeStatusPayload{
-		Instances:          a.service.Instances(),
-		Surfaces:           surfaces,
-		SurfaceStatuses:    a.runtimeSurfaceStatusesLocked(surfaces),
-		Gateways:           gatewayStatuses(a.gateway),
-		PendingRemoteTurns: a.service.PendingRemoteTurns(),
-		ActiveRemoteTurns:  a.service.ActiveRemoteTurns(),
+		Instances:              instances,
+		Surfaces:               surfaces,
+		InstanceStatuses:       instanceStatuses,
+		SurfaceStatuses:        a.runtimeSurfaceStatusesLocked(surfaces),
+		Gateways:               gateways,
+		WeComBots:              a.runtimeWeComSummariesLocked(),
+		RecentFailures:         runtimeFailureSummaries(a.opsRuntime.delivery.recent),
+		PendingRemoteTurns:     a.service.PendingRemoteTurns(),
+		ActiveRemoteTurns:      a.service.ActiveRemoteTurns(),
+		ConnectedGatewayCount:  connectedGatewayCount,
+		DegradedGatewayCount:   degradedGatewayCount,
+		OfflineGatewayCount:    offlineGatewayCount,
+		ManagedInstanceCount:   managedInstanceCount,
+		OnlineInstanceCount:    onlineInstanceCount,
+		AttachedSurfaceCount:   attachedSurfaceCount,
+		QueuedMessageCount:     queuedMessageCount,
+		PendingRequestCount:    pendingRequestCount,
+		RedeliveryRequestCount: redeliveryRequestCount,
+		DeliverySuccessCount:   deliverySuccessCount,
+		DeliveryFailureCount:   deliveryFailureCount,
+		DeliverySuccessRate:    deliverySuccessRate,
 	}
+}
+
+func summarizeDeliverySuccessRate(successCount, failureCount int) float64 {
+	total := successCount + failureCount
+	if total <= 0 {
+		return 0
+	}
+	return float64(successCount) / float64(total)
+}
+
+func runtimeFailureSummaries(records []deliveryFailureRecord) []adminRuntimeFailureSummary {
+	if len(records) == 0 {
+		return nil
+	}
+	summaries := make([]adminRuntimeFailureSummary, 0, len(records))
+	for _, record := range records {
+		summaries = append(summaries, adminRuntimeFailureSummary{
+			OccurredAt:       record.OccurredAt,
+			Channel:          record.Channel,
+			GatewayID:        record.GatewayID,
+			SurfaceSessionID: record.SurfaceSessionID,
+			EventKind:        record.EventKind,
+			Reason:           record.Reason,
+		})
+	}
+	return summaries
+}
+
+func (a *App) runtimeWeComSummariesLocked() []adminWeComRuntimeSummary {
+	if a == nil {
+		return nil
+	}
+	if len(a.wecomChannels) == 0 && a.wecomChannel == nil {
+		return []adminWeComRuntimeSummary{{
+			GatewayID: wecomGatewayID,
+			Name:      "WeCom Bot",
+			Enabled:   false,
+			State:     "disabled",
+		}}
+	}
+	summaries := make([]adminWeComRuntimeSummary, 0, len(a.wecomChannels)+1)
+	seen := map[string]bool{}
+	appendSummary := func(gatewayID string, channel surface.Channel) {
+		if seen[gatewayID] {
+			return
+		}
+		seen[gatewayID] = true
+		capabilities := surface.Capabilities{}
+		if channel != nil {
+			capabilities = channel.Capabilities()
+		}
+		runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+		summary := adminWeComRuntimeSummary{
+			GatewayID:      gatewayID,
+			Name:           adminWeComDisplayName(gatewayID),
+			Enabled:        channel != nil,
+			Connected:      runtimeState.connected,
+			State:          strings.TrimSpace(runtimeState.state),
+			LastError:      strings.TrimSpace(runtimeState.lastError),
+			ReconnectTries: runtimeState.reconnectAttempts,
+			Capabilities: surfaceCapabilitiesView{
+				Streaming:            capabilities.Streaming,
+				InteractiveSameFrame: capabilities.InteractiveSameFrame,
+				FileSend:             capabilities.FileSend,
+				MaxButtons:           capabilities.MaxButtons,
+			},
+		}
+		if summary.State == "" {
+			summary.State = "unknown"
+		}
+		if !runtimeState.lastConnectedAt.IsZero() {
+			value := runtimeState.lastConnectedAt
+			summary.LastConnectedAt = &value
+		}
+		if !runtimeState.lastStateChangeAt.IsZero() {
+			value := runtimeState.lastStateChangeAt
+			summary.LastStateChange = &value
+		}
+		if !runtimeState.nextRetryAt.IsZero() {
+			value := runtimeState.nextRetryAt
+			summary.NextRetryAt = &value
+		}
+		if runtimeState.lastRetryDelay > 0 {
+			summary.LastRetryDelay = runtimeState.lastRetryDelay.String()
+		}
+		summaries = append(summaries, summary)
+	}
+	for gatewayID, channel := range a.wecomChannels {
+		appendSummary(gatewayID, channel)
+	}
+	if a.wecomChannel != nil {
+		appendSummary(wecomGatewayID, a.wecomChannel)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Name != summaries[j].Name {
+			return summaries[i].Name < summaries[j].Name
+		}
+		return summaries[i].GatewayID < summaries[j].GatewayID
+	})
+	return summaries
+}
+
+func adminWeComDisplayName(gatewayID string) string {
+	value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(gatewayID), wecomNamespacePrefix))
+	if value == "" {
+		return "WeCom Bot"
+	}
+	return value
+}
+
+func (a *App) runtimeInstanceStatusesLocked(instances []*state.InstanceRecord) []adminInstanceSummary {
+	summaries := make([]adminInstanceSummary, 0, len(instances)+len(a.managedHeadlessRuntime.Processes))
+	seen := make(map[string]bool, len(instances)+len(a.managedHeadlessRuntime.Processes))
+	for _, inst := range instances {
+		if inst == nil {
+			continue
+		}
+		summary, ok := a.adminManagedInstanceSummaryLocked(inst.InstanceID)
+		if !ok {
+			continue
+		}
+		summaries = append(summaries, summary)
+		seen[inst.InstanceID] = true
+	}
+	for instanceID := range a.managedHeadlessRuntime.Processes {
+		if seen[instanceID] {
+			continue
+		}
+		summary, ok := a.adminManagedInstanceSummaryLocked(instanceID)
+		if !ok {
+			continue
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Online != summaries[j].Online {
+			return summaries[i].Online
+		}
+		if summaries[i].Managed != summaries[j].Managed {
+			return summaries[i].Managed
+		}
+		if summaries[i].DisplayName != summaries[j].DisplayName {
+			return summaries[i].DisplayName < summaries[j].DisplayName
+		}
+		return summaries[i].InstanceID < summaries[j].InstanceID
+	})
+	return summaries
+}
+
+func summarizeGatewayHealth(gateways []feishu.GatewayStatus) (connected int, degraded int, offline int) {
+	for _, gateway := range gateways {
+		switch {
+		case gateway.Disabled || gateway.State == feishu.GatewayStateDisabled:
+			offline++
+		case gateway.State == feishu.GatewayStateConnected:
+			connected++
+		default:
+			degraded++
+		}
+	}
+	return connected, degraded, offline
+}
+
+func summarizeSurfaceHealth(surfaces []*state.SurfaceConsoleRecord) (attached int, queued int, pendingRequests int, redelivery int) {
+	for _, surface := range surfaces {
+		if surface == nil {
+			continue
+		}
+		if strings.TrimSpace(surface.AttachedInstanceID) != "" {
+			attached++
+		}
+		queued += len(surface.QueuedQueueItemIDs)
+		for requestID, request := range surface.PendingRequests {
+			request = normalizeAdminPendingRequestOnSurface(surface, request)
+			if request == nil {
+				delete(surface.PendingRequests, requestID)
+				continue
+			}
+			pendingRequests++
+			if request.NeedsRedelivery || strings.TrimSpace(request.LastDeliveryError) != "" {
+				redelivery++
+			}
+		}
+	}
+	return attached, queued, pendingRequests, redelivery
+}
+
+func summarizeInstanceHealth(instances []adminInstanceSummary) (managed int, online int) {
+	for _, inst := range instances {
+		if inst.Managed {
+			managed++
+		}
+		if inst.Online {
+			online++
+		}
+	}
+	return managed, online
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

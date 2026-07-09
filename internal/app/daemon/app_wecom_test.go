@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ type recordingWeComChannel struct {
 	chatIDs  []string
 	events   []eventcontract.Event
 	delivers int
+	lastID   string
+	hook     func(string, error)
 }
 
 type flakyWeComChannel struct {
@@ -79,6 +82,7 @@ func (c *recordingWeComChannel) Deliver(_ context.Context, chatID string, event 
 	c.chatIDs = append(c.chatIDs, chatID)
 	c.events = append(c.events, event)
 	c.delivers++
+	c.lastID = "wecom-msg-" + strconv.Itoa(c.delivers)
 	return nil
 }
 
@@ -86,10 +90,31 @@ func (c *recordingWeComChannel) Stop(context.Context) error { return nil }
 
 func (c *recordingWeComChannel) Capabilities() surface.Capabilities { return surface.Capabilities{} }
 
+func (c *recordingWeComChannel) SetStateHook(hook func(string, error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hook = hook
+}
+
+func (c *recordingWeComChannel) LastDeliveryMessageID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastID
+}
+
 func (c *recordingWeComChannel) snapshot() (int, []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.delivers, append([]string(nil), c.chatIDs...)
+}
+
+func (c *recordingWeComChannel) emitState(state string, err error) {
+	c.mu.Lock()
+	hook := c.hook
+	c.mu.Unlock()
+	if hook != nil {
+		hook(state, err)
+	}
 }
 
 func TestIsWeComGateway(t *testing.T) {
@@ -296,10 +321,12 @@ func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := &flakyWeComChannel{failures: 2, onSuccess: cancel}
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{})
+	gatewayID := wecomGatewayIDForBot("bot-reconnect")
 
-	runWeComChannelWithReconnect(ctx, ch, func(context.Context, control.Action) *surface.ActionResult {
+	runWeComChannelWithReconnect(ctx, gatewayID, ch, func(context.Context, control.Action) *surface.ActionResult {
 		return nil
-	}, time.Millisecond, time.Millisecond)
+	}, time.Millisecond, time.Millisecond, app)
 
 	starts, stops := ch.snapshot()
 	if starts != 3 {
@@ -307,6 +334,17 @@ func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
 	}
 	if stops != 3 {
 		t.Fatalf("stops = %d, want 3", stops)
+	}
+	app.mu.Lock()
+	runtimeState := app.wecomRuntimeStateLocked(gatewayID)
+	state := runtimeState.state
+	attempts := runtimeState.reconnectAttempts
+	app.mu.Unlock()
+	if state != "stopped" {
+		t.Fatalf("wecom state = %q, want stopped", state)
+	}
+	if attempts != 2 {
+		t.Fatalf("reconnect attempts = %d, want 2", attempts)
 	}
 }
 
@@ -394,5 +432,89 @@ func TestDeliverRoutesWeComSurfaceToWeComOnly(t *testing.T) {
 	}
 	if ops := gateway.snapshotOperations(); len(ops) != 0 {
 		t.Fatalf("feishu gateway must not receive wecom-owned events, got %d ops", len(ops))
+	}
+}
+
+func TestWeComConnectedReplaysDegradedPendingRequestVisibility(t *testing.T) {
+	gatewayID := wecomGatewayIDForBot("ops")
+	wecomCh := &recordingWeComChannel{}
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{StartedAt: time.Now().UTC()})
+	app.SetWeComChannelWithGateway(gatewayID, wecomCh)
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "主线程", CWD: "/data/dl/droid", Loaded: true},
+		},
+	})
+
+	surfaceID := wecomSurfaceIDForGateway(gatewayID, "wcchat-1")
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: surfaceID,
+		GatewayID:        gatewayID,
+		ChatID:           "wcchat-1",
+		ActorUserID:      "user-1",
+		InstanceID:       "inst-1",
+	})
+	surface := app.service.Surface(surfaceID)
+	surface.PendingRequests["req-1"] = &state.RequestPromptRecord{
+		RequestID:             "req-1",
+		RequestType:           "approval",
+		InstanceID:            "inst-1",
+		ThreadID:              "thread-1",
+		TurnID:                "turn-1",
+		OwnerSurfaceSessionID: surfaceID,
+		OwnerGatewayID:        gatewayID,
+		OwnerChatID:           "wcchat-1",
+		VisibilityState:       "delivery_degraded",
+		NeedsRedelivery:       true,
+		CardRevision:          1,
+		Title:                 "需要确认",
+	}
+	surface.PendingRequestOrder = []string{"req-1"}
+
+	otherSurfaceID := wecomSurfaceIDForGateway(wecomGatewayIDForBot("other"), "wcchat-2")
+	app.service.MaterializeSurface(otherSurfaceID, wecomGatewayIDForBot("other"), "wcchat-2", "user-2")
+	otherSurface := app.service.Surface(otherSurfaceID)
+	otherSurface.PendingRequests = map[string]*state.RequestPromptRecord{
+		"req-2": {
+			RequestID:             "req-2",
+			RequestType:           "approval",
+			InstanceID:            "inst-1",
+			ThreadID:              "thread-1",
+			TurnID:                "turn-2",
+			OwnerSurfaceSessionID: otherSurfaceID,
+			OwnerGatewayID:        wecomGatewayIDForBot("other"),
+			OwnerChatID:           "wcchat-2",
+			VisibilityState:       "delivery_degraded",
+			NeedsRedelivery:       true,
+			CardRevision:          1,
+			Title:                 "其他确认",
+		},
+	}
+	otherSurface.PendingRequestOrder = []string{"req-2"}
+
+	wecomCh.emitState("connected", nil)
+
+	record := app.service.PendingRequest(surfaceID, "req-1")
+	if record == nil || record.VisibilityState != "visible" || record.VisibleMessageID == "" {
+		t.Fatalf("expected connected replay to restore request visibility, got %#v", record)
+	}
+	otherRecord := app.service.PendingRequest(otherSurfaceID, "req-2")
+	if otherRecord == nil || otherRecord.VisibilityState != "delivery_degraded" || !otherRecord.NeedsRedelivery {
+		t.Fatalf("expected other gateway request to stay degraded, got %#v", otherRecord)
+	}
+	delivers, chatIDs := wecomCh.snapshot()
+	if delivers == 0 {
+		t.Fatal("expected wecom replay delivery on reconnect")
+	}
+	if len(chatIDs) == 0 || chatIDs[0] != "wcchat-1" {
+		t.Fatalf("unexpected replay chat targets: %#v", chatIDs)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
+	"github.com/kxn/codex-remote-feishu/internal/core/frontstagecontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/render"
 )
 
@@ -258,8 +259,9 @@ func TestProjectTargetPickerSucceededRendersStatusMarkdown(t *testing.T) {
 
 func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	view := control.FeishuRequestView{
-		RequestID: "req-1",
-		Title:     "是否执行计划?",
+		RequestID:       "req-1",
+		Title:           "是否执行计划?",
+		RequestRevision: 3,
 		Options: []control.RequestPromptOption{
 			{OptionID: "approve", Label: "批准", Style: "primary"},
 			{OptionID: "reject", Label: "拒绝"},
@@ -281,14 +283,278 @@ func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	if len(card.ButtonList) != 2 {
 		t.Fatalf("expected 2 buttons, got %d", len(card.ButtonList))
 	}
-	if card.ButtonList[0].Key != keyPrefixRequestRespond+keyValueSep+"approve" {
+	if card.ButtonList[0].Key != composeEncodedKey(keyPrefixRequestRespond, "3", "approve") {
 		t.Fatalf("unexpected approve key: %q", card.ButtonList[0].Key)
 	}
-	if card.ButtonList[1].Key != keyPrefixRequestRespond+keyValueSep+"reject" {
+	if card.ButtonList[1].Key != composeEncodedKey(keyPrefixRequestRespond, "3", "reject") {
 		t.Fatalf("unexpected reject key: %q", card.ButtonList[1].Key)
 	}
 	if card.ButtonList[0].Style != 1 {
 		t.Fatalf("expected primary style on approve button, got %d", card.ButtonList[0].Style)
+	}
+}
+
+func TestProjectRequestUserInputDirectOptionsRenderChoiceAndControlCards(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-ui-1",
+		RequestType:     "request_user_input",
+		RequestRevision: 2,
+		Title:           "需要补充输入",
+		Questions: []control.RequestPromptQuestion{
+			{
+				ID:             "model",
+				Header:         "模型",
+				Question:       "请选择模型",
+				Options:        []control.RequestPromptQuestionOption{{Label: "gpt-5.4"}, {Label: "gpt-5.3"}},
+				DirectResponse: true,
+			},
+			{
+				ID:       "notes",
+				Header:   "备注",
+				Question: "补充说明",
+				Optional: true,
+			},
+		},
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 3 {
+		t.Fatalf("expected body + choice card + control card, got %d", len(frames))
+	}
+	if frames[0].MsgType != "markdown" || !frames[0].Stream {
+		t.Fatalf("expected first frame to be stream markdown, got %+v", frames[0])
+	}
+	choiceCard := frames[1].TemplateCard
+	if choiceCard == nil || choiceCard.CardType != cardTypeButtonInteraction {
+		t.Fatalf("expected button_interaction choice card, got %+v", choiceCard)
+	}
+	if len(choiceCard.ButtonList) != 2 {
+		t.Fatalf("expected 2 choice buttons, got %d", len(choiceCard.ButtonList))
+	}
+	if choiceCard.ButtonList[0].Key != composeEncodedKey(keyPrefixRequestAnswer, "2", "model", "gpt-5.4") {
+		t.Fatalf("unexpected option key: %q", choiceCard.ButtonList[0].Key)
+	}
+	controlCard := frames[2].TemplateCard
+	if controlCard == nil || controlCard.CardType != cardTypeButtonInteraction {
+		t.Fatalf("expected control card, got %+v", controlCard)
+	}
+	if len(controlCard.ButtonList) != 1 || controlCard.ButtonList[0].Text != "取消" {
+		t.Fatalf("expected only cancel button on first required question, got %+v", controlCard.ButtonList)
+	}
+}
+
+func TestProjectRequestUserInputDropdownAndControlButtons(t *testing.T) {
+	options := make([]control.RequestPromptQuestionOption, 0, defaultMaxButtons+2)
+	for i := 0; i < defaultMaxButtons+2; i++ {
+		options = append(options, control.RequestPromptQuestionOption{Label: "opt-" + string(rune('a'+i))})
+	}
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-ui-2",
+		RequestType:     "request_user_input",
+		RequestRevision: 4,
+		Questions: []control.RequestPromptQuestion{
+			{ID: "done", Header: "前题", Question: "done", Answered: true},
+			{
+				ID:             "pick",
+				Header:         "选择",
+				Question:       "请选择",
+				Options:        options,
+				Optional:       true,
+				DirectResponse: true,
+			},
+			{ID: "later", Header: "后题", Question: "later"},
+		},
+		CurrentQuestionIndex: 1,
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 3 {
+		t.Fatalf("expected body + dropdown card + control card, got %d", len(frames))
+	}
+	choiceCard := frames[1].TemplateCard
+	if choiceCard == nil || choiceCard.CardType != cardTypeMultipleInteraction {
+		t.Fatalf("expected dropdown card, got %+v", choiceCard)
+	}
+	if choiceCard.SubmitButton == nil || choiceCard.SubmitButton.Key != composeEncodedKey(keyPrefixRequestAnswerSubmit, "4", "pick") {
+		t.Fatalf("unexpected dropdown submit button: %+v", choiceCard.SubmitButton)
+	}
+	if len(choiceCard.SelectList) != 1 || choiceCard.SelectList[0].QuestionKey != requestAnswerQuestionKey("pick") {
+		t.Fatalf("unexpected dropdown select list: %+v", choiceCard.SelectList)
+	}
+	controlCard := frames[2].TemplateCard
+	if controlCard == nil {
+		t.Fatal("expected control card")
+	}
+	wantKeys := []string{
+		composeEncodedKey(keyPrefixRequestRespond, "4", frontstagecontract.RequestPromptOptionStepPrevious),
+		composeEncodedKey(keyPrefixRequestControl, "4", frontstagecontract.RequestControlSkipOptional, "pick"),
+		composeEncodedKey(keyPrefixRequestControl, "4", frontstagecontract.RequestControlCancelTurn),
+	}
+	for i, want := range wantKeys {
+		if len(controlCard.ButtonList) <= i || controlCard.ButtonList[i].Key != want {
+			t.Fatalf("button[%d] = %+v, want key %q", i, controlCard.ButtonList, want)
+		}
+	}
+}
+
+func TestProjectRequestUserInputCompletedRendersRetrySubmit(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-ui-3",
+		RequestType:     "request_user_input",
+		RequestRevision: 5,
+		Questions: []control.RequestPromptQuestion{
+			{ID: "model", Header: "模型", Question: "请选择模型", Answered: true},
+			{ID: "notes", Header: "备注", Question: "补充说明", Skipped: true, Optional: true},
+		},
+		CurrentQuestionIndex: 1,
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 2 {
+		t.Fatalf("expected body + control card, got %d", len(frames))
+	}
+	controlCard := frames[1].TemplateCard
+	if controlCard == nil || len(controlCard.ButtonList) < 2 {
+		t.Fatalf("expected retry submit plus navigation/cancel, got %+v", controlCard)
+	}
+	found := false
+	for _, button := range controlCard.ButtonList {
+		if button.Key == composeEncodedKey(keyPrefixRequestSubmit, "5") && button.Text == "重新提交" && button.Style == 1 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected retry submit button, got %+v", controlCard.ButtonList)
+	}
+}
+
+func TestProjectRequestUserInputUnsupportedTextAnswerShowsGuidance(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-ui-4",
+		RequestType:     "request_user_input",
+		RequestRevision: 1,
+		Questions: []control.RequestPromptQuestion{
+			{
+				ID:           "notes",
+				Header:       "备注",
+				Question:     "请补充说明",
+				AllowOther:   true,
+				Placeholder:  "输入说明",
+				DefaultValue: "已有草稿",
+			},
+		},
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 2 {
+		t.Fatalf("expected body + control card, got %d", len(frames))
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "支持直接发送一条企微文本继续回答") {
+		t.Fatalf("expected free-text guidance in body, got %+v", frames[0].Markdown)
+	}
+	controlCard := frames[1].TemplateCard
+	if controlCard == nil || len(controlCard.ButtonList) != 1 || controlCard.ButtonList[0].Text != "取消" {
+		t.Fatalf("expected only cancel control card, got %+v", controlCard)
+	}
+}
+
+func TestProjectRequestSecretTextAnswerSuggestsFeishuForSensitiveInput(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-ui-5",
+		RequestType:     "request_user_input",
+		RequestRevision: 1,
+		Questions: []control.RequestPromptQuestion{
+			{
+				ID:       "token",
+				Header:   "访问令牌",
+				Question: "请输入 token",
+				Secret:   true,
+			},
+		},
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 2 {
+		t.Fatalf("expected body + control card, got %d", len(frames))
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "仍建议切换到飞书处理") {
+		t.Fatalf("expected secret-input guidance in body, got %+v", frames[0].Markdown)
+	}
+}
+
+func TestProjectRequestStructuredFormShowsGuidanceAndInteractiveControls(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-plan-1",
+		RequestType:     "approval",
+		RequestRevision: 6,
+		StructuredForm: &control.RequestPromptStructuredForm{
+			SubmitLabel: "提交",
+			Fields: []control.RequestPromptFormField{
+				{
+					Name:  "scope",
+					Label: "授权范围",
+					Kind:  control.RequestPromptFormFieldSelectStatic,
+					Options: []control.RequestPromptFormFieldOption{
+						{Label: "仅当前目录", Value: "dir"},
+						{Label: "整个工作区", Value: "workspace"},
+					},
+				},
+			},
+		},
+		Options: []control.RequestPromptOption{
+			{OptionID: frontstagecontract.RequestPromptOptionStepPrevious, Label: "返回"},
+			{OptionID: "decline", Label: "拒绝"},
+		},
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 3 {
+		t.Fatalf("expected body + input card + control card, got %d", len(frames))
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "当前企微已支持按字段逐步填写当前结构化表单") {
+		t.Fatalf("expected structured-form guidance, got %+v", frames[0].Markdown)
+	}
+	inputCard := frames[1].TemplateCard
+	if inputCard == nil || inputCard.CardType != cardTypeMultipleInteraction {
+		t.Fatalf("expected interactive structured-form card, got %+v", inputCard)
+	}
+	if inputCard.SubmitButton == nil || inputCard.SubmitButton.Key != composeEncodedKey(keyPrefixRequestAnswerSubmit, "6", "scope") {
+		t.Fatalf("unexpected structured-form submit button: %+v", inputCard.SubmitButton)
+	}
+	controlCard := frames[2].TemplateCard
+	if controlCard == nil || controlCard.CardType != cardTypeButtonInteraction {
+		t.Fatalf("expected structured-form control card, got %+v", controlCard)
+	}
+}
+
+func TestProjectRequestStructuredFormTextFieldShowsReplyGuidanceAndControls(t *testing.T) {
+	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
+		RequestID:       "req-form-text",
+		RequestType:     "approval",
+		RequestRevision: 7,
+		StructuredForm: &control.RequestPromptStructuredForm{
+			SubmitLabel: "提交",
+			Fields: []control.RequestPromptFormField{
+				{Name: "summary", Label: "摘要", Kind: control.RequestPromptFormFieldText, Placeholder: "输入摘要"},
+				{Name: "scope", Label: "范围", Kind: control.RequestPromptFormFieldSelectStatic, Options: []control.RequestPromptFormFieldOption{{Label: "仅当前目录", Value: "dir"}}},
+			},
+		},
+	})
+	frames := NewProjector().ProjectEvent(eventcontract.Event{
+		Payload: eventcontract.RequestPayload{View: view},
+	})
+	if len(frames) != 1 {
+		t.Fatalf("expected body-only guidance for pending text field, got %d", len(frames))
+	}
+	if frames[0].Markdown == nil || !strings.Contains(frames[0].Markdown.Content, "当前字段支持直接发送一条企微文本继续填写") {
+		t.Fatalf("expected free-text structured-field guidance, got %+v", frames[0].Markdown)
 	}
 }
 
@@ -315,11 +581,14 @@ func TestProjectPlanUpdateMarkdown(t *testing.T) {
 	}
 }
 
-func TestProjectUnhandledEventReturnsNoFrames(t *testing.T) {
+func TestProjectImageOutputRendersLocalImageFrame(t *testing.T) {
 	frames := NewProjector().ProjectEvent(eventcontract.Event{
 		Payload: eventcontract.ImageOutputPayload{ImageOutput: control.ImageOutput{SavedPath: "/tmp/x.png"}},
 	})
-	if len(frames) != 0 {
-		t.Fatalf("expected no frames for deferred kind, got %d", len(frames))
+	if len(frames) != 1 {
+		t.Fatalf("expected one image frame, got %d", len(frames))
+	}
+	if frames[0].MsgType != "image" || frames[0].LocalPath != "/tmp/x.png" {
+		t.Fatalf("unexpected image frame: %+v", frames[0])
 	}
 }

@@ -198,6 +198,7 @@ type Snapshot struct {
 	CodexProviderID   string
 	ClaudeProfileID   string
 	ClaudeProfileName string
+	Surface           SurfaceSummary
 	Attachment        AttachmentSummary
 	PendingHeadless   PendingHeadlessSummary
 	NextPrompt        PromptRouteSummary
@@ -208,6 +209,15 @@ type Snapshot struct {
 	PermissionGaps    []PermissionGapSummary
 	Instances         []InstanceSummary
 	Threads           []ThreadSummary
+	PeerSurfaces      []PeerSurfaceSummary
+}
+
+type SurfaceSummary struct {
+	Platform      string
+	GatewayID     string
+	ChatID        string
+	SharedAttach  bool
+	LastInboundAt time.Time
 }
 
 type PermissionGapSummary struct {
@@ -291,10 +301,18 @@ type GateSummary struct {
 }
 
 type DispatchSummary struct {
-	InstanceOnline   bool
-	DispatchMode     string
-	ActiveItemStatus string
-	QueuedCount      int
+	InstanceOnline         bool
+	DispatchMode           string
+	ActiveItemStatus       string
+	QueuedCount            int
+	ActiveQueueItemID      string
+	ActiveSourceMessageID  string
+	ReplySourceMessageID   string
+	ReplyTargetMessageID   string
+	PendingRemoteTurn      bool
+	ActiveRemoteTurn       bool
+	PendingRemoteTurnID    string
+	ActiveRemoteTurnID     string
 }
 
 type AutoWhipSummary struct {
@@ -343,6 +361,29 @@ type ThreadSummary struct {
 	WaitingOnUserInput bool
 	IsObservedFocused  bool
 	IsSelected         bool
+}
+
+type PeerSurfaceSummary struct {
+	SurfaceSessionID         string
+	Platform                 string
+	GatewayID                string
+	ChatID                   string
+	ActorUserID              string
+	SharedAttach             bool
+	IsCurrent                bool
+	SelectedThreadID         string
+	RouteMode                string
+	QueuedCount              int
+	ActiveItemStatus         string
+	HasPendingRequest        bool
+	PendingRequestCount      int
+	PendingRequestLifecycle  string
+	PendingRequestVisibility string
+	PendingRemoteTurn        bool
+	ActiveRemoteTurn         bool
+	SourceMessageID          string
+	ReplyTargetMessageID     string
+	LastInboundAt            time.Time
 }
 
 type PendingInputState struct {

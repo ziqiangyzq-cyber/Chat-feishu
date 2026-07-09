@@ -91,6 +91,9 @@ type App struct {
 	// byte-identical to before this channel existed. Set once during startup
 	// (before Run) and only read afterward, matching finalBlockPreviewer.
 	wecomChannel        surface.Channel
+	wecomChannels       map[string]surface.Channel
+	wecomRunCancel      map[string]context.CancelFunc
+	wecomRunDone        map[string]chan struct{}
 	finalBlockPreviewer previewpkg.FinalBlockPreviewService
 	relay               *relayws.Server
 	serverIdentity      agentproto.ServerIdentity
@@ -137,8 +140,10 @@ type App struct {
 	ingressWG                   sync.WaitGroup
 	gatewayRunCancel            context.CancelFunc
 	gatewayRunDone              chan struct{}
+	gatewayRunCtx               context.Context
 	relayConnections            map[string]*relayConnectionState
 	feishuRuntime               feishuRuntimeState
+	opsRuntime                  opsRuntimeState
 	cronRuntime                 cronRuntimeState
 	claudeWorkspaceProfileState claudeWorkspaceProfileRuntimeState
 
@@ -201,6 +206,7 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 		turnPatchRuntime:            turnpatchruntime.NewState(),
 		cronRuntime:                 newCronRuntimeState(),
 		feishuRuntime:               newFeishuRuntimeState(),
+		opsRuntime:                  newOpsRuntimeState(),
 		pendingThreadHistoryReads:   map[string]pendingThreadHistoryRead{},
 		gitWorkspaceImports:         map[string]*gitWorkspaceImportRuntime{},
 		gitWorkspaceWorktrees:       map[string]*gitWorkspaceWorktreeRuntime{},
@@ -208,6 +214,9 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 		stopProcess:                 relayruntime.TerminateProcess,
 		ingress:                     newIngressPump(),
 		relayConnections:            map[string]*relayConnectionState{},
+		wecomChannels:               map[string]surface.Channel{},
+		wecomRunCancel:              map[string]context.CancelFunc{},
+		wecomRunDone:                map[string]chan struct{}{},
 		adminAuth:                   authManager,
 		webPreviewGrants:            map[string]*previewGrantRecord{},
 		shutdownGracePeriod:         5 * time.Second,
@@ -445,25 +454,27 @@ func (a *App) Run(ctx context.Context) error {
 	gatewayCtx, gatewayCancel := context.WithCancel(context.Background())
 	gatewayDone := make(chan struct{})
 	a.setGatewayRuntime(gatewayCancel, gatewayDone)
+	a.setGatewayRuntimeContext(gatewayCtx)
 	go func() {
 		defer close(gatewayDone)
 		if err := a.channel.Start(gatewayCtx, feishu.WrapActionHandler(a.HandleGatewayAction)); err != nil && err != context.Canceled {
 			errCh <- err
 		}
 	}()
-	// Opt-in WeCom second channel. Guarded on a.wecomChannel != nil: when WeCom is
-	// unconfigured this branch never runs, so no goroutine is spawned and the
-	// Feishu run path is unchanged. WeCom is best-effort — its Start error never
-	// feeds errCh (a WeCom failure must not stop the daemon or disturb Feishu).
-	// It shares gatewayCtx so it terminates on the same shutdown cancel; the
-	// goroutine Stops it on exit so no shutdown-path change is needed.
-	if a.wecomChannel != nil {
-		go func() {
-			// The WeCom channel uses the namespace-tagging inbound handler so a new
-			// WeCom conversation creates a WeCom-namespaced surface whose later
-			// outbound events route back to WeCom (not Feishu).
-			a.runWeComChannel(gatewayCtx, a.wecomChannel)
-		}()
+	// WeCom channels are best-effort sidecars: each configured bot runs under the
+	// shared gateway lifecycle, but any WeCom failure stays isolated from Feishu.
+	a.mu.Lock()
+	wecomChannels := make(map[string]surface.Channel, len(a.wecomChannels))
+	for gatewayID, channel := range a.wecomChannels {
+		if channel != nil {
+			wecomChannels[gatewayID] = channel
+		}
+	}
+	a.mu.Unlock()
+	for gatewayID, channel := range wecomChannels {
+		a.mu.Lock()
+		a.attachWeComGatewayRuntimeLocked(gatewayID, channel)
+		a.mu.Unlock()
 	}
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)

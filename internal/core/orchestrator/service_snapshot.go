@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -16,6 +17,13 @@ func (s *Service) buildSnapshot(surface *state.SurfaceConsoleRecord) *control.Sn
 		Backend:          s.surfaceBackend(surface),
 		WorkspaceKey:     s.surfaceCurrentWorkspaceKey(surface),
 		CodexProviderID:  s.surfaceCodexProviderID(surface),
+		Surface: control.SurfaceSummary{
+			Platform:      strings.TrimSpace(surface.Platform),
+			GatewayID:     strings.TrimSpace(surface.GatewayID),
+			ChatID:        strings.TrimSpace(surface.ChatID),
+			SharedAttach:  surface.SharedAttach,
+			LastInboundAt: surface.LastInboundAt,
+		},
 		AutoWhip:         snapshotAutoWhipSummary(surface),
 		AutoContinue:     snapshotAutoContinueSummary(surface),
 	}
@@ -74,7 +82,8 @@ func (s *Service) buildSnapshot(surface *state.SurfaceConsoleRecord) *control.Sn
 			RouteMode:                      string(surface.RouteMode),
 			Abandoning:                     surface.Abandoning,
 		}
-		snapshot.Dispatch = snapshotDispatchSummary(surface, inst)
+		snapshot.Dispatch = s.snapshotDispatchSummary(surface, inst)
+		snapshot.PeerSurfaces = s.snapshotPeerSurfaces(surface, inst.InstanceID)
 		snapshot.NextPrompt = s.resolveNextPromptSummary(inst, surface, "", "", state.ModelConfigRecord{})
 	}
 
@@ -178,14 +187,7 @@ func (s *Service) snapshotGateSummary(surface *state.SurfaceConsoleRecord) contr
 	if s.activePathPicker(surface) != nil {
 		return control.GateSummary{Kind: "path_picker"}
 	}
-	count := 0
-	for requestID, request := range surface.PendingRequests {
-		if request == nil {
-			removePendingRequest(surface, requestID)
-			continue
-		}
-		count++
-	}
+	count := snapshotPendingRequestCount(surface)
 	if count != 0 {
 		summary := control.GateSummary{Kind: "pending_request", PendingRequestCount: count}
 		if active := activePendingRequest(surface); active != nil {
@@ -197,16 +199,37 @@ func (s *Service) snapshotGateSummary(surface *state.SurfaceConsoleRecord) contr
 	return control.GateSummary{}
 }
 
-func snapshotDispatchSummary(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord) control.DispatchSummary {
+func (s *Service) snapshotDispatchSummary(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord) control.DispatchSummary {
 	if surface == nil {
 		return control.DispatchSummary{}
 	}
 	summary := control.DispatchSummary{
-		DispatchMode: string(surface.DispatchMode),
-		QueuedCount:  len(surface.QueuedQueueItemIDs),
+		DispatchMode:      string(surface.DispatchMode),
+		QueuedCount:       len(surface.QueuedQueueItemIDs),
+		ActiveQueueItemID: strings.TrimSpace(surface.ActiveQueueItemID),
 	}
 	if inst != nil {
 		summary.InstanceOnline = inst.Online
+		if binding := s.pendingRemoteTurnBindingForSurface(inst.InstanceID, surface); binding != nil {
+			summary.PendingRemoteTurn = true
+			summary.PendingRemoteTurnID = strings.TrimSpace(binding.TurnID)
+			summary.ActiveSourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			summary.ReplySourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(binding.ReplyToMessageID, binding.SourceMessageID))
+		}
+		if binding := s.activeRemoteTurnBindingForSurface(inst.InstanceID, surface); binding != nil {
+			summary.ActiveRemoteTurn = true
+			summary.ActiveRemoteTurnID = strings.TrimSpace(binding.TurnID)
+			if summary.ActiveSourceMessageID == "" {
+				summary.ActiveSourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			}
+			if summary.ReplySourceMessageID == "" {
+				summary.ReplySourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			}
+			if summary.ReplyTargetMessageID == "" {
+				summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(binding.ReplyToMessageID, binding.SourceMessageID))
+			}
+		}
 	}
 	if surface.ActiveQueueItemID == "" {
 		return summary
@@ -216,5 +239,167 @@ func snapshotDispatchSummary(surface *state.SurfaceConsoleRecord, inst *state.In
 		return summary
 	}
 	summary.ActiveItemStatus = string(item.Status)
+	if summary.ActiveSourceMessageID == "" {
+		summary.ActiveSourceMessageID = strings.TrimSpace(item.SourceMessageID)
+	}
+	if summary.ReplySourceMessageID == "" {
+		summary.ReplySourceMessageID = strings.TrimSpace(item.SourceMessageID)
+	}
+	if summary.ReplyTargetMessageID == "" {
+		summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(item.ReplyToMessageID, item.SourceMessageID))
+	}
 	return summary
+}
+
+func (s *Service) snapshotPeerSurfaces(current *state.SurfaceConsoleRecord, instanceID string) []control.PeerSurfaceSummary {
+	if s == nil || current == nil || strings.TrimSpace(instanceID) == "" {
+		return nil
+	}
+	surfaces := s.findAttachedSurfaces(instanceID)
+	if len(surfaces) <= 1 {
+		return nil
+	}
+	summaries := make([]control.PeerSurfaceSummary, 0, len(surfaces)-1)
+	for _, peer := range surfaces {
+		if peer == nil || peer.SurfaceSessionID == current.SurfaceSessionID {
+			continue
+		}
+		summary := control.PeerSurfaceSummary{
+			SurfaceSessionID: strings.TrimSpace(peer.SurfaceSessionID),
+			Platform:         strings.TrimSpace(peer.Platform),
+			GatewayID:        strings.TrimSpace(peer.GatewayID),
+			ChatID:           strings.TrimSpace(peer.ChatID),
+			ActorUserID:      strings.TrimSpace(peer.ActorUserID),
+			SharedAttach:     peer.SharedAttach,
+			IsCurrent:        peer.SurfaceSessionID == current.SurfaceSessionID,
+			SelectedThreadID: strings.TrimSpace(peer.SelectedThreadID),
+			RouteMode:        strings.TrimSpace(string(peer.RouteMode)),
+			QueuedCount:      len(peer.QueuedQueueItemIDs),
+			LastInboundAt:    peer.LastInboundAt,
+		}
+		if peer.ActiveQueueItemID != "" {
+			if item := peer.QueueItems[peer.ActiveQueueItemID]; item != nil {
+				summary.ActiveItemStatus = string(item.Status)
+				summary.SourceMessageID = strings.TrimSpace(item.SourceMessageID)
+				summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(item.ReplyToMessageID, item.SourceMessageID))
+			}
+		}
+		if active := activePendingRequest(peer); active != nil {
+			summary.HasPendingRequest = true
+			summary.PendingRequestCount = snapshotPendingRequestCount(peer)
+			summary.PendingRequestLifecycle = normalizeRequestLifecycleState(active.LifecycleState)
+			summary.PendingRequestVisibility = normalizeRequestVisibilityState(active.VisibilityState)
+		}
+		if binding := s.pendingRemoteTurnBindingForSurface(instanceID, peer); binding != nil {
+			summary.PendingRemoteTurn = true
+			if summary.SourceMessageID == "" {
+				summary.SourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			}
+			if summary.ReplyTargetMessageID == "" {
+				summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(binding.ReplyToMessageID, binding.SourceMessageID))
+			}
+		}
+		if binding := s.activeRemoteTurnBindingForSurface(instanceID, peer); binding != nil {
+			summary.ActiveRemoteTurn = true
+			if summary.SourceMessageID == "" {
+				summary.SourceMessageID = strings.TrimSpace(binding.SourceMessageID)
+			}
+			if summary.ReplyTargetMessageID == "" {
+				summary.ReplyTargetMessageID = strings.TrimSpace(firstNonEmpty(binding.ReplyToMessageID, binding.SourceMessageID))
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].SharedAttach != summaries[j].SharedAttach {
+			return !summaries[i].SharedAttach
+		}
+		if summaries[i].Platform != summaries[j].Platform {
+			return summaries[i].Platform < summaries[j].Platform
+		}
+		return summaries[i].SurfaceSessionID < summaries[j].SurfaceSessionID
+	})
+	return summaries
+}
+
+func snapshotPendingRequestCount(surface *state.SurfaceConsoleRecord) int {
+	if surface == nil {
+		return 0
+	}
+	count := 0
+	for requestID, request := range surface.PendingRequests {
+		request = normalizePendingRequestOnSurface(surface, request)
+		if request == nil {
+			removePendingRequest(surface, requestID)
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func (s *Service) pendingRemoteTurnBindingForSurface(instanceID string, surface *state.SurfaceConsoleRecord) *remoteTurnBinding {
+	if s == nil || surface == nil {
+		return nil
+	}
+	return s.matchingRemoteTurnBindingForSurface(instanceID, surface, s.turns.pendingRemote[instanceID], true)
+}
+
+func (s *Service) activeRemoteTurnBindingForSurface(instanceID string, surface *state.SurfaceConsoleRecord) *remoteTurnBinding {
+	if s == nil || surface == nil {
+		return nil
+	}
+	return s.matchingRemoteTurnBindingForSurface(instanceID, surface, s.turns.activeRemote[instanceID], false)
+}
+
+func (s *Service) matchingRemoteTurnBindingForSurface(instanceID string, surface *state.SurfaceConsoleRecord, binding *remoteTurnBinding, pending bool) *remoteTurnBinding {
+	if s == nil || surface == nil {
+		return nil
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return nil
+	}
+	if binding == nil || strings.TrimSpace(binding.InstanceID) != instanceID {
+		return nil
+	}
+	if strings.TrimSpace(binding.SurfaceSessionID) != strings.TrimSpace(surface.SurfaceSessionID) {
+		return nil
+	}
+	queueItemID := strings.TrimSpace(binding.QueueItemID)
+	if queueItemID == "" {
+		return binding
+	}
+	item := surface.QueueItems[queueItemID]
+	if item == nil {
+		return nil
+	}
+	switch item.Status {
+	case state.QueueItemDispatching:
+		if pending {
+			return binding
+		}
+	case state.QueueItemRunning:
+		if !pending {
+			return binding
+		}
+	}
+	if strings.TrimSpace(surface.ActiveQueueItemID) == queueItemID {
+		return binding
+	}
+	for _, queuedID := range surface.QueuedQueueItemIDs {
+		if strings.TrimSpace(queuedID) == queueItemID {
+			return binding
+		}
+	}
+	if pending {
+		if current, _, currentItem := s.pendingRemoteBindingRecord(instanceID); current == binding && currentItem != nil {
+			return binding
+		}
+		return nil
+	}
+	if current := s.activeRemoteBinding(instanceID, strings.TrimSpace(binding.TurnID)); current == binding {
+		return binding
+	}
+	return nil
 }

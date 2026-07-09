@@ -11,9 +11,18 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
+	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 	"github.com/kxn/codex-remote-feishu/internal/core/surface"
 )
+
+type wecomStateHookSetter interface {
+	SetStateHook(func(string, error))
+}
+
+type wecomRequestDeliveryReporter interface {
+	LastDeliveryMessageID() string
+}
 
 // WeCom channel namespace.
 //
@@ -33,6 +42,14 @@ const (
 	wecomGatewayID = wecomNamespacePrefix + "bot"
 )
 
+func wecomGatewayIDForBot(botID string) string {
+	botID = strings.TrimSpace(botID)
+	if botID == "" {
+		return wecomGatewayID
+	}
+	return wecomNamespacePrefix + botID
+}
+
 // isWeComGateway reports whether a resolved gateway id belongs to the WeCom
 // namespace. It is the single routing predicate: false for every Feishu app id
 // (which is never "wecom:"-prefixed), true only for surfaces the daemon itself
@@ -47,11 +64,19 @@ func isWeComGateway(gatewayID string) bool {
 // a "wecom" platform token, so feishu.ParseSurfaceRef rejects it (parts[0] !=
 // "feishu") and all Feishu-specific surface consumers skip it gracefully.
 func wecomSurfaceID(chatID string) string {
+	return wecomSurfaceIDForGateway(wecomGatewayID, chatID)
+}
+
+func wecomSurfaceIDForGateway(gatewayID, chatID string) string {
 	chatID = strings.TrimSpace(chatID)
 	if chatID == "" {
 		return ""
 	}
-	return wecomGatewayID + ":chat:" + chatID
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	return gatewayID + ":chat:" + chatID
 }
 
 // SetWeComChannel installs the OPTIONAL, opt-in WeCom (企业微信 aibot) second
@@ -63,7 +88,142 @@ func wecomSurfaceID(chatID string) string {
 // Passing a nil channel is treated as "not configured" and clears any prior
 // value, so callers can guard purely on credential presence.
 func (a *App) SetWeComChannel(channel surface.Channel) {
-	a.wecomChannel = channel
+	a.SetWeComChannelWithGateway(wecomGatewayID, channel)
+}
+
+func (a *App) SetWeComChannelWithGateway(gatewayID string, channel surface.Channel) {
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	a.mu.Lock()
+	if gatewayID == wecomGatewayID {
+		a.wecomChannel = channel
+	}
+	if a.wecomChannels == nil {
+		a.wecomChannels = map[string]surface.Channel{}
+	}
+	if a.wecomRunCancel == nil {
+		a.wecomRunCancel = map[string]context.CancelFunc{}
+	}
+	if a.wecomRunDone == nil {
+		a.wecomRunDone = map[string]chan struct{}{}
+	}
+	if channel == nil {
+		cancel, done = a.detachWeComGatewayRuntimeLocked(gatewayID)
+		delete(a.wecomChannels, gatewayID)
+		a.setWeComDisabledLocked(gatewayID)
+		a.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		a.waitWeComGatewayRuntimeStop(gatewayID, done)
+		return
+	}
+	a.wecomChannels[gatewayID] = channel
+	if hookable, ok := channel.(wecomStateHookSetter); ok {
+		hookable.SetStateHook(func(state string, err error) {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			switch strings.TrimSpace(state) {
+			case "connecting":
+				a.markWeComConnectingLocked(gatewayID)
+			case "connected":
+				a.markWeComConnectedLocked(gatewayID, time.Now().UTC())
+				a.replayGatewayPendingRequestVisibilityLocked(context.Background(), gatewayID)
+			case "degraded":
+				a.markWeComDegradedLocked(gatewayID, daemonErrString(err))
+			case "stopped":
+				a.markWeComStoppedLocked(gatewayID, daemonErrString(err))
+			}
+		})
+	}
+	a.setWeComStateLocked(gatewayID, "stopped", time.Now().UTC())
+	a.mu.Unlock()
+}
+
+func (a *App) attachWeComGatewayRuntimeLocked(gatewayID string, channel surface.Channel) {
+	if a == nil || channel == nil || a.shuttingDown {
+		return
+	}
+	gatewayCtx := a.gatewayRuntimeContext()
+	if gatewayCtx == nil {
+		return
+	}
+	if a.wecomRunCancel == nil {
+		a.wecomRunCancel = map[string]context.CancelFunc{}
+	}
+	if a.wecomRunDone == nil {
+		a.wecomRunDone = map[string]chan struct{}{}
+	}
+	if _, running := a.wecomRunCancel[gatewayID]; running {
+		return
+	}
+	childCtx, childCancel := context.WithCancel(gatewayCtx)
+	done := make(chan struct{})
+	a.wecomRunCancel[gatewayID] = childCancel
+	a.wecomRunDone[gatewayID] = done
+	go func() {
+		a.runWeComChannelWithGateway(childCtx, gatewayID, channel)
+		close(done)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if currentDone, ok := a.wecomRunDone[gatewayID]; ok && currentDone == done {
+			delete(a.wecomRunDone, gatewayID)
+		}
+		if _, ok := a.wecomRunCancel[gatewayID]; ok {
+			delete(a.wecomRunCancel, gatewayID)
+		}
+	}()
+}
+
+func (a *App) detachWeComGatewayRuntimeLocked(gatewayID string) (context.CancelFunc, chan struct{}) {
+	if a == nil {
+		return nil, nil
+	}
+	cancel := a.wecomRunCancel[gatewayID]
+	done := a.wecomRunDone[gatewayID]
+	delete(a.wecomRunCancel, gatewayID)
+	delete(a.wecomRunDone, gatewayID)
+	return cancel, done
+}
+
+func (a *App) waitWeComGatewayRuntimeStop(gatewayID string, done chan struct{}) {
+	if done == nil {
+		return
+	}
+	timer := time.NewTimer(a.gatewayStopTimeoutValue())
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		log.Printf("wecom runtime stop exceeded timeout: gateway=%s timeout=%s", gatewayID, a.gatewayStopTimeoutValue())
+	}
+}
+
+func (a *App) restartWeComGatewayRuntime(gatewayID string) {
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	a.mu.Lock()
+	channel := a.wecomChannelForGatewayLocked(gatewayID)
+	cancel, done := a.detachWeComGatewayRuntimeLocked(gatewayID)
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	a.waitWeComGatewayRuntimeStop(gatewayID, done)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	channel = a.wecomChannelForGatewayLocked(gatewayID)
+	if channel == nil {
+		a.setWeComDisabledLocked(gatewayID)
+		return
+	}
+	a.attachWeComGatewayRuntimeLocked(gatewayID, channel)
 }
 
 // wecomInboundHandler returns the surface.ActionHandler wired to the WeCom
@@ -74,8 +234,12 @@ func (a *App) SetWeComChannel(channel surface.Channel) {
 // Feishu. The action-result conversion reuses the existing Feishu wrapper; the
 // only WeCom-specific step is the namespace tagging.
 func (a *App) wecomInboundHandler() surface.ActionHandler {
+	return a.wecomInboundHandlerForGateway(wecomGatewayID)
+}
+
+func (a *App) wecomInboundHandlerForGateway(gatewayID string) surface.ActionHandler {
 	return feishu.WrapActionHandler(func(ctx context.Context, action control.Action) *feishu.ActionResult {
-		return a.HandleGatewayAction(ctx, tagWeComInboundAction(action))
+		return a.HandleGatewayAction(ctx, tagWeComInboundActionForGateway(gatewayID, action))
 	})
 }
 
@@ -217,12 +381,20 @@ func (a *App) defaultWeComWorkspaceKeyLocked() string {
 }
 
 func (a *App) runWeComChannel(ctx context.Context, channel surface.Channel) {
-	runWeComChannelWithReconnect(ctx, channel, a.wecomInboundHandler(), time.Second, 30*time.Second)
+	a.runWeComChannelWithGateway(ctx, wecomGatewayID, channel)
 }
 
-func runWeComChannelWithReconnect(ctx context.Context, channel surface.Channel, handler surface.ActionHandler, baseDelay, maxDelay time.Duration) {
+func (a *App) runWeComChannelWithGateway(ctx context.Context, gatewayID string, channel surface.Channel) {
+	runWeComChannelWithReconnect(ctx, gatewayID, channel, a.wecomInboundHandlerForGateway(gatewayID), time.Second, 30*time.Second, a)
+}
+
+func runWeComChannelWithReconnect(ctx context.Context, gatewayID string, channel surface.Channel, handler surface.ActionHandler, baseDelay, maxDelay time.Duration, app *App) {
 	if channel == nil {
 		return
+	}
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
 	}
 	if baseDelay <= 0 {
 		baseDelay = time.Second
@@ -233,18 +405,44 @@ func runWeComChannelWithReconnect(ctx context.Context, channel surface.Channel, 
 	delay := baseDelay
 	for {
 		if ctx.Err() != nil {
+			if app != nil {
+				app.mu.Lock()
+				app.markWeComStoppedLocked(gatewayID, "")
+				app.mu.Unlock()
+			}
 			return
+		}
+		if app != nil {
+			app.mu.Lock()
+			app.markWeComConnectingLocked(gatewayID)
+			app.mu.Unlock()
 		}
 		err := channel.Start(ctx, handler)
 		_ = channel.Stop(context.Background())
 		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			if app != nil {
+				app.mu.Lock()
+				app.markWeComStoppedLocked(gatewayID, daemonErrString(err))
+				app.mu.Unlock()
+			}
 			return
 		}
 		log.Printf("wecom channel stopped: %v; reconnecting in %s", err, delay)
+		if app != nil {
+			nextRetryAt := time.Now().UTC().Add(delay)
+			app.mu.Lock()
+			app.markWeComReconnectWaitingLocked(gatewayID, daemonErrString(err), delay, nextRetryAt)
+			app.mu.Unlock()
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			if app != nil {
+				app.mu.Lock()
+				app.markWeComStoppedLocked(gatewayID, "")
+				app.mu.Unlock()
+			}
 			return
 		case <-timer.C:
 		}
@@ -262,11 +460,19 @@ func runWeComChannelWithReconnect(ctx context.Context, channel surface.Channel, 
 // they are already set. An action with no chat id is left untouched (it cannot
 // address a surface); ensureSurface downstream ignores an empty surface id.
 func tagWeComInboundAction(action control.Action) control.Action {
+	return tagWeComInboundActionForGateway(wecomGatewayID, action)
+}
+
+func tagWeComInboundActionForGateway(gatewayID string, action control.Action) control.Action {
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
 	if strings.TrimSpace(action.GatewayID) == "" {
-		action.GatewayID = wecomGatewayID
+		action.GatewayID = gatewayID
 	}
 	if strings.TrimSpace(action.SurfaceSessionID) == "" {
-		if surfaceID := wecomSurfaceID(action.ChatID); surfaceID != "" {
+		if surfaceID := wecomSurfaceIDForGateway(gatewayID, action.ChatID); surfaceID != "" {
 			action.SurfaceSessionID = surfaceID
 		}
 	}
@@ -286,17 +492,24 @@ func tagWeComInboundAction(action control.Action) control.Action {
 // safely (a WeCom-namespaced surface can only exist if a WeCom channel was
 // running, but this stays defensive).
 func (a *App) deliverWeComEventLocked(ctx context.Context, chatID string, event eventcontract.Event, appLocked bool) error {
-	channel := a.wecomChannel
+	gatewayID := strings.TrimSpace(event.GatewayID)
+	if gatewayID == "" {
+		gatewayID = strings.TrimSpace(a.service.SurfaceGatewayID(event.SurfaceSessionID))
+	}
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	channel := a.wecomChannelForGatewayLocked(gatewayID)
 	if channel == nil {
 		return nil
 	}
 	if strings.TrimSpace(chatID) == "" {
 		return nil
 	}
+	reporter, _ := channel.(wecomRequestDeliveryReporter)
+	var deliverErr error
 	deliver := func() {
-		if err := channel.Deliver(ctx, chatID, event); err != nil {
-			log.Printf("wecom delivery failed (ignored): chat=%s kind=%s err=%v", chatID, event.Kind, err)
-		}
+		deliverErr = channel.Deliver(ctx, chatID, event)
 	}
 	if appLocked {
 		a.mu.Unlock()
@@ -304,6 +517,105 @@ func (a *App) deliverWeComEventLocked(ctx context.Context, chatID string, event 
 		a.mu.Lock()
 	} else {
 		deliver()
+	}
+	if deliverErr != nil {
+		if appLocked {
+			a.recordDeliveryFailureLocked("wecom", gatewayID, event.SurfaceSessionID, string(event.Kind), deliverErr)
+		} else {
+			a.mu.Lock()
+			a.recordDeliveryFailureLocked("wecom", gatewayID, event.SurfaceSessionID, string(event.Kind), deliverErr)
+			a.mu.Unlock()
+		}
+		log.Printf("wecom delivery failed (ignored): chat=%s kind=%s err=%v", chatID, event.Kind, deliverErr)
+		return nil
+	}
+	if appLocked {
+		a.recordDeliverySuccessLocked("wecom", gatewayID)
+	} else {
+		a.mu.Lock()
+		a.recordDeliverySuccessLocked("wecom", gatewayID)
+		a.mu.Unlock()
+	}
+	a.recordWeComEventDelivery(event, reporter)
+	return nil
+}
+
+func (a *App) replayGatewayPendingRequestVisibilityLocked(ctx context.Context, gatewayID string) {
+	if a == nil || a.service == nil {
+		return
+	}
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		return
+	}
+	for _, surface := range a.service.Surfaces() {
+		if surface == nil || strings.TrimSpace(surface.GatewayID) != gatewayID {
+			continue
+		}
+		surfaceID := strings.TrimSpace(surface.SurfaceSessionID)
+		if surfaceID == "" {
+			continue
+		}
+		events := a.service.ReplayActivePendingRequestVisibility(surfaceID)
+		if len(events) == 0 {
+			continue
+		}
+		a.handleUIEventsLocked(ctx, events)
+	}
+}
+
+func (a *App) recordWeComEventDelivery(event eventcontract.Event, reporter wecomRequestDeliveryReporter) {
+	if a == nil || a.service == nil {
+		return
+	}
+	messageID := ""
+	if reporter != nil {
+		messageID = strings.TrimSpace(reporter.LastDeliveryMessageID())
+	}
+	if payload, ok := requestPayloadFromEvent(event); ok {
+		if messageID != "" {
+			a.service.RecordRequestPromptDelivery(orchestrator.RequestDeliveryReport{
+				SurfaceSessionID: event.SurfaceSessionID,
+				RequestID:        strings.TrimSpace(payload.View.RequestID),
+				MessageID:        messageID,
+				DeliveredAt:      time.Now(),
+			})
+		}
+	}
+	if messageID != "" {
+		a.recordSurfaceOutboundMessageFallback(event, messageID)
+	}
+}
+
+func (a *App) recordSurfaceOutboundMessageFallback(event eventcontract.Event, messageID string) {
+	if a == nil || a.service == nil {
+		return
+	}
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return
+	}
+	switch {
+	case event.Block != nil:
+		a.service.RecordSurfaceOutboundMessage(event.SurfaceSessionID, messageID, state.SurfaceMessageKindText, "")
+	case event.RequestView != nil, event.Notice != nil, event.PageView != nil, event.PlanUpdate != nil, event.ExecCommandProgress != nil:
+		a.service.RecordSurfaceOutboundMessage(event.SurfaceSessionID, messageID, state.SurfaceMessageKindCard, "")
+	}
+}
+
+func (a *App) wecomChannelForGatewayLocked(gatewayID string) surface.Channel {
+	if a == nil {
+		return nil
+	}
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" || gatewayID == wecomGatewayID {
+		if channel, ok := a.wecomChannels[wecomGatewayID]; ok && channel != nil {
+			return channel
+		}
+		return a.wecomChannel
+	}
+	if channel, ok := a.wecomChannels[gatewayID]; ok {
+		return channel
 	}
 	return nil
 }

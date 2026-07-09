@@ -28,6 +28,16 @@ type Channel struct {
 	recentNoticeByChat   map[string]time.Time
 	recentCardEventByKey map[string]time.Time
 	now                  func() time.Time
+
+	// inbound serialises handler execution on a dedicated worker goroutine so it
+	// never runs on the read loop. A handler that delivers synchronously ends up
+	// in writeEnvelopeAndWait, which blocks until the server's ack is read — and
+	// that ack can only be read by the read loop. Running the handler on the read
+	// goroutine therefore self-deadlocks the connection (observed: config cards
+	// like /mode replied once, then all later inbound messages sat unread in the
+	// socket). inboundEnd is closed when the current connection tears down.
+	inbound    chan func()
+	inboundEnd chan struct{}
 }
 
 type responseReqBinding struct {
@@ -53,6 +63,13 @@ func NewChannel(config Config) *Channel {
 // Name returns the stable channel identifier.
 func (c *Channel) Name() string { return "wecom" }
 
+func (c *Channel) SetStateHook(hook func(string, error)) {
+	if c == nil || c.client == nil {
+		return
+	}
+	c.client.SetStateHook(hook)
+}
+
 // Capabilities reports the WeCom feature matrix implemented by this adapter.
 // Streaming/file support stay disabled until the transport emits the matching
 // WeCom update/file frames, so upstream callers do not select unsupported paths.
@@ -60,7 +77,7 @@ func (c *Channel) Capabilities() surface.Capabilities {
 	return surface.Capabilities{
 		Streaming:            false,
 		InteractiveSameFrame: false,
-		FileSend:             false,
+		FileSend:             true,
 		MaxButtons:           6,
 	}
 }
@@ -69,8 +86,12 @@ func (c *Channel) Capabilities() surface.Capabilities {
 // until the context is cancelled or the connection fails. The handler is
 // retained so inbound frames can be dispatched to it in a later phase.
 func (c *Channel) Start(ctx context.Context, handler surface.ActionHandler) error {
+	inbound := make(chan func(), 128)
+	inboundEnd := make(chan struct{})
 	c.mu.Lock()
 	c.handler = handler
+	c.inbound = inbound
+	c.inboundEnd = inboundEnd
 	c.mu.Unlock()
 
 	// Install inbound sinks that translate decoded WeCom frames into
@@ -78,10 +99,59 @@ func (c *Channel) Start(ctx context.Context, handler surface.ActionHandler) erro
 	c.client.onMessage = c.dispatchMessage
 	c.client.onCardEvent = c.dispatchCardEvent
 
+	// Run handlers off the read loop (see the inbound field comment). The worker
+	// processes actions in arrival order; the read loop stays free to read the
+	// acks that unblock synchronous deliveries.
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		for {
+			select {
+			case <-inboundEnd:
+				return
+			case job := <-inbound:
+				job()
+			}
+		}
+	}()
+
+	var runErr error
 	if err := c.client.Dial(ctx); err != nil {
-		return err
+		runErr = err
+	} else {
+		runErr = c.client.Run(ctx)
 	}
-	return c.client.Run(ctx)
+
+	// The read loop has stopped, so no more jobs will be enqueued; tear the
+	// worker down. Draining is unnecessary — the connection is gone.
+	c.mu.Lock()
+	c.inbound = nil
+	c.inboundEnd = nil
+	c.mu.Unlock()
+	close(inboundEnd)
+	workerWG.Wait()
+	return runErr
+}
+
+// enqueueInbound hands a handler invocation to the worker goroutine. It must
+// never run the job on the calling (read-loop) goroutine during a live
+// connection, or a synchronous delivery would deadlock the reader on its own
+// ack. The inline fallback only fires when no worker is active (outside a live
+// connection), where the deadlock cannot occur.
+func (c *Channel) enqueueInbound(job func()) {
+	c.mu.Lock()
+	inbound := c.inbound
+	inboundEnd := c.inboundEnd
+	c.mu.Unlock()
+	if inbound == nil {
+		job()
+		return
+	}
+	select {
+	case inbound <- job:
+	case <-inboundEnd:
+	}
 }
 
 // dispatchMessage maps an inbound user text message to a control.Action and
@@ -99,12 +169,13 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 	if chatID == "" {
 		return
 	}
-	c.rememberResponseReq(chatID, strings.TrimSpace(frame.MsgID), frame.Headers.ReqID)
+	msgID := strings.TrimSpace(frame.MsgID)
+	reqID := frame.Headers.ReqID
 	action := control.Action{
 		Kind:        control.ActionTextMessage,
 		ChatID:      chatID,
 		ActorUserID: wecomMessageActorUserID(frame),
-		MessageID:   strings.TrimSpace(frame.MsgID),
+		MessageID:   msgID,
 		Text:        text,
 		Inputs:      []agentproto.Input{{Type: agentproto.InputText, Text: text}},
 	}
@@ -115,7 +186,14 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 		action = command
 	}
 	action.SteerInputs = append([]agentproto.Input(nil), action.Inputs...)
-	handler(ctx, action)
+	// Remember the response req on the worker, immediately before the handler
+	// runs, so the remember→handle→deliver sequence stays serialized per message.
+	// Doing it here (on the read loop) would let a later message's req overwrite
+	// an earlier one before the earlier one is delivered.
+	c.enqueueInbound(func() {
+		c.rememberResponseReq(chatID, msgID, reqID)
+		handler(ctx, action)
+	})
 }
 
 func wecomMessageChatID(frame msgCallbackFrame) string {
@@ -153,7 +231,7 @@ func (c *Channel) dispatchCardEvent(ctx context.Context, event InboundCardEvent)
 		return
 	}
 	log.Printf("wecom: mapped card event kind=%s picker=%q workspace=%q target=%q chat=%q", action.Kind, action.PickerID, action.WorkspaceKey, action.TargetPickerValue, action.ChatID)
-	handler(ctx, action)
+	c.enqueueInbound(func() { handler(ctx, action) })
 }
 
 // currentHandler returns the retained action handler under the lock.
@@ -184,7 +262,26 @@ func (c *Channel) Deliver(ctx context.Context, chatID string, event eventcontrac
 		return nil
 	}
 	response := c.consumeResponseReq(chatID, event.SourceMessageID)
+	if response.ReqID == "" && eventPrefersInboundReqReply(event.Kind) {
+		// Command config cards (e.g. /mode, /model) are emitted without a
+		// SourceMessageID, so the exact-match consume above misses. WeCom aibot
+		// only reliably delivers replies tied to the inbound webhook req, not
+		// standalone aibot_send_msg pushes — so fall back to the freshest
+		// remembered req for this chat to answer the just-received command.
+		response = c.forceConsumeResponseReq(chatID)
+	}
 	for _, frame := range frames {
+		if strings.TrimSpace(frame.LocalPath) != "" && (frame.MsgType == "image" || frame.MsgType == "file") {
+			mediaType := mediaTypeFile
+			if frame.MsgType == "image" {
+				mediaType = mediaTypeImage
+			}
+			mediaID, _, err := c.client.uploadMedia(ctx, frame.LocalPath, mediaType)
+			if err != nil {
+				return err
+			}
+			frame = mediaFrame(mediaType, mediaID)
+		}
 		if response.ReqID != "" {
 			log.Printf("wecom: respond frame chat=%s req=%s source=%s kind=%s msgtype=%s", chatID, response.ReqID, response.SourceMessageID, event.Kind, frame.MsgType)
 			if err := c.client.respondFrame(ctx, response.ReqID, frame); err != nil {
@@ -239,6 +336,40 @@ func (c *Channel) consumeResponseReq(chatID, sourceMessageID string) responseReq
 
 func (c *Channel) consumeResponseReqID(chatID string) string {
 	return c.consumeResponseReq(chatID, "").ReqID
+}
+
+// forceConsumeResponseReq returns and clears the freshest remembered req for a
+// chat, ignoring source-message matching. Used only for command config cards
+// that carry no SourceMessageID but are the synchronous reply to the inbound
+// command, which WeCom aibot can only deliver via the inbound req.
+func (c *Channel) forceConsumeResponseReq(chatID string) responseReqBinding {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	binding := c.responseReqByChat[chatID]
+	if binding.ReqID == "" {
+		return responseReqBinding{}
+	}
+	delete(c.responseReqByChat, chatID)
+	return binding
+}
+
+// eventPrefersInboundReqReply reports whether an event must be delivered through
+// the inbound webhook req rather than a standalone aibot_send_msg push. Command
+// config/menu pages (/mode, /model, ...) are emitted without a SourceMessageID
+// yet are a direct reply to the command that triggered them.
+func eventPrefersInboundReqReply(kind eventcontract.Kind) bool {
+	return kind == eventcontract.KindPage
+}
+
+func (c *Channel) LastDeliveryMessageID() string {
+	if c == nil || c.client == nil {
+		return ""
+	}
+	messageID, err := c.client.lastAckMessageID()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(messageID)
 }
 
 const noticeDedupeWindow = 30 * time.Second

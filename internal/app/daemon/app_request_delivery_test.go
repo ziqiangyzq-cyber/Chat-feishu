@@ -163,3 +163,56 @@ func TestHandleActionReplaysDegradedPendingRequestWithoutChangingActionResult(t 
 		t.Fatalf("expected notice plus replayed request card, got %#v", ops)
 	}
 }
+
+func TestWeComRequestDeliveryMarksRequestVisible(t *testing.T) {
+	wecomCh := &recordingWeComChannel{}
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{StartedAt: time.Now().UTC()})
+	app.SetWeComChannel(wecomCh)
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "主线程", CWD: "/data/dl/droid", Loaded: true},
+		},
+	})
+	surfaceID := wecomSurfaceID("wcchat-1")
+	app.service.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: surfaceID, GatewayID: wecomGatewayID, ChatID: "wcchat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
+	surface := app.service.Surface(surfaceID)
+	surface.PendingRequests["req-1"] = &state.RequestPromptRecord{
+		RequestID:             "req-1",
+		RequestType:           "approval",
+		InstanceID:            "inst-1",
+		ThreadID:              "thread-1",
+		TurnID:                "turn-1",
+		OwnerSurfaceSessionID: surfaceID,
+		OwnerGatewayID:        wecomGatewayID,
+		OwnerChatID:           "wcchat-1",
+		VisibilityState:       "pending_visibility",
+		CardRevision:          1,
+		Title:                 "需要确认",
+	}
+	surface.PendingRequestOrder = []string{"req-1"}
+
+	err := app.deliverUIEvent(eventcontract.Event{
+		Kind:             eventcontract.KindRequest,
+		SurfaceSessionID: surfaceID,
+		GatewayID:        wecomGatewayID,
+		RequestView: &control.FeishuRequestView{
+			RequestID:   "req-1",
+			RequestType: "approval",
+			Title:       "需要确认",
+		},
+	})
+	if err != nil {
+		t.Fatalf("deliverUIEvent returned error: %v", err)
+	}
+	record := app.service.PendingRequest(surfaceID, "req-1")
+	if record == nil || record.VisibleMessageID == "" || record.VisibilityState != "visible" {
+		t.Fatalf("expected visible request state after wecom delivery, got %#v", record)
+	}
+}

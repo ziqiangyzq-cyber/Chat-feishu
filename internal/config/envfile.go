@@ -30,6 +30,7 @@ type ServicesConfig struct {
 	FeishuUseSystemProxy bool
 	WeComBotID           string
 	WeComSecret          string
+	WeComBots            []WeComBotConfig
 	ConfigPath           string
 	DebugRelayFlow       bool
 	DebugRelayRaw        bool
@@ -95,7 +96,12 @@ func LoadServicesConfig() (ServicesConfig, error) {
 		return ServicesConfig{}, err
 	}
 	selectedApp := SelectRuntimeFeishuApp(loaded.Config.Feishu.Apps)
-	wecomBotID, wecomSecret := resolveWeComRuntimeCredentials(loaded.Config.WeCom)
+	wecomBots := resolveWeComRuntimeBots(loaded.Config.WeCom)
+	wecomBotID, wecomSecret := "", ""
+	if len(wecomBots) > 0 {
+		wecomBotID = wecomBots[0].BotID
+		wecomSecret = wecomBots[0].Secret
+	}
 	cfg := ServicesConfig{
 		RelayHost:    chooseNonEmpty(os.Getenv("RELAY_HOST"), loaded.Config.Relay.ListenHost, defaultRelayListenHost),
 		RelayPort:    strconv.Itoa(chooseInt(os.Getenv("RELAY_PORT"), loaded.Config.Relay.ListenPort)),
@@ -120,6 +126,7 @@ func LoadServicesConfig() (ServicesConfig, error) {
 		),
 		WeComBotID:  wecomBotID,
 		WeComSecret: wecomSecret,
+		WeComBots:   wecomBots,
 		ConfigPath:  loaded.Path,
 		DebugRelayFlow: chooseBool(
 			os.Getenv(DebugRelayFlowEnv),
@@ -136,15 +143,54 @@ func LoadServicesConfig() (ServicesConfig, error) {
 }
 
 func resolveWeComRuntimeCredentials(settings WeComSettings) (botID, secret string) {
+	bots := resolveWeComRuntimeBots(settings)
+	if len(bots) == 0 {
+		return "", ""
+	}
+	return bots[0].BotID, bots[0].Secret
+}
+
+func resolveWeComRuntimeBots(settings WeComSettings) []WeComBotConfig {
 	envBotID := strings.TrimSpace(os.Getenv("WECOM_BOT_ID"))
 	envSecret := strings.TrimSpace(os.Getenv("WECOM_SECRET"))
 	if envBotID != "" || envSecret != "" {
-		return envBotID, envSecret
+		return []WeComBotConfig{{
+			ID:      envBotID,
+			Name:    configFirstNonEmpty(envBotID, "WeCom Bot"),
+			BotID:   envBotID,
+			Secret:  envSecret,
+			Enabled: boolPtr(true),
+		}}
 	}
 	if settings.Enabled != nil && !*settings.Enabled {
-		return "", ""
+		return nil
 	}
-	return strings.TrimSpace(settings.BotID), strings.TrimSpace(settings.Secret)
+	if len(settings.Bots) != 0 {
+		bots := make([]WeComBotConfig, 0, len(settings.Bots))
+		for _, bot := range settings.Bots {
+			bot = bot.normalized()
+			if bot.Enabled != nil && !*bot.Enabled {
+				continue
+			}
+			if strings.TrimSpace(bot.BotID) == "" || strings.TrimSpace(bot.Secret) == "" {
+				continue
+			}
+			bots = append(bots, bot)
+		}
+		return bots
+	}
+	botID := strings.TrimSpace(settings.BotID)
+	secret := strings.TrimSpace(settings.Secret)
+	if botID == "" || secret == "" {
+		return nil
+	}
+	return []WeComBotConfig{{
+		ID:      "bot",
+		Name:    "WeCom Bot",
+		BotID:   botID,
+		Secret:  secret,
+		Enabled: settings.Enabled,
+	}}
 }
 
 func fileExists(path string) bool {

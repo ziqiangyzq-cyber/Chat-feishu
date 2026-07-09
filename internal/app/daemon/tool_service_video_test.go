@@ -214,3 +214,58 @@ func TestSendIMVideoToolMapsUploadAndSendFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestSendIMVideoToolRoutesToWeComSurface(t *testing.T) {
+	sender := &fakeToolSender{}
+	app, _ := newToolServiceTestApp(t, sender)
+	wecomChannel := &fakeToolWeComChannel{}
+	app.SetWeComChannelWithGateway("wecom:ops", wecomChannel)
+	if err := app.Bind(); err != nil {
+		t.Fatalf("Bind() error = %v", err)
+	}
+	defer func() {
+		_ = app.Shutdown(context.Background())
+	}()
+
+	workspaceRoot := t.TempDir()
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		WorkspaceRoot: workspaceRoot,
+		WorkspaceKey:  workspaceRoot,
+		Source:        "headless",
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+	app.HandleAction(context.Background(), control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-wecom",
+		GatewayID:        "wecom:ops",
+		ChatID:           "chat-wecom",
+		ActorUserID:      "user-wecom",
+		InstanceID:       "inst-1",
+	})
+	startToolTestRemoteTurn(t, app, "surface-wecom", "inst-1", "thread-1", "turn-1")
+
+	videoPath := filepath.Join(t.TempDir(), "demo.mp4")
+	if err := os.WriteFile(videoPath, []byte("fake-video"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	result, toolErr := app.sendIMVideoTool(withToolCallerInstanceID(context.Background(), "inst-1"), map[string]any{
+		"path": videoPath,
+	})
+	if toolErr != nil {
+		t.Fatalf("sendIMVideoTool() error = %#v", toolErr)
+	}
+	if len(wecomChannel.videoCalls) != 1 {
+		t.Fatalf("expected one wecom video send call, got %#v", wecomChannel.videoCalls)
+	}
+	if len(sender.videoCalls) != 0 {
+		t.Fatalf("expected feishu video sender not used, got %#v", sender.videoCalls)
+	}
+	if result["gateway_id"] != "wecom:ops" || result["message_id"] != "msg-wecom-video" || result["file_key"] != "wecom-video-media" {
+		t.Fatalf("unexpected wecom video result: %#v", result)
+	}
+	if result["delivery_kind"] != "wecom_attachment_video" || result["delivery_note"] != "已通过企业微信附件消息发送 MP4。" {
+		t.Fatalf("expected wecom video delivery metadata, got %#v", result)
+	}
+}

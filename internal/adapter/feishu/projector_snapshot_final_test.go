@@ -1646,3 +1646,61 @@ func TestProjectSnapshotNeutralizesPendingHeadlessThreadTitle(t *testing.T) {
 		t.Fatalf("expected pending headless title to stay literal in plain_text, got %q", rendered)
 	}
 }
+
+func TestProjectSnapshotShowsPeerSurfaceSection(t *testing.T) {
+	projector := NewProjector()
+	ops := projector.ProjectEvent("chat-1", eventcontract.Event{
+		Kind: eventcontract.KindSnapshot,
+		Snapshot: &control.Snapshot{
+			Attachment: control.AttachmentSummary{
+				InstanceID:       "inst-1",
+				DisplayName:      "repo",
+				RouteMode:        "pinned",
+				SelectedThreadID: "thread-1",
+			},
+			NextPrompt: control.PromptRouteSummary{
+				ThreadID:                 "thread-1",
+				ThreadTitle:              "repo · 主线",
+				CWD:                      "/data/repo",
+				EffectiveModel:           "gpt-5.4",
+				EffectiveReasoningEffort: "medium",
+				EffectiveAccessMode:      "confirm",
+			},
+			PeerSurfaces: []control.PeerSurfaceSummary{
+				{
+					SurfaceSessionID:         "surface-wecom",
+					GatewayID:                "wecom:bot",
+					SharedAttach:             true,
+					SelectedThreadID:         "thread-1",
+					QueuedCount:              1,
+					ActiveItemStatus:         "dispatching",
+					HasPendingRequest:        true,
+					PendingRequestCount:      1,
+					PendingRequestLifecycle:  "awaiting_backend_consume",
+					PendingRequestVisibility: "visible",
+					PendingRemoteTurn:        true,
+					SourceMessageID:          "msg-wecom-1",
+					ReplyTargetMessageID:     "msg-wecom-1",
+					LastInboundAt:            time.Date(2026, 7, 9, 15, 4, 0, 0, time.UTC),
+				},
+				{
+					SurfaceSessionID: "surface-feishu-2",
+					GatewayID:        "app-feishu",
+					QueuedCount:      0,
+					LastInboundAt:    time.Date(2026, 7, 9, 15, 1, 0, 0, time.UTC),
+				},
+			},
+		},
+	})
+	if len(ops) != 1 || ops[0].Kind != OperationSendCard {
+		t.Fatalf("unexpected ops: %#v", ops)
+	}
+	rendered := renderedV2CardText(t, ops[0])
+	if !containsAll(rendered,
+		"**同实例其他入口**",
+		"WeCom · shared · dispatching + 1 queued · thread thread-1 · reply msg-wecom-1 · last 07-09 15:04",
+		"Feishu · primary · idle · last 07-09 15:01",
+	) {
+		t.Fatalf("expected peer surface section in snapshot rendering, got %q", rendered)
+	}
+}

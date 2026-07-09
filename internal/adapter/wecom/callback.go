@@ -2,6 +2,7 @@ package wecom
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
@@ -190,17 +191,27 @@ func (items inboundSelectedItems) toSelections() []InboundSelection {
 // selectedOption returns the first selected option id for the given question
 // key, or "" when absent.
 func (e InboundCardEvent) selectedOption(questionKey string) string {
+	for _, id := range e.selectedOptions(questionKey) {
+		if v := strings.TrimSpace(id); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (e InboundCardEvent) selectedOptions(questionKey string) []string {
+	out := []string(nil)
 	for _, sel := range e.Selections {
 		if sel.QuestionKey != questionKey {
 			continue
 		}
 		for _, id := range sel.OptionIDs {
 			if v := strings.TrimSpace(id); v != "" {
-				return v
+				out = append(out, v)
 			}
 		}
 	}
-	return ""
+	return out
 }
 
 // MapCardEventToAction reconstructs a control.Action from a decoded card
@@ -259,13 +270,78 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 		return base, true
 
 	case keyPrefixRequestRespond:
-		if taskID == "" || value == "" {
+		requestRevision, optionID, ok := decodeRequestRespondKey(value)
+		if taskID == "" || !ok {
 			return control.Action{}, false
 		}
 		base.Kind = control.ActionRespondRequest
 		base.Request = &control.ActionRequestResponse{
 			RequestID:       taskID,
-			RequestOptionID: value,
+			RequestOptionID: optionID,
+			RequestRevision: requestRevision,
+		}
+		return base, true
+
+	case keyPrefixRequestSubmit:
+		if taskID == "" {
+			return control.Action{}, false
+		}
+		revision, _ := strconv.Atoi(strings.TrimSpace(firstRequestKeyPart(value)))
+		base.Kind = control.ActionRespondRequest
+		base.Request = &control.ActionRequestResponse{
+			RequestID:       taskID,
+			RequestRevision: revision,
+		}
+		return base, true
+
+	case keyPrefixRequestAnswer:
+		revision, questionID, answer, ok := decodeRequestAnswerKey(value)
+		if taskID == "" || !ok {
+			return control.Action{}, false
+		}
+		base.Kind = control.ActionRespondRequest
+		base.Request = &control.ActionRequestResponse{
+			RequestID:       taskID,
+			RequestRevision: revision,
+			Answers: map[string][]string{
+				questionID: {answer},
+			},
+		}
+		return base, true
+
+	case keyPrefixRequestAnswerSubmit:
+		revision, questionID, ok := decodeRequestAnswerSubmitKey(value)
+		if taskID == "" || !ok {
+			return control.Action{}, false
+		}
+		answers := event.selectedOptions(requestStructuredFormQuestionKey(questionID))
+		if len(answers) == 0 {
+			answers = event.selectedOptions(requestAnswerQuestionKey(questionID))
+		}
+		if len(answers) == 0 {
+			return control.Action{}, false
+		}
+		base.Kind = control.ActionRespondRequest
+		base.Request = &control.ActionRequestResponse{
+			RequestID:       taskID,
+			RequestRevision: revision,
+			Answers: map[string][]string{
+				questionID: answers,
+			},
+		}
+		return base, true
+
+	case keyPrefixRequestControl:
+		revision, controlName, questionID, ok := decodeRequestControlKey(value)
+		if taskID == "" || !ok {
+			return control.Action{}, false
+		}
+		base.Kind = control.ActionControlRequest
+		base.RequestControl = &control.ActionRequestControl{
+			RequestID:       taskID,
+			Control:         controlName,
+			QuestionID:      questionID,
+			RequestRevision: revision,
 		}
 		return base, true
 
@@ -282,4 +358,61 @@ func splitKey(key string) (prefix, value string) {
 		return key[:idx], key[idx+len(keyValueSep):]
 	}
 	return key, ""
+}
+
+func firstRequestKeyPart(value string) string {
+	parts := splitEncodedKeyParts(value)
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
+func decodeRequestRespondKey(value string) (revision int, optionID string, ok bool) {
+	parts := splitEncodedKeyParts(value)
+	switch len(parts) {
+	case 1:
+		return 0, strings.TrimSpace(parts[0]), strings.TrimSpace(parts[0]) != ""
+	default:
+		revision, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+		optionID = strings.TrimSpace(parts[1])
+		return revision, optionID, optionID != ""
+	}
+}
+
+func decodeRequestAnswerKey(value string) (revision int, questionID, answer string, ok bool) {
+	parts := splitEncodedKeyParts(value)
+	if len(parts) < 3 {
+		return 0, "", "", false
+	}
+	revision, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	questionID = strings.TrimSpace(parts[1])
+	answer = strings.TrimSpace(parts[2])
+	return revision, questionID, answer, questionID != "" && answer != ""
+}
+
+func decodeRequestAnswerSubmitKey(value string) (revision int, questionID string, ok bool) {
+	parts := splitEncodedKeyParts(value)
+	if len(parts) < 2 {
+		return 0, "", false
+	}
+	revision, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	questionID = strings.TrimSpace(parts[1])
+	return revision, questionID, questionID != ""
+}
+
+func decodeRequestControlKey(value string) (revision int, controlName, questionID string, ok bool) {
+	parts := splitEncodedKeyParts(value)
+	if len(parts) == 0 {
+		return 0, "", "", false
+	}
+	if len(parts) == 1 {
+		return 0, strings.TrimSpace(parts[0]), "", strings.TrimSpace(parts[0]) != ""
+	}
+	revision, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	controlName = strings.TrimSpace(parts[1])
+	if len(parts) > 2 {
+		questionID = strings.TrimSpace(parts[2])
+	}
+	return revision, controlName, questionID, controlName != ""
 }

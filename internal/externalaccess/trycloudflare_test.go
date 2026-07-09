@@ -161,6 +161,7 @@ func TestTryCloudflareProviderResolveBinaryPathReportsBundledError(t *testing.T)
 	if err := os.WriteFile(currentBinary, []byte("codex-remote"), 0o755); err != nil {
 		t.Fatalf("seed current binary: %v", err)
 	}
+	t.Setenv("PATH", dir)
 	provider := NewTryCloudflareProvider(TryCloudflareOptions{
 		CurrentBinary: currentBinary,
 		EnsureBundledBinary: func(string) (string, bool, error) {

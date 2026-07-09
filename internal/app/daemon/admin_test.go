@@ -352,3 +352,32 @@ func TestRuntimeStatusPayloadOmitsSurfaceProgressSummaries(t *testing.T) {
 		t.Fatalf("unexpected instance summary: %#v", summary)
 	}
 }
+
+func TestRuntimeStatusPayloadIncludesOpsRuntimeSummaries(t *testing.T) {
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{})
+	app.mu.Lock()
+	app.wecomChannel = &recordingWeComChannel{}
+	app.wecomChannels[wecomGatewayID] = app.wecomChannel
+	app.recordDeliverySuccessLocked("feishu", "app-1")
+	app.recordDeliverySuccessLocked("wecom", wecomGatewayID)
+	app.recordDeliveryFailureLocked("wecom", wecomGatewayID, "surface-wecom", "notice", context.DeadlineExceeded)
+	app.markWeComReconnectWaitingLocked(wecomGatewayID, "wecom: read: EOF", 5*time.Second, time.Date(2026, 7, 9, 15, 8, 0, 0, time.UTC))
+	app.mu.Unlock()
+
+	payload := app.runtimeStatusPayload()
+	if payload.DeliverySuccessCount != 2 || payload.DeliveryFailureCount != 1 {
+		t.Fatalf("unexpected delivery counters: %#v", payload)
+	}
+	if payload.DeliverySuccessRate <= 0.66 || payload.DeliverySuccessRate >= 0.67 {
+		t.Fatalf("unexpected success rate: %v", payload.DeliverySuccessRate)
+	}
+	if len(payload.WeComBots) != 1 || !payload.WeComBots[0].Enabled {
+		t.Fatalf("expected wecom summary, got %#v", payload.WeComBots)
+	}
+	if payload.WeComBots[0].State != "reconnect_wait" || payload.WeComBots[0].ReconnectTries != 1 {
+		t.Fatalf("unexpected wecom summary: %#v", payload.WeComBots)
+	}
+	if len(payload.RecentFailures) != 1 || payload.RecentFailures[0].Channel != "wecom" {
+		t.Fatalf("unexpected recent failures: %#v", payload.RecentFailures)
+	}
+}

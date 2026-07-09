@@ -893,9 +893,9 @@ func requestVisibilityRefreshStatusText(request *state.RequestPromptRecord) stri
 		return ""
 	}
 	if errText := strings.TrimSpace(request.LastDeliveryError); errText != "" {
-		return fmt.Sprintf("上一轮前台投递失败：%s。系统会继续尝试恢复这张确认卡片。", errText)
+		return fmt.Sprintf("上一轮前台投递失败：%s。系统会继续尝试恢复这张确认卡片；如果你看到恢复副本，请以最新一张为准。", errText)
 	}
-	return "上一轮前台投递失败。系统会继续尝试恢复这张确认卡片。"
+	return "上一轮前台投递失败。系统会继续尝试恢复这张确认卡片；如果你看到恢复副本，请以最新一张为准。"
 }
 
 func markRequestVisible(request *state.RequestPromptRecord, messageID string, deliveredAt time.Time) {

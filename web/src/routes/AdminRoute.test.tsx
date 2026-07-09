@@ -14,6 +14,8 @@ import {
   makeImageStagingStatus,
   makeLogsStorageStatus,
   makePreviewDriveStatus,
+  makeRuntimeStatus,
+  makeRuntimeSurfaceStatus,
   makeVSCodeDetect,
 } from "../test/fixtures";
 import { installMockFetch, type MockFetchCall } from "../test/http";
@@ -34,6 +36,18 @@ function withClaudeProfiles(
     },
     "/g/demo/api/admin/claude/profiles": {
       body: { profiles },
+    },
+    "/api/admin/runtime-status": {
+      body: makeRuntimeStatus(),
+    },
+    "/g/demo/api/admin/runtime-status": {
+      body: makeRuntimeStatus(),
+    },
+    "/api/admin/wecom/bots": {
+      body: { bots: [] },
+    },
+    "/g/demo/api/admin/wecom/bots": {
+      body: { bots: [] },
     },
     ...routes,
   };
@@ -94,6 +108,7 @@ describe("AdminRoute", () => {
       }),
     ).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "机器人管理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "运行态总览" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Claude 配置" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Codex Provider" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /新增机器人/ })).toBeInTheDocument();
@@ -102,6 +117,7 @@ describe("AdminRoute", () => {
     expect(
       calls.some((call) => call.path === "/g/demo/api/admin/bootstrap-state"),
     ).toBe(true);
+    expect(calls.some((call) => call.path === "/g/demo/api/admin/runtime-status")).toBe(true);
     expect(calls.some((call) => call.path === "/g/demo/api/admin/claude/profiles")).toBe(
       true,
     );
@@ -306,6 +322,311 @@ describe("AdminRoute", () => {
       calls.some((call) => call.path === "/api/admin/feishu/apps/bot-2/auto-config/plan"),
     ).toBe(true);
     expect(await screen.findByText("有降级")).toBeInTheDocument();
+  });
+
+  it("renders runtime ops summaries with peer surfaces and delivery issues", async () => {
+    window.history.replaceState({}, "", "/admin");
+
+    installMockFetch(withClaudeProfiles({
+      "/api/admin/bootstrap-state": { body: makeBootstrap() },
+      "/api/admin/runtime-status": {
+        body: makeRuntimeStatus({
+          deliverySuccessCount: 8,
+          deliveryFailureCount: 2,
+          deliverySuccessRate: 0.8,
+          wecomBots: [
+            {
+              gatewayId: "wecom:bot",
+              name: "WeCom Bot",
+              enabled: true,
+              connected: false,
+              state: "reconnect_wait",
+              lastError: "wecom: read: EOF",
+              nextRetryAt: "2026-07-09T15:08:00Z",
+              reconnectTries: 3,
+              capabilities: {
+                streaming: false,
+                interactiveSameFrame: false,
+                fileSend: false,
+                maxButtons: 6,
+              },
+            },
+          ],
+          recentFailures: [
+            {
+              occurredAt: "2026-07-09T15:07:30Z",
+              channel: "wecom",
+              gatewayId: "wecom:bot",
+              surfaceSessionId: "surface-wecom",
+              eventKind: "notice",
+              reason: "wecom: read: EOF",
+            },
+          ],
+          surfaceStatuses: [
+            makeRuntimeSurfaceStatus({
+              displayTitle: "主入口",
+              lastDeliveryError: "请求卡投递失败",
+              needsRedelivery: true,
+              deliveryAttemptCount: 2,
+              pendingRequestCount: 1,
+              hasPendingRequest: true,
+              pendingRequest: {
+                requestId: "req-wecom-1",
+                requestType: "request_user_input",
+                title: "需要补充输入",
+                lifecycleState: "editing_visible",
+                currentQuestionIndex: 1,
+                questionCount: 3,
+                answeredCount: 1,
+                skippedCount: 0,
+                visible: true,
+                needsRedelivery: true,
+                pendingDispatch: false,
+              },
+              peerSurfaces: [
+                {
+                  surfaceSessionId: "surface-wecom",
+                  platform: "wecom",
+                  gatewayId: "wecom:bot",
+                  sharedAttach: true,
+                  selectedThreadId: "thread-1",
+                  routeMode: "unbound",
+                  queuedCount: 1,
+                  activeItemStatus: "dispatching",
+                  hasPendingRequest: true,
+                  pendingRequestCount: 1,
+                  pendingRemoteTurn: true,
+                  activeRemoteTurn: false,
+                  replyTargetMessageId: "msg-wecom-1",
+                  lastInboundAt: "2026-07-09T15:04:00Z",
+                },
+              ],
+            }),
+          ],
+        }),
+      },
+      "/api/admin/feishu/apps": {
+        body: {
+          apps: [makeApp()],
+        },
+      },
+      "/api/admin/feishu/apps/bot-1/auto-config/plan": {
+        body: makeAdminAutoConfigPlan(),
+      },
+      "/api/admin/autostart/detect": {
+        body: {
+          platform: "linux",
+          supported: true,
+          status: "enabled",
+          configured: true,
+          enabled: true,
+          canApply: true,
+        },
+      },
+      "/api/admin/vscode/detect": { body: makeVSCodeDetect() },
+      "/api/admin/storage/image-staging": {
+        body: makeImageStagingStatus(),
+      },
+      "/api/admin/storage/logs": {
+        body: makeLogsStorageStatus(),
+      },
+      "/api/admin/storage/preview-drive/bot-1": {
+        body: makePreviewDriveStatus({ gatewayId: "bot-1", name: "Main Bot" }),
+      },
+    }));
+
+    render(<AdminRoute />);
+
+    expect(await screen.findByRole("heading", { name: "运行态总览" })).toBeInTheDocument();
+    expect(await screen.findByText("80.0%")).toBeInTheDocument();
+    expect(await screen.findByText("reconnect_wait")).toBeInTheDocument();
+    expect(await screen.findByText("最近失败：wecom: read: EOF")).toBeInTheDocument();
+    expect(await screen.findByText("最近失败：请求卡投递失败")).toBeInTheDocument();
+    expect(await screen.findByText("需要补充输入")).toBeInTheDocument();
+    expect(await screen.findByText("request_user_input · editing_visible")).toBeInTheDocument();
+    expect(await screen.findByText(/第 2 \/ 3 题 · 已答 1/)).toBeInTheDocument();
+    expect(await screen.findByText("同实例其他入口")).toBeInTheDocument();
+    expect(await screen.findByText("dispatching · 1 queued · 1 requests")).toBeInTheDocument();
+  });
+
+  it("renders wecom bot management and reconnects a bot", async () => {
+    window.history.replaceState({}, "", "/admin");
+    const user = userEvent.setup();
+    const { calls } = installMockFetch(withClaudeProfiles({
+      "/api/admin/bootstrap-state": { body: makeBootstrap() },
+      "/api/admin/wecom/bots": (call: MockFetchCall) => {
+        if (call.method === "POST") {
+          return { body: { bot: { id: "ops" } } };
+        }
+        return {
+          body: {
+            bots: [
+              {
+                id: "ops",
+                name: "Ops Bot",
+                botId: "wx_ops",
+                hasSecret: true,
+                enabled: true,
+                persisted: true,
+                runtime: {
+                  gatewayId: "wecom:ops",
+                  name: "Ops Bot",
+                  enabled: true,
+                  connected: false,
+                  state: "reconnect_wait",
+                  reconnectTries: 2,
+                  capabilities: {
+                    streaming: false,
+                    interactiveSameFrame: false,
+                    fileSend: true,
+                    maxButtons: 6,
+                  },
+                },
+              },
+            ],
+          },
+        };
+      },
+      "/api/admin/wecom/bots/ops/reconnect": {
+        body: { bot: { id: "ops" } },
+      },
+      "/api/admin/feishu/apps": {
+        body: {
+          apps: [makeApp()],
+        },
+      },
+      "/api/admin/feishu/apps/bot-1/auto-config/plan": {
+        body: makeAdminAutoConfigPlan(),
+      },
+      "/api/admin/autostart/detect": {
+        body: {
+          platform: "linux",
+          supported: true,
+          status: "enabled",
+          configured: true,
+          enabled: true,
+          canApply: true,
+        },
+      },
+      "/api/admin/vscode/detect": { body: makeVSCodeDetect() },
+      "/api/admin/storage/image-staging": {
+        body: makeImageStagingStatus(),
+      },
+      "/api/admin/storage/logs": {
+        body: makeLogsStorageStatus(),
+      },
+      "/api/admin/storage/preview-drive/bot-1": {
+        body: makePreviewDriveStatus({ gatewayId: "bot-1", name: "Main Bot" }),
+      },
+    }));
+
+    render(<AdminRoute />);
+
+    expect(await screen.findByRole("heading", { name: "企微机器人" })).toBeInTheDocument();
+    expect(await screen.findByText("Ops Bot")).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "重连" })[0]);
+
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.path === "/api/admin/wecom/bots/ops/reconnect" && call.method === "POST"),
+      ).toBe(true);
+    });
+  });
+
+  it("edits a persisted wecom bot without overwriting secret", async () => {
+    window.history.replaceState({}, "", "/admin");
+    const user = userEvent.setup();
+    const { calls } = installMockFetch(withClaudeProfiles({
+      "/api/admin/bootstrap-state": { body: makeBootstrap() },
+      "/api/admin/wecom/bots": {
+        body: {
+          bots: [
+            {
+              id: "ops",
+              name: "Ops Bot",
+              botId: "wx_ops",
+              hasSecret: true,
+              enabled: true,
+              persisted: true,
+              runtime: {
+                gatewayId: "wecom:ops",
+                name: "Ops Bot",
+                enabled: true,
+                connected: true,
+                state: "connected",
+                reconnectTries: 0,
+                capabilities: {
+                  streaming: false,
+                  interactiveSameFrame: false,
+                  fileSend: true,
+                  maxButtons: 6,
+                },
+              },
+            },
+          ],
+        },
+      },
+      "/api/admin/wecom/bots/ops": {
+        body: { bot: { id: "ops" } },
+      },
+      "/api/admin/feishu/apps": {
+        body: {
+          apps: [makeApp()],
+        },
+      },
+      "/api/admin/feishu/apps/bot-1/auto-config/plan": {
+        body: makeAdminAutoConfigPlan(),
+      },
+      "/api/admin/autostart/detect": {
+        body: {
+          platform: "linux",
+          supported: true,
+          status: "enabled",
+          configured: true,
+          enabled: true,
+          canApply: true,
+        },
+      },
+      "/api/admin/vscode/detect": { body: makeVSCodeDetect() },
+      "/api/admin/storage/image-staging": {
+        body: makeImageStagingStatus(),
+      },
+      "/api/admin/storage/logs": {
+        body: makeLogsStorageStatus(),
+      },
+      "/api/admin/storage/preview-drive/bot-1": {
+        body: makePreviewDriveStatus({ gatewayId: "bot-1", name: "Main Bot" }),
+      },
+    }));
+
+    render(<AdminRoute />);
+
+    expect(await screen.findByText("Ops Bot")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+
+    const aliasInput = screen.getByLabelText("企微别名");
+    await user.clear(aliasInput);
+    await user.type(aliasInput, "Ops Bot Updated");
+
+    const enabledInput = screen.getByLabelText("企微启用状态");
+    await user.click(enabledInput);
+
+    await user.click(screen.getByRole("button", { name: "保存企微机器人" }));
+
+    await waitFor(() => {
+      const updateCall = calls.find(
+        (call) => call.path === "/api/admin/wecom/bots/ops" && call.method === "PUT",
+      );
+      expect(updateCall).toBeTruthy();
+      expect(JSON.parse(String(updateCall?.init?.body))).toEqual({
+        id: "ops",
+        name: "Ops Bot Updated",
+        botId: "wx_ops",
+        enabled: false,
+      });
+    });
   });
 
   it("creates a new robot and switches to its status page after verify", async () => {

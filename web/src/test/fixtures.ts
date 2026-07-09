@@ -20,6 +20,9 @@ import type {
   OnboardingWorkflowResponse,
   OnboardingWorkflowStage,
   PreviewDriveStatusResponse,
+  RuntimeInstanceStatus,
+  RuntimeStatus,
+  RuntimeSurfaceStatus,
   RuntimeRequirementsDetectResponse,
   VSCodeDetectResponse,
 } from "../lib/types";
@@ -93,6 +96,103 @@ export function makeGatewayStatus(
     name: "Main Bot",
     state: "connected",
     disabled: false,
+    ...overrides,
+  };
+}
+
+export function makeRuntimeInstanceStatus(
+  overrides: Partial<RuntimeInstanceStatus> = {},
+): RuntimeInstanceStatus {
+  return {
+    instanceId: "inst-1",
+    displayName: "Demo Workspace",
+    workspaceRoot: "/tmp/demo",
+    source: "headless",
+    managed: true,
+    online: true,
+    pid: 12345,
+    status: "busy",
+    ...overrides,
+  };
+}
+
+export function makeRuntimeSurfaceStatus(
+  overrides: Partial<RuntimeSurfaceStatus> = {},
+): RuntimeSurfaceStatus {
+  return {
+    surfaceSessionId: "surface-1",
+    platform: "feishu",
+    gatewayId: "bot-1",
+    productMode: "normal",
+    displayTitle: "整理 websetup 流程",
+    threadTitle: "整理 websetup 流程",
+    firstUserMessage: "请把 websetup 的体验重新整理一下",
+    lastUserMessage: "顺便把探索过程卡也接到 web 里",
+    workspacePath: "/tmp/demo",
+    instanceId: "inst-1",
+    instanceDisplayName: "Demo Workspace",
+    ownerSurface: true,
+    sharedAttach: false,
+    routeMode: "pinned",
+    dispatchMode: "normal",
+    activeItemStatus: "running",
+    queuedCount: 1,
+    hasPendingRequest: false,
+    pendingRequestCount: 0,
+    pendingRequest: undefined,
+    pendingRemoteTurn: false,
+    activeRemoteTurn: true,
+    replyTargetMessageId: "msg-1",
+    nextThreadId: "thread-1",
+    nextThreadTitle: "整理 websetup 流程",
+    needsRedelivery: false,
+    deliveryAttemptCount: 0,
+    lastActiveAt: "2026-07-09T15:04:00Z",
+    peerSurfaces: [],
+    ...overrides,
+  };
+}
+
+export function makeRuntimeStatus(
+  overrides: Partial<RuntimeStatus> = {},
+): RuntimeStatus {
+  return {
+    instances: [],
+    surfaces: [],
+    instanceStatuses: [makeRuntimeInstanceStatus()],
+    surfaceStatuses: [makeRuntimeSurfaceStatus()],
+    gateways: [makeGatewayStatus()],
+    pendingRemoteTurns: [],
+    activeRemoteTurns: [],
+    connectedGatewayCount: 1,
+    degradedGatewayCount: 0,
+    offlineGatewayCount: 0,
+    managedInstanceCount: 1,
+    onlineInstanceCount: 1,
+    attachedSurfaceCount: 1,
+    queuedMessageCount: 1,
+    pendingRequestCount: 0,
+    redeliveryRequestCount: 0,
+    deliverySuccessCount: 12,
+    deliveryFailureCount: 1,
+    deliverySuccessRate: 12 / 13,
+    recentFailures: [],
+    wecomBots: [
+      {
+        gatewayId: "wecom:bot",
+        name: "WeCom Bot",
+        enabled: true,
+        connected: true,
+        state: "connected",
+        reconnectTries: 0,
+        capabilities: {
+          streaming: false,
+          interactiveSameFrame: false,
+          fileSend: false,
+          maxButtons: 6,
+        },
+      },
+    ],
     ...overrides,
   };
 }

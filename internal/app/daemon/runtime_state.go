@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +76,39 @@ type feishuRuntimeState struct {
 	setup                     feishuSetupClient
 }
 
+type opsRuntimeState struct {
+	delivery deliveryRuntimeState
+	wecom    map[string]*wecomRuntimeState
+}
+
+type deliveryRuntimeState struct {
+	successCount int
+	failureCount int
+	recent       []deliveryFailureRecord
+}
+
+type deliveryFailureRecord struct {
+	OccurredAt       time.Time
+	Channel          string
+	GatewayID        string
+	SurfaceSessionID string
+	EventKind        string
+	Reason           string
+}
+
+type wecomRuntimeState struct {
+	connected         bool
+	state             string
+	lastError         string
+	lastConnectedAt   time.Time
+	lastStateChangeAt time.Time
+	reconnectAttempts int
+	nextRetryAt       time.Time
+	lastRetryDelay    time.Duration
+}
+
+const opsRecentFailureLimit = 8
+
 func newSurfaceResumeRuntimeState() surfaceResumeRuntimeState {
 	return surfaceResumeRuntimeState{
 		recovery:              map[string]*surfaceResumeRecoveryState{},
@@ -102,4 +136,182 @@ func newFeishuRuntimeState() feishuRuntimeState {
 		permissionRefreshEvery: defaultFeishuPermissionRefreshEvery,
 		onboarding:             map[string]*feishuOnboardingSession{},
 	}
+}
+
+func newOpsRuntimeState() opsRuntimeState {
+	return opsRuntimeState{
+		delivery: deliveryRuntimeState{
+			recent: make([]deliveryFailureRecord, 0, opsRecentFailureLimit),
+		},
+		wecom: map[string]*wecomRuntimeState{},
+	}
+}
+
+func (a *App) recordDeliverySuccessLocked(channel, gatewayID string) {
+	if a == nil {
+		return
+	}
+	a.opsRuntime.delivery.successCount++
+}
+
+func (a *App) recordDeliveryFailureLocked(channel, gatewayID, surfaceSessionID, eventKind string, err error) {
+	if a == nil {
+		return
+	}
+	a.opsRuntime.delivery.failureCount++
+	record := deliveryFailureRecord{
+		OccurredAt:       time.Now().UTC(),
+		Channel:          normalizeOpsChannel(channel),
+		GatewayID:        strings.TrimSpace(gatewayID),
+		SurfaceSessionID: strings.TrimSpace(surfaceSessionID),
+		EventKind:        strings.TrimSpace(eventKind),
+		Reason:           strings.TrimSpace(daemonErrString(err)),
+	}
+	if record.Channel == "" {
+		record.Channel = inferOpsChannel(record.GatewayID)
+	}
+	if record.Reason == "" {
+		record.Reason = "unknown delivery failure"
+	}
+	a.opsRuntime.delivery.recent = append([]deliveryFailureRecord{record}, a.opsRuntime.delivery.recent...)
+	if len(a.opsRuntime.delivery.recent) > opsRecentFailureLimit {
+		a.opsRuntime.delivery.recent = a.opsRuntime.delivery.recent[:opsRecentFailureLimit]
+	}
+}
+
+func (a *App) wecomRuntimeStateLocked(gatewayID string) *wecomRuntimeState {
+	if a == nil {
+		return nil
+	}
+	if a.opsRuntime.wecom == nil {
+		a.opsRuntime.wecom = map[string]*wecomRuntimeState{}
+	}
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	runtimeState := a.opsRuntime.wecom[gatewayID]
+	if runtimeState == nil {
+		runtimeState = &wecomRuntimeState{state: "disabled"}
+		a.opsRuntime.wecom[gatewayID] = runtimeState
+	}
+	return runtimeState
+}
+
+func (a *App) setWeComStateLocked(gatewayID, state string, at time.Time) {
+	if a == nil {
+		return
+	}
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.state = state
+	runtimeState.lastStateChangeAt = at
+}
+
+func (a *App) markWeComConnectingLocked(gatewayID string) {
+	if a == nil {
+		return
+	}
+	now := time.Now().UTC()
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.connected = false
+	runtimeState.nextRetryAt = time.Time{}
+	runtimeState.lastRetryDelay = 0
+	a.setWeComStateLocked(gatewayID, "connecting", now)
+}
+
+func (a *App) markWeComConnectedLocked(gatewayID string, at time.Time) {
+	if a == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.connected = true
+	runtimeState.lastConnectedAt = at
+	runtimeState.lastError = ""
+	runtimeState.nextRetryAt = time.Time{}
+	runtimeState.lastRetryDelay = 0
+	runtimeState.reconnectAttempts = 0
+	a.setWeComStateLocked(gatewayID, "connected", at)
+}
+
+func (a *App) markWeComDegradedLocked(gatewayID, reason string) {
+	if a == nil {
+		return
+	}
+	now := time.Now().UTC()
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.connected = false
+	runtimeState.lastError = strings.TrimSpace(reason)
+	a.setWeComStateLocked(gatewayID, "degraded", now)
+}
+
+func (a *App) markWeComReconnectWaitingLocked(gatewayID, reason string, delay time.Duration, nextRetryAt time.Time) {
+	if a == nil {
+		return
+	}
+	now := time.Now().UTC()
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.connected = false
+	runtimeState.lastError = strings.TrimSpace(reason)
+	runtimeState.lastRetryDelay = delay
+	runtimeState.reconnectAttempts++
+	if !nextRetryAt.IsZero() {
+		runtimeState.nextRetryAt = nextRetryAt.UTC()
+	} else {
+		runtimeState.nextRetryAt = time.Time{}
+	}
+	a.setWeComStateLocked(gatewayID, "reconnect_wait", now)
+}
+
+func (a *App) markWeComStoppedLocked(gatewayID, reason string) {
+	if a == nil {
+		return
+	}
+	runtimeState := a.wecomRuntimeStateLocked(gatewayID)
+	runtimeState.connected = false
+	if strings.TrimSpace(reason) != "" {
+		runtimeState.lastError = strings.TrimSpace(reason)
+	}
+	runtimeState.nextRetryAt = time.Time{}
+	runtimeState.lastRetryDelay = 0
+	a.setWeComStateLocked(gatewayID, "stopped", time.Now().UTC())
+}
+
+func (a *App) setWeComDisabledLocked(gatewayID string) {
+	if a == nil {
+		return
+	}
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		gatewayID = wecomGatewayID
+	}
+	if a.opsRuntime.wecom == nil {
+		a.opsRuntime.wecom = map[string]*wecomRuntimeState{}
+	}
+	a.opsRuntime.wecom[gatewayID] = &wecomRuntimeState{state: "disabled"}
+}
+
+func normalizeOpsChannel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "feishu", "wecom":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func inferOpsChannel(gatewayID string) string {
+	if strings.HasPrefix(strings.TrimSpace(gatewayID), wecomNamespacePrefix) {
+		return "wecom"
+	}
+	return "feishu"
 }
