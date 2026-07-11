@@ -163,6 +163,13 @@ func (a *App) deliverUIEventWithContext(ctx context.Context, event eventcontract
 
 func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcontract.Event, appLocked bool) error {
 	event = event.Normalized()
+	// 出站收敛点限流：同一 surface 的 surface-resume / headless-restore 家族
+	// 失败通知 10 分钟内最多 1 条（2026-07-11 刷屏事故的产品决策，见
+	// app_resume_notice_throttle.go）。所有发射路径（recovery tick、attach、
+	// queue dispatch 等）都会经过这里，统一收口。
+	if isSurfaceResumeFailureNoticeEvent(event) && !a.resumeFailureNoticeThrottle.allow(event.SurfaceSessionID, time.Now()) {
+		return nil
+	}
 	event = a.enrichTemporarySessionEventLocked(event)
 	chatID := a.service.SurfaceChatID(event.SurfaceSessionID)
 	actorUserID := a.service.SurfaceActorUserID(event.SurfaceSessionID)

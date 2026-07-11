@@ -122,6 +122,7 @@ type App struct {
 
 	pendingGlobalRuntimeNotices map[string][]eventcontract.Event
 	recentGlobalRuntimeNotices  map[string]map[string]time.Time
+	resumeFailureNoticeThrottle surfaceResumeNoticeThrottle
 	headlessRuntime             HeadlessRuntimeConfig
 	vscodeDetect                func() (vscodeDetectResponse, error)
 	detectPlatformDefaults      func() (install.PlatformDefaults, error)
