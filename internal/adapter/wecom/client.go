@@ -181,6 +181,11 @@ type Client struct {
 	// streamMu guards per-chat streaming state used by streamMarkdown.
 	streamMu sync.Mutex
 	streams  map[string]*chatStream
+	// streamFrames remembers in-flight fire-and-forget stream frames by req_id
+	// so a gateway error response (e.g. errcode 846605 after the server-side
+	// stream expired mid-turn) can be correlated back to its chat and the
+	// content recovered instead of silently dropped.
+	streamFrames map[string]streamFrameInfo
 }
 
 // chatStream tracks an open aibot stream.id for one chat.
@@ -191,12 +196,26 @@ type chatStream struct {
 	LastText  string
 }
 
+// streamFrameInfo captures what a stream frame carried so it can be resent
+// through a fresh stream when the gateway rejects it.
+type streamFrameInfo struct {
+	ChatID   string
+	StreamID string
+	Content  string
+	Finish   bool
+	Retry    bool
+	SentAt   time.Time
+}
+
+const maxTrackedStreamFrames = 512
+
 // NewClient constructs a Client for the given aibot credentials.
 func NewClient(config Config) *Client {
 	c := &Client{
 		config:       config,
 		pendingReply: map[string]chan replyEnvelope{},
 		streams:      make(map[string]*chatStream),
+		streamFrames: make(map[string]streamFrameInfo),
 	}
 	c.dialFn = c.dialDefault
 	return c
@@ -388,6 +407,9 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		}
 		return c.handleEventCallback(ctx, event)
 	default:
+		if c.handleStreamFrameResponse(env) {
+			return nil
+		}
 		if env.ErrCode != 0 {
 			if c.deliverReply(replyEnvelope{
 				Cmd:     env.Cmd,
@@ -451,6 +473,10 @@ func (c *Client) respondFrame(ctx context.Context, reqID string, frame Frame) er
 // streamMarkdown writes (or updates) a streaming markdown message for chatID.
 // Successive calls with finish=false share one stream id; finish=true ends it.
 func (c *Client) streamMarkdown(ctx context.Context, chatID, content string, finish bool) error {
+	return c.streamMarkdownFrame(ctx, chatID, content, finish, false)
+}
+
+func (c *Client) streamMarkdownFrame(ctx context.Context, chatID, content string, finish, retry bool) error {
 	chatID = strings.TrimSpace(chatID)
 	content = strings.TrimSpace(content)
 	if chatID == "" {
@@ -479,12 +505,117 @@ func (c *Client) streamMarkdown(ctx context.Context, chatID, content string, fin
 	}
 	c.streamMu.Unlock()
 
+	var reqID string
+	var err error
 	if !started {
 		wire := newSendMsgFrame(chatID, markdownFrame(content))
 		wire.Body.Stream = &streamMeta{ID: streamID, Finish: finish, Content: content}
-		return c.writeJSON(ctx, wire)
+		reqID = wire.Headers.ReqID
+		err = c.writeJSON(ctx, wire)
+	} else {
+		wire := newStreamUpdateFrame(chatID, streamID, content, finish)
+		reqID = wire.Headers.ReqID
+		err = c.writeJSON(ctx, wire)
 	}
-	return c.writeJSON(ctx, newStreamUpdateFrame(chatID, streamID, content, finish))
+	if err == nil {
+		c.trackStreamFrame(reqID, streamFrameInfo{
+			ChatID:   chatID,
+			StreamID: streamID,
+			Content:  content,
+			Finish:   finish,
+			Retry:    retry,
+			SentAt:   time.Now(),
+		})
+	}
+	return err
+}
+
+// trackStreamFrame records an in-flight stream frame keyed by req_id, pruning
+// stale entries so an upstream that stops answering cannot grow the map.
+func (c *Client) trackStreamFrame(reqID string, info streamFrameInfo) {
+	if reqID == "" {
+		return
+	}
+	c.streamMu.Lock()
+	if len(c.streamFrames) >= maxTrackedStreamFrames {
+		cutoff := time.Now().Add(-2 * time.Minute)
+		for id, fi := range c.streamFrames {
+			if fi.SentAt.Before(cutoff) {
+				delete(c.streamFrames, id)
+			}
+		}
+	}
+	c.streamFrames[reqID] = info
+	c.streamMu.Unlock()
+}
+
+// handleStreamFrameResponse consumes gateway responses to tracked stream
+// frames. A success just clears the record; a failure means the server-side
+// stream is dead (observed as errcode 846605 "invalid req_id" once a long
+// turn outlives the stream), so the carried content is resent through a fresh
+// stream instead of being silently dropped. Returns true when the envelope
+// belonged to a stream frame.
+func (c *Client) handleStreamFrameResponse(env frameEnvelope) bool {
+	reqID := env.Headers.ReqID
+	if reqID == "" {
+		return false
+	}
+	c.streamMu.Lock()
+	info, tracked := c.streamFrames[reqID]
+	if tracked {
+		delete(c.streamFrames, reqID)
+	}
+	resend := false
+	finishCurrent := false
+	if tracked && env.ErrCode != 0 {
+		st := c.streams[info.ChatID]
+		switch {
+		case st != nil && st.ID == info.StreamID:
+			// Current stream is the dead one: forget it and resend via a new one.
+			delete(c.streams, info.ChatID)
+			resend = true
+		case st == nil && info.Finish:
+			// The finish frame failed after local state was already cleared;
+			// the final answer must still reach the user.
+			resend = true
+		case st != nil && st.ID != info.StreamID && info.Finish:
+			// A newer (recovered) stream is open; land the final content there.
+			finishCurrent = true
+		}
+	}
+	c.streamMu.Unlock()
+	if !tracked {
+		return false
+	}
+	if env.ErrCode == 0 {
+		return true
+	}
+	if !resend && !finishCurrent {
+		log.Printf("wecom: stream frame rejected errcode=%d chat=%s req=%s (superseded, no resend)", env.ErrCode, info.ChatID, reqID)
+		return true
+	}
+	if info.Retry {
+		// The recovery frame itself was rejected: last resort is a plain
+		// standalone message so the content still lands.
+		log.Printf("wecom: stream recovery rejected errcode=%d chat=%s; falling back to standalone message", env.ErrCode, info.ChatID)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := c.sendFrame(ctx, info.ChatID, markdownFrame(info.Content)); err != nil {
+				log.Printf("wecom: standalone fallback failed chat=%s: %v", info.ChatID, err)
+			}
+		}()
+		return true
+	}
+	log.Printf("wecom: stream frame rejected errcode=%d chat=%s finish=%v; resending content", env.ErrCode, info.ChatID, info.Finish)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := c.streamMarkdownFrame(ctx, info.ChatID, info.Content, info.Finish, true); err != nil {
+			log.Printf("wecom: stream recovery send failed chat=%s: %v", info.ChatID, err)
+		}
+	}()
+	return true
 }
 
 func newStreamUpdateFrame(chatID, streamID, content string, finish bool) respondUpdateMsgFrame {
