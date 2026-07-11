@@ -423,6 +423,12 @@ func (s *Service) TryAutoResumeHeadlessSurface(surfaceID string, attempt Surface
 	if strings.TrimSpace(surface.AttachedInstanceID) != "" || surface.PendingHeadless != nil {
 		return nil, SurfaceResumeResult{Status: SurfaceResumeStatusSkipped}
 	}
+	// gateway 策略：恢复目标所在工作区不在允许根目录内时直接判失败，
+	// 不再尝试 attach / 后台拉起（避免绕过工作区白名单）。
+	if resumeWorkspaceKey := normalizeHeadlessResumeWorkspaceKey(attempt.WorkspaceKey, attempt.ThreadCWD); resumeWorkspaceKey != "" &&
+		!s.surfaceWorkspaceAllowedByPolicy(surface, resumeWorkspaceKey) {
+		return nil, SurfaceResumeResult{Status: SurfaceResumeStatusFailed, FailureCode: "workspace_policy_denied"}
+	}
 
 	failureCode := ""
 	threadID := strings.TrimSpace(attempt.ThreadID)
@@ -648,6 +654,12 @@ func headlessRestoreFailureNotice(code string) *control.Notice {
 			Title: "恢复失败",
 			Text:  "之前的会话缺少可恢复的工作目录，暂时无法自动恢复，请稍后重试或尝试其他会话。",
 		}
+	case "workspace_policy_denied":
+		return &control.Notice{
+			Code:  "headless_restore_workspace_policy_denied",
+			Title: "恢复失败",
+			Text:  workspacePolicyDeniedNoticeText + "之前的会话不会自动恢复。",
+		}
 	default:
 		return &control.Notice{
 			Code:  "headless_restore_thread_not_found",
@@ -685,6 +697,9 @@ func surfaceResumeFailureNotice(code string) *control.Notice {
 		return &notice
 	case "thread_busy":
 		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_thread_busy", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /use 选择其他会话。")
+		return &notice
+	case "workspace_policy_denied":
+		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_workspace_policy_denied", "恢复失败", workspacePolicyDeniedNoticeText+"之前的会话不会自动恢复。")
 		return &notice
 	default:
 		notice := globalRuntimeNotice(control.NoticeDeliveryFamilySurfaceResume, "surface_resume_target_not_found", "恢复失败", "暂时无法恢复到之前会话。请稍后重试，或发送 /list 重新选择工作区。")

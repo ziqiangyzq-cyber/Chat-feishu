@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
@@ -167,6 +168,27 @@ const (
 
 func (s *Service) workspacePolicyDeniedNotice(surface *state.SurfaceConsoleRecord) []eventcontract.Event {
 	return notice(surface, workspacePolicyDeniedNoticeCode, workspacePolicyDeniedNoticeText)
+}
+
+// blockTargetPickerPathByWorkspacePolicy 在目标选择器确认阶段（clone / mkdir /
+// worktree 创建等落盘动作发生之前）校验最终目录是否在策略允许范围内。
+// 允许时返回 nil；被拒时把危险提示写回卡片并返回重建后的卡片事件。
+func (s *Service) blockTargetPickerPathByWorkspacePolicy(surface *state.SurfaceConsoleRecord, record *activeTargetPickerRecord, finalPath string) []eventcontract.Event {
+	if surface == nil || record == nil {
+		return nil
+	}
+	if s.surfaceWorkspaceAllowedByPolicy(surface, finalPath) {
+		return nil
+	}
+	setTargetPickerMessages(record, control.FeishuTargetPickerMessage{
+		Level: control.FeishuTargetPickerMessageDanger,
+		Text:  workspacePolicyDeniedNoticeText,
+	})
+	updatedView, err := s.buildTargetPickerView(surface, record)
+	if err != nil {
+		return notice(surface, "target_picker_unavailable", err.Error())
+	}
+	return []eventcontract.Event{s.targetPickerViewEvent(surface, updatedView, false)}
 }
 
 // findGatewayUserSurface 定位同一 gateway 下指定用户的单聊 surface。

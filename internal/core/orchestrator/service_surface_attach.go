@@ -19,6 +19,9 @@ func (s *Service) attachWorkspaceWithOptions(surface *state.SurfaceConsoleRecord
 	if workspaceKey == "" {
 		return notice(surface, "workspace_not_found", "目标工作区不存在。请重新发送 /list。")
 	}
+	if !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+		return s.workspacePolicyDeniedNotice(surface)
+	}
 	currentWorkspace := s.surfaceCurrentWorkspaceKey(surface)
 	if surface.AttachedInstanceID != "" && currentWorkspace == workspaceKey {
 		return notice(surface, "workspace_already_attached", fmt.Sprintf("当前已接管工作区：%s。", workspaceKey))
@@ -112,6 +115,9 @@ func (s *Service) attachInstanceWithMode(surface *state.SurfaceConsoleRecord, in
 	surfaceBackend := s.surfaceBackend(surface)
 	instanceBackend := state.EffectiveInstanceBackend(inst)
 	workspaceKey := instanceWorkspaceClaimKey(inst)
+	if workspaceKey != "" && !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+		return s.workspacePolicyDeniedNotice(surface)
+	}
 	switchingInstance := surface.AttachedInstanceID != "" && surface.AttachedInstanceID != instanceID
 	if s.surfaceIsVSCode(surface) && (instanceBackend != agentproto.BackendCodex || !isVSCodeInstance(inst)) {
 		return notice(surface, "mode_backend_mismatch", "当前处于 vscode 模式，只能接管 Codex VS Code 实例。请先选择 VS Code 实例，或切回 `/mode codex` / `/mode claude`。")

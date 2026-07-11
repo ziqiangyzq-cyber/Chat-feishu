@@ -144,6 +144,9 @@ func (s *Service) confirmTargetPickerWorktree(surface *state.SurfaceConsoleRecor
 		return []eventcontract.Event{s.targetPickerViewEvent(surface, view, false)}
 	}
 	finalPath := strings.TrimSpace(worktreeState.FinalPath)
+	if blocked := s.blockTargetPickerPathByWorkspacePolicy(surface, record, finalPath); blocked != nil {
+		return blocked
+	}
 	record.WorktreeFinalPath = finalPath
 	status := targetPickerWorktreeCreateProcessingStatus(view.SelectedWorkspaceLabel, strings.TrimSpace(record.WorktreeBranchName), finalPath)
 	processing := s.startTargetPickerProcessingWithSections(

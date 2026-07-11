@@ -790,6 +790,9 @@ func (s *Service) targetPickerWorkspaceEntries(surface *state.SurfaceConsoleReco
 		if workspaceKey == "" {
 			continue
 		}
+		if !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+			continue
+		}
 		if _, exists := seenWorkspaceKeys[workspaceKey]; exists {
 			continue
 		}

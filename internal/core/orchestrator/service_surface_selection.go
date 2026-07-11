@@ -26,9 +26,13 @@ func (s *Service) presentInstanceSelectionWithAction(surface *state.SurfaceConso
 	familyID, variantID, backend := s.catalogProvenanceForAction(surface, action)
 	instances := make([]*state.InstanceRecord, 0, len(s.root.Instances))
 	for _, inst := range s.root.Instances {
-		if inst.Online && isVSCodeInstance(inst) {
-			instances = append(instances, inst)
+		if !inst.Online || !isVSCodeInstance(inst) {
+			continue
 		}
+		if workspaceKey := instanceWorkspaceClaimKey(inst); workspaceKey != "" && !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+			continue
+		}
+		instances = append(instances, inst)
 	}
 	if len(instances) == 0 {
 		return notice(surface, "no_online_instances", "当前没有在线 VS Code 实例。请先在 VS Code 中打开 Codex 会话。")

@@ -156,6 +156,24 @@ func (s *Service) attachSurfaceToKnownThreadWithOverlayCleanup(surface *state.Su
 		}
 	}
 	workspaceKey := mergedThreadWorkspaceClaimKey(view)
+	if workspaceKey != "" && !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+		switch mode {
+		case attachSurfaceToKnownThreadHeadlessRestore:
+			return []eventcontract.Event{{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           headlessRestoreFailureNotice("workspace_policy_denied"),
+			}}
+		case attachSurfaceToKnownThreadSurfaceResume:
+			return []eventcontract.Event{{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           surfaceResumeFailureNotice("workspace_policy_denied"),
+			}}
+		default:
+			return s.workspacePolicyDeniedNotice(surface)
+		}
+	}
 	if s.surfaceUsesWorkspaceClaims(surface) && workspaceKey == "" {
 		if mode == attachSurfaceToKnownThreadHeadlessRestore {
 			return []eventcontract.Event{{
@@ -365,6 +383,16 @@ func (s *Service) startHeadlessForResolvedThreadWithModeAndOverlayCleanup(surfac
 			}}
 		}
 		return notice(surface, "thread_cwd_missing", "目标会话缺少可恢复的工作目录，当前无法在后台恢复该会话。")
+	}
+	if !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+		if mode == startHeadlessModeHeadlessRestore {
+			return []eventcontract.Event{{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           headlessRestoreFailureNotice("workspace_policy_denied"),
+			}}
+		}
+		return s.workspacePolicyDeniedNotice(surface)
 	}
 	threadCWD := strings.TrimSpace(threadCWD(view))
 	if owner := s.workspaceBusyOwnerForSurface(surface, workspaceKey); owner != nil {

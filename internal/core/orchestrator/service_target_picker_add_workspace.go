@@ -541,6 +541,9 @@ func (s *Service) confirmTargetPickerLocalDirectory(surface *state.SurfaceConsol
 		return []eventcontract.Event{s.targetPickerViewEvent(surface, updatedView, false)}
 	}
 	finalPath := strings.TrimSpace(localState.FinalPath)
+	if blocked := s.blockTargetPickerPathByWorkspacePolicy(surface, record, finalPath); blocked != nil {
+		return blocked
+	}
 	if strings.TrimSpace(record.LocalDirectoryName) != "" {
 		if err := os.MkdirAll(finalPath, 0o755); err != nil {
 			setTargetPickerMessages(record, control.FeishuTargetPickerMessage{
@@ -596,6 +599,9 @@ func (s *Service) confirmTargetPickerGitImport(surface *state.SurfaceConsoleReco
 		return []eventcontract.Event{s.targetPickerViewEvent(surface, view, false)}
 	}
 	finalPath := strings.TrimSpace(firstNonEmpty(gitState.FinalPath, gitState.ParentDir))
+	if blocked := s.blockTargetPickerPathByWorkspacePolicy(surface, record, finalPath); blocked != nil {
+		return blocked
+	}
 	record.GitFinalPath = finalPath
 	status := targetPickerGitImportCloneProcessingStatus(strings.TrimSpace(record.GitRepoURL), finalPath)
 	processing := s.startTargetPickerProcessingWithSections(
