@@ -24,8 +24,8 @@ func (s *Service) buildSnapshot(surface *state.SurfaceConsoleRecord) *control.Sn
 			SharedAttach:  surface.SharedAttach,
 			LastInboundAt: surface.LastInboundAt,
 		},
-		AutoWhip:         snapshotAutoWhipSummary(surface),
-		AutoContinue:     snapshotAutoContinueSummary(surface),
+		AutoWhip:     snapshotAutoWhipSummary(surface),
+		AutoContinue: snapshotAutoContinueSummary(surface),
 	}
 	if snapshot.Backend == agentproto.BackendClaude && state.IsHeadlessProductMode(s.normalizeSurfaceProductMode(surface)) {
 		snapshot.ClaudeProfileID = s.surfaceClaudeProfileID(surface)

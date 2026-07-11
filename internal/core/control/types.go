@@ -301,18 +301,18 @@ type GateSummary struct {
 }
 
 type DispatchSummary struct {
-	InstanceOnline         bool
-	DispatchMode           string
-	ActiveItemStatus       string
-	QueuedCount            int
-	ActiveQueueItemID      string
-	ActiveSourceMessageID  string
-	ReplySourceMessageID   string
-	ReplyTargetMessageID   string
-	PendingRemoteTurn      bool
-	ActiveRemoteTurn       bool
-	PendingRemoteTurnID    string
-	ActiveRemoteTurnID     string
+	InstanceOnline        bool
+	DispatchMode          string
+	ActiveItemStatus      string
+	QueuedCount           int
+	ActiveQueueItemID     string
+	ActiveSourceMessageID string
+	ReplySourceMessageID  string
+	ReplyTargetMessageID  string
+	PendingRemoteTurn     bool
+	ActiveRemoteTurn      bool
+	PendingRemoteTurnID   string
+	ActiveRemoteTurnID    string
 }
 
 type AutoWhipSummary struct {

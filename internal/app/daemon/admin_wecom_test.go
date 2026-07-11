@@ -101,4 +101,3 @@ func TestAdminWeComBotCreateUpdateDeleteAndReconnect(t *testing.T) {
 		t.Fatalf("expected deleted bot persisted=false, got %#v", deleteResp.Bot)
 	}
 }
-

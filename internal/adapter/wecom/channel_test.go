@@ -12,8 +12,8 @@ import (
 
 func TestChannelCapabilitiesMatchImplementedTransport(t *testing.T) {
 	caps := NewChannel(Config{}).Capabilities()
-	if caps.Streaming {
-		t.Fatal("streaming must remain false until aibot update frames are implemented")
+	if !caps.Streaming {
+		t.Fatal("streaming must be true now that aibot update frames are implemented")
 	}
 	if !caps.FileSend {
 		t.Fatal("file send should be enabled after file projection/upload is implemented")
@@ -24,13 +24,14 @@ func TestChannelCapabilitiesMatchImplementedTransport(t *testing.T) {
 	if caps.MaxButtons != defaultMaxButtons {
 		t.Fatalf("MaxButtons = %d, want %d", caps.MaxButtons, defaultMaxButtons)
 	}
+	var _ surface.StreamingRenderer = NewChannel(Config{})
 }
 
 func TestDispatchMessageCarriesActorUserID(t *testing.T) {
 	ch := NewChannel(Config{})
-	var got control.Action
+	done := make(chan control.Action, 1)
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
-		got = action
+		done <- action
 		return nil
 	}
 
@@ -43,6 +44,13 @@ func TestDispatchMessageCarriesActorUserID(t *testing.T) {
 	frame.Text.Content = " hello "
 
 	ch.dispatchMessage(context.Background(), frame)
+
+	var got control.Action
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not invoked")
+	}
 
 	if got.Kind != control.ActionTextMessage {
 		t.Fatalf("Kind = %q, want %q", got.Kind, control.ActionTextMessage)
@@ -60,9 +68,9 @@ func TestDispatchMessageCarriesActorUserID(t *testing.T) {
 
 func TestDispatchMessageFallsBackToSenderAsSingleChatID(t *testing.T) {
 	ch := NewChannel(Config{})
-	var got control.Action
+	done := make(chan control.Action, 1)
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
-		got = action
+		done <- action
 		return nil
 	}
 
@@ -75,6 +83,13 @@ func TestDispatchMessageFallsBackToSenderAsSingleChatID(t *testing.T) {
 	frame.Text.Content = " hello "
 
 	ch.dispatchMessage(context.Background(), frame)
+
+	var got control.Action
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not invoked")
+	}
 
 	if got.ChatID != "user-single" || got.ActorUserID != "user-single" {
 		t.Fatalf("unexpected single-chat action: %+v", got)
@@ -108,9 +123,9 @@ func TestResponseReqRequiresMatchingSourceMessageID(t *testing.T) {
 
 func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 	ch := NewChannel(Config{})
-	var got control.Action
+	done := make(chan control.Action, 1)
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
-		got = action
+		done <- action
 		return nil
 	}
 
@@ -122,6 +137,13 @@ func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 		EventKey:       keyPrefixTargetSession + keyValueSep + "thread-1",
 		Headers:        frameHeaders{ReqID: " req-card-1 "},
 	})
+
+	var got control.Action
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not invoked")
+	}
 
 	if got.Kind != control.ActionTargetPickerSelectSession {
 		t.Fatalf("Kind = %q, want %q", got.Kind, control.ActionTargetPickerSelectSession)
@@ -136,9 +158,9 @@ func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 
 func TestDispatchCardEventSuppressesDuplicateCallback(t *testing.T) {
 	ch := NewChannel(Config{})
-	var count int
+	calls := make(chan struct{}, 4)
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
-		count++
+		calls <- struct{}{}
 		return nil
 	}
 	event := InboundCardEvent{
@@ -156,8 +178,15 @@ func TestDispatchCardEventSuppressesDuplicateCallback(t *testing.T) {
 	ch.dispatchCardEvent(context.Background(), event)
 	ch.dispatchCardEvent(context.Background(), event)
 
-	if count != 1 {
-		t.Fatalf("handler call count = %d, want 1", count)
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first handler call missing")
+	}
+	select {
+	case <-calls:
+		t.Fatal("duplicate card callback must be suppressed")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -183,9 +212,9 @@ func TestShouldSuppressDuplicateNotice(t *testing.T) {
 
 func TestDispatchMessageParsesSlashCommand(t *testing.T) {
 	ch := NewChannel(Config{})
-	var got control.Action
+	done := make(chan control.Action, 1)
 	ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
-		got = action
+		done <- action
 		return nil
 	}
 
@@ -199,10 +228,52 @@ func TestDispatchMessageParsesSlashCommand(t *testing.T) {
 
 	ch.dispatchMessage(context.Background(), frame)
 
+	var got control.Action
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler was not invoked")
+	}
+
 	if got.Kind != control.ActionListInstances {
 		t.Fatalf("Kind = %q, want %q", got.Kind, control.ActionListInstances)
 	}
 	if got.ChatID != "chat-1" || got.ActorUserID != "user-1" || got.MessageID != "msg-1" || got.Text != "/list" {
 		t.Fatalf("command lost inbound context: %+v", got)
+	}
+}
+
+func TestDispatchMessageParsesCoreCommands(t *testing.T) {
+	cases := []struct {
+		text string
+		kind control.ActionKind
+	}{
+		{"/stop", control.ActionStop},
+		{"/status", control.ActionStatus},
+		{"/new", control.ActionNewThread},
+		{"/compact", control.ActionCompact},
+		{"/help", control.ActionShowCommandHelp},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			ch := NewChannel(Config{})
+			done := make(chan control.Action, 1)
+			ch.handler = func(_ context.Context, action control.Action) *surface.ActionResult {
+				done <- action
+				return nil
+			}
+			frame := msgCallbackFrame{ChatID: "chat-1", MsgID: "msg-1", Headers: frameHeaders{ReqID: "req-1"}}
+			frame.From.UserID = "user-1"
+			frame.Text.Content = tc.text
+			ch.dispatchMessage(context.Background(), frame)
+			select {
+			case got := <-done:
+				if got.Kind != tc.kind {
+					t.Fatalf("Kind = %q, want %q", got.Kind, tc.kind)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("handler was not invoked")
+			}
+		})
 	}
 }

@@ -135,3 +135,36 @@ func TestNewRespondMsgFrameUsesCallbackReqID(t *testing.T) {
 		t.Fatalf("msgtype = %v, want text", body["msgtype"])
 	}
 }
+
+func TestStreamMarkdownOpensThenUpdates(t *testing.T) {
+	// No live dial — marshal path only for open + update envelopes.
+	open := newSendMsgFrame("chat-1", markdownFrame("hello"))
+	open.Body.Stream = &streamMeta{ID: "stream-1", Finish: false, Content: "hello"}
+	raw, err := json.Marshal(open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["cmd"] != frameCmdSendMsg {
+		t.Fatalf("cmd = %v", decoded["cmd"])
+	}
+	upd := newStreamUpdateFrame("chat-1", "stream-1", "hello world", true)
+	raw, err = json.Marshal(upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["cmd"] != frameCmdRespondUpdateMsg {
+		t.Fatalf("update cmd = %v", decoded["cmd"])
+	}
+	body, _ := decoded["body"].(map[string]any)
+	stream, _ := body["stream"].(map[string]any)
+	if stream["id"] != "stream-1" || stream["finish"] != true {
+		t.Fatalf("unexpected stream meta: %#v", stream)
+	}
+}

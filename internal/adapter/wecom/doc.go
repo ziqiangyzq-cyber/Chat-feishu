@@ -2,9 +2,9 @@
 // implements the channel-neutral internal/core/surface.Channel contract so the
 // daemon can bridge the AI CLI to a WeCom aibot in addition to Feishu.
 //
-// This package is a Phase-1 foundation: the connection scaffolding (wss dial,
-// subscribe, ping/pong) is real and correct, while message-handling bodies are
-// clearly-marked TODOs that return safely. It is NOT yet wired into the daemon.
+// Status: wired into the daemon as an opt-in second channel (WECOM_BOT_ID +
+// WECOM_SECRET / config.json wecom block). Feishu and WeCom surfaces use
+// separate gateway namespaces so outbound events do not cross-deliver.
 //
 // # aibot long-connection protocol
 //
@@ -19,16 +19,27 @@
 //   - aibot_msg_callback   — an inbound user message to the bot.
 //   - aibot_event_callback — a non-message event (e.g. menu click, enter chat).
 //   - The client responds by sending:
-//   - aibot_respond_msg        — a new outbound message.
-//   - aibot_respond_update_msg — an update to a previously sent message
-//     (used for streaming: successive updates carry the same stream.id and a
-//     finish flag on the terminal update).
-//   - Keepalive: the client sends a WebSocket ping every 30s and expects pongs;
-//     a missed pong indicates a dead connection that must be re-dialed.
-//   - Streaming: outbound text can be streamed by sending an initial
-//     aibot_respond_msg followed by aibot_respond_update_msg frames sharing a
-//     stream identifier (stream.id) until a frame with finish=true.
+//   - aibot_respond_msg        — a new outbound message (or stream open).
+//   - aibot_respond_update_msg — an update to a previously streamed message
+//     (successive updates share stream.id; finish=true ends the stream).
+//   - aibot_send_msg           — proactive outbound message without req_id.
+//   - Keepalive: the client sends a WebSocket ping every 30s.
+//   - Streaming: Channel implements surface.StreamingRenderer; non-final
+//     assistant blocks and RenderStream updates share a stream id per chat.
 //   - Interactivity: buttons/actions use template_card messages.
+//
+// # Capabilities
+//
+//   - Streaming: true (markdown stream open/update/finish)
+//   - InteractiveSameFrame: false (text + buttons must be two messages)
+//   - FileSend: false (binary upload not wired; image.output degrades to a
+//     markdown path notice)
+//
+// # Slash commands
+//
+// Inbound text is parsed with the same control.ParseFeishuTextActionWithoutCatalog
+// catalog as Feishu, so `/stop` `/status` `/new` `/compact` `/help` and the rest
+// of the shared command set work on both channels.
 //
 // # Key constraint (drives surface.Capabilities.InteractiveSameFrame=false)
 //

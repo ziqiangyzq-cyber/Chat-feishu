@@ -123,9 +123,9 @@ type FeishuAppConfig struct {
 }
 
 type WeComSettings struct {
-	Enabled *bool  `json:"enabled,omitempty"`
-	BotID   string `json:"botId,omitempty"`
-	Secret  string `json:"secret,omitempty"`
+	Enabled *bool            `json:"enabled,omitempty"`
+	BotID   string           `json:"botId,omitempty"`
+	Secret  string           `json:"secret,omitempty"`
 	Bots    []WeComBotConfig `json:"bots,omitempty"`
 }
 

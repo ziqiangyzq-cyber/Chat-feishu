@@ -32,12 +32,12 @@ type wecomBotWriteRequest struct {
 }
 
 type adminWeComBotSummary struct {
-	ID        string                   `json:"id"`
-	Name      string                   `json:"name,omitempty"`
-	BotID     string                   `json:"botId,omitempty"`
-	HasSecret bool                     `json:"hasSecret"`
-	Enabled   bool                     `json:"enabled"`
-	Persisted bool                     `json:"persisted"`
+	ID        string                    `json:"id"`
+	Name      string                    `json:"name,omitempty"`
+	BotID     string                    `json:"botId,omitempty"`
+	HasSecret bool                      `json:"hasSecret"`
+	Enabled   bool                      `json:"enabled"`
+	Persisted bool                      `json:"persisted"`
 	Runtime   *adminWeComRuntimeSummary `json:"runtime,omitempty"`
 }
 
@@ -49,4 +49,3 @@ func indexOfConfigWeComBot(bots []config.WeComBotConfig, id string) int {
 	}
 	return -1
 }
-
