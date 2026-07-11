@@ -42,6 +42,7 @@ type Service struct {
 	workspaceClaims           map[string]*workspaceClaimRecord
 	threadClaims              map[string]*threadClaimRecord
 	surfaceUIRuntime          map[string]*surfaceUIRuntimeRecord
+	gatewayPolicies           map[string]GatewaySurfacePolicy
 	turns                     *serviceTurnRuntime
 	pickers                   *servicePickerRuntime
 	catalog                   *serviceCatalogRuntime

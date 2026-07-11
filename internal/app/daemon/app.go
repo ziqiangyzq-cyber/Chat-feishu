@@ -290,6 +290,14 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 	return app
 }
 
+// SetGatewaySurfacePolicies 注入按 gatewayID 索引的 surface 策略
+// （工作区白名单 / 权限上限 / 审批人），来源是 config.json 的 Feishu.Apps。
+func (a *App) SetGatewaySurfacePolicies(policies map[string]orchestrator.GatewaySurfacePolicy) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.service.SetGatewaySurfacePolicies(policies)
+}
+
 func (a *App) SetTurnPatchStorage(storage *codexstate.TurnPatchStorage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

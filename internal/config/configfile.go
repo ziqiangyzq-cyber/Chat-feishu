@@ -120,6 +120,14 @@ type FeishuAppConfig struct {
 	AppSecret  string     `json:"appSecret,omitempty"`
 	Enabled    *bool      `json:"enabled,omitempty"`
 	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
+	// WorkspaceRoots 非空时：该 app 的 surface 只能看到/使用这些根目录下的工作区。
+	WorkspaceRoots []string `json:"workspaceRoots,omitempty"`
+	// MaxAccessMode 非空时：该 app 的 surface 生效权限不得超过此级别
+	// （权限强弱：full_access > accept_edits > confirm）。
+	MaxAccessMode string `json:"maxAccessMode,omitempty"`
+	// ApproverOpenID 非空时：该 app 上的越权审批只允许此 open_id 的用户处理，
+	// 其他用户的越权请求会被自动拒绝并通知审批人。
+	ApproverOpenID string `json:"approverOpenID,omitempty"`
 }
 
 type WeComSettings struct {

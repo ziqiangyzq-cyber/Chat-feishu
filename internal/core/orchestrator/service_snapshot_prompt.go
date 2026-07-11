@@ -126,7 +126,9 @@ func (s *Service) resolveFrozenPromptOverride(inst *state.InstanceRecord, surfac
 		if promptOverrideIsEmpty(override) && surface != nil {
 			override = surface.PromptOverride
 		}
-		return compactPromptOverride(override)
+		override = compactPromptOverride(override)
+		override.AccessMode = s.clampSurfaceAccessMode(surface, override.AccessMode)
+		return override
 	}
 	resolution := s.resolvePromptConfig(inst, surface, threadID, cwd, override)
 	return state.ModelConfigRecord{
@@ -184,6 +186,10 @@ func (s *Service) resolvePromptConfig(inst *state.InstanceRecord, surface *state
 		effectiveAccessMode = baseAccess.Value
 		effectiveAccessModeSource = baseAccess.Source
 	}
+	// gateway 策略：无论权限来自 override/workspace 默认/兜底 full_access，
+	// 都不允许超过该 gateway 配置的 MaxAccessMode（来源标记保持不变，值取 clamp 后的）。
+	override.AccessMode = s.clampSurfaceAccessMode(surface, override.AccessMode)
+	effectiveAccessMode = s.clampSurfaceAccessMode(surface, effectiveAccessMode)
 	return promptConfigResolution{
 		Override:                  override,
 		BaseModel:                 baseModel,

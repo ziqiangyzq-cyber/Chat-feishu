@@ -1,0 +1,203 @@
+package orchestrator
+
+import (
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
+	"github.com/kxn/codex-remote-feishu/internal/core/state"
+)
+
+// GatewaySurfacePolicy 描述某个 gateway（飞书 app）下所有 surface 的访问策略。
+// 全部字段为空时等价于"无策略"，行为与未配置完全一致。
+type GatewaySurfacePolicy struct {
+	// WorkspaceRoots 非空时：该 gateway 的 surface 只能看到/使用这些根目录
+	// （含子目录）下的工作区。
+	WorkspaceRoots []string
+	// MaxAccessMode 非空时：生效执行权限不得超过此级别
+	// （权限强弱：full_access > accept_edits > confirm）。
+	MaxAccessMode string
+	// ApproverOpenID 非空时：该 gateway 上的越权审批只允许此 open_id 的用户处理，
+	// 其他用户的越权请求会被自动拒绝并通知审批人。
+	ApproverOpenID string
+}
+
+func (p GatewaySurfacePolicy) normalized() GatewaySurfacePolicy {
+	roots := make([]string, 0, len(p.WorkspaceRoots))
+	seen := map[string]bool{}
+	for _, root := range p.WorkspaceRoots {
+		normalized := state.NormalizeWorkspaceKey(root)
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		roots = append(roots, normalized)
+	}
+	p.WorkspaceRoots = roots
+	p.MaxAccessMode = agentproto.NormalizeAccessMode(p.MaxAccessMode)
+	p.ApproverOpenID = strings.TrimSpace(p.ApproverOpenID)
+	return p
+}
+
+func (p GatewaySurfacePolicy) isZero() bool {
+	return len(p.WorkspaceRoots) == 0 && p.MaxAccessMode == "" && p.ApproverOpenID == ""
+}
+
+// SetGatewaySurfacePolicies 注入按 gatewayID 索引的 surface 策略。
+// 在 daemon 启动时调用一次；未出现在 map 里的 gateway 不受任何限制。
+func (s *Service) SetGatewaySurfacePolicies(policies map[string]GatewaySurfacePolicy) {
+	if s == nil {
+		return
+	}
+	normalized := map[string]GatewaySurfacePolicy{}
+	for gatewayID, policy := range policies {
+		gatewayID = strings.TrimSpace(gatewayID)
+		policy = policy.normalized()
+		if gatewayID == "" || policy.isZero() {
+			continue
+		}
+		normalized[gatewayID] = policy
+	}
+	if len(normalized) == 0 {
+		s.gatewayPolicies = nil
+		return
+	}
+	s.gatewayPolicies = normalized
+}
+
+func (s *Service) surfaceGatewayPolicy(surface *state.SurfaceConsoleRecord) (GatewaySurfacePolicy, bool) {
+	if s == nil || surface == nil || len(s.gatewayPolicies) == 0 {
+		return GatewaySurfacePolicy{}, false
+	}
+	policy, ok := s.gatewayPolicies[strings.TrimSpace(surface.GatewayID)]
+	return policy, ok
+}
+
+// accessModeRank 给权限模式排序：full_access(3) > accept_edits(2) > confirm(1)。
+func accessModeRank(mode string) int {
+	switch agentproto.NormalizeAccessMode(mode) {
+	case agentproto.AccessModeFullAccess:
+		return 3
+	case agentproto.AccessModeAcceptEdits:
+		return 2
+	case agentproto.AccessModeConfirm:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// clampAccessModeToMax 把 mode clamp 到不超过 max 的级别（取较低者）。
+// mode 或 max 无法归一化时原样返回 mode。
+func clampAccessModeToMax(mode, max string) string {
+	normalizedMode := agentproto.NormalizeAccessMode(mode)
+	normalizedMax := agentproto.NormalizeAccessMode(max)
+	if normalizedMode == "" || normalizedMax == "" {
+		return mode
+	}
+	if accessModeRank(normalizedMode) > accessModeRank(normalizedMax) {
+		return normalizedMax
+	}
+	return normalizedMode
+}
+
+// clampSurfaceAccessMode 按 surface 所属 gateway 的策略 clamp 权限模式。
+// 空 mode 保持为空（表示"未覆盖"），无策略时原样返回。
+func (s *Service) clampSurfaceAccessMode(surface *state.SurfaceConsoleRecord, mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return mode
+	}
+	policy, ok := s.surfaceGatewayPolicy(surface)
+	if !ok || policy.MaxAccessMode == "" {
+		return mode
+	}
+	return clampAccessModeToMax(mode, policy.MaxAccessMode)
+}
+
+// surfaceWorkspaceAllowedByPolicy 判断 workspaceKey 是否在策略允许的根目录内。
+// 无策略或策略未配置 WorkspaceRoots 时恒为 true；空 workspaceKey 视为允许
+// （由后续流程自行报"工作区不存在"类错误）。
+func (s *Service) surfaceWorkspaceAllowedByPolicy(surface *state.SurfaceConsoleRecord, workspaceKey string) bool {
+	policy, ok := s.surfaceGatewayPolicy(surface)
+	if !ok || len(policy.WorkspaceRoots) == 0 {
+		return true
+	}
+	workspaceKey = state.NormalizeWorkspaceKey(workspaceKey)
+	if workspaceKey == "" {
+		return true
+	}
+	return workspaceKeyWithinPolicyRoots(workspaceKey, policy.WorkspaceRoots)
+}
+
+// workspaceKeyWithinPolicyRoots 按路径段做前缀判断：
+// /home/a/site 允许 /home/a/site 与 /home/a/site/sub，
+// 但不允许 /home/a/site-evil（不是路径段边界）。
+func workspaceKeyWithinPolicyRoots(workspaceKey string, roots []string) bool {
+	path := state.NormalizeWorkspaceKey(workspaceKey)
+	if path == "" {
+		return false
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	for _, root := range roots {
+		root = state.NormalizeWorkspaceKey(root)
+		if root == "" {
+			continue
+		}
+		root = filepath.ToSlash(filepath.Clean(root))
+		if path == root {
+			return true
+		}
+		prefix := root
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	workspacePolicyDeniedNoticeCode = "workspace_policy_denied"
+	workspacePolicyDeniedNoticeText = "该机器人仅允许使用指定工作区，目标目录不在允许范围内。"
+)
+
+func (s *Service) workspacePolicyDeniedNotice(surface *state.SurfaceConsoleRecord) []eventcontract.Event {
+	return notice(surface, workspacePolicyDeniedNoticeCode, workspacePolicyDeniedNoticeText)
+}
+
+// findGatewayUserSurface 定位同一 gateway 下指定用户的单聊 surface。
+// 优先精确匹配 p2p surface id（feishu:<gatewayID>:user:<openID>），
+// 找不到时按 GatewayID + ActorUserID 扫描（取排序后第一个，保证确定性）。
+func (s *Service) findGatewayUserSurface(gatewayID, openID string) *state.SurfaceConsoleRecord {
+	gatewayID = strings.TrimSpace(gatewayID)
+	openID = strings.TrimSpace(openID)
+	if s == nil || gatewayID == "" || openID == "" {
+		return nil
+	}
+	exactID := "feishu:" + gatewayID + ":user:" + openID
+	if surface := s.root.Surfaces[exactID]; surface != nil {
+		return surface
+	}
+	matchedIDs := make([]string, 0, 2)
+	for surfaceID, surface := range s.root.Surfaces {
+		if surface == nil {
+			continue
+		}
+		if strings.TrimSpace(surface.GatewayID) != gatewayID {
+			continue
+		}
+		if strings.TrimSpace(surface.ActorUserID) != openID {
+			continue
+		}
+		matchedIDs = append(matchedIDs, surfaceID)
+	}
+	if len(matchedIDs) == 0 {
+		return nil
+	}
+	sort.Strings(matchedIDs)
+	return s.root.Surfaces[matchedIDs[0]]
+}

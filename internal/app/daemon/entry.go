@@ -23,6 +23,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/config"
 	"github.com/kxn/codex-remote-feishu/internal/conversationtrace"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/debuglog"
 	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
 	"github.com/kxn/codex-remote-feishu/internal/shutdownctx"
@@ -110,6 +111,7 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		gateway,
 		identity,
 	)
+	app.SetGatewaySurfacePolicies(gatewaySurfacePoliciesFromFeishuApps(loadedConfig.Config.Feishu.Apps))
 	// Optional WeCom sidecar channels. They are constructed only when runtime
 	// credentials are present, so a default install remains Feishu-only while a
 	// configured install can run Feishu and one or more WeCom bots side by side.
@@ -384,6 +386,28 @@ build:
 		})
 	}
 	return values
+}
+
+// gatewaySurfacePoliciesFromFeishuApps 把 config.json 里每个飞书 app 的策略字段
+// 转成 orchestrator 的 gateway 策略 map；全部字段为空的 app 不产生策略条目。
+func gatewaySurfacePoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[string]orchestrator.GatewaySurfacePolicy {
+	policies := map[string]orchestrator.GatewaySurfacePolicy{}
+	for _, app := range apps {
+		gatewayID := strings.TrimSpace(app.ID)
+		if gatewayID == "" {
+			continue
+		}
+		policy := orchestrator.GatewaySurfacePolicy{
+			WorkspaceRoots: append([]string(nil), app.WorkspaceRoots...),
+			MaxAccessMode:  strings.TrimSpace(app.MaxAccessMode),
+			ApproverOpenID: strings.TrimSpace(app.ApproverOpenID),
+		}
+		if len(policy.WorkspaceRoots) == 0 && policy.MaxAccessMode == "" && policy.ApproverOpenID == "" {
+			continue
+		}
+		policies[gatewayID] = policy
+	}
+	return policies
 }
 
 func sanitizeGatewayPath(gatewayID string) string {
