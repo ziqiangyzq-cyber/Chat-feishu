@@ -165,21 +165,15 @@ func (s *Service) resolvePromptConfig(inst *state.InstanceRecord, surface *state
 			Source: "profile",
 		}
 	}
+	// 不再注入 surface_default 兜底模型/推理强度：留空表示不覆盖，
+	// codex 侧按自身 config.toml 的默认执行。
 	effectiveModel := baseModel
 	if override.Model != "" {
 		effectiveModel = configValue{Value: override.Model, Source: "surface_override"}
-	} else if effectiveModel.Value == "" {
-		if defaultValue := defaultPromptModelForBackend(backend); defaultValue != "" {
-			effectiveModel = configValue{Value: defaultValue, Source: "surface_default"}
-		}
 	}
 	effectiveEffort := baseEffort
 	if override.ReasoningEffort != "" {
 		effectiveEffort = configValue{Value: override.ReasoningEffort, Source: "surface_override"}
-	} else if effectiveEffort.Value == "" {
-		if defaultValue := defaultPromptReasoningEffortForBackend(backend); defaultValue != "" {
-			effectiveEffort = configValue{Value: defaultValue, Source: "surface_default"}
-		}
 	}
 	effectiveAccessModeSource := "surface_default"
 	effectiveAccessMode := agentproto.AccessModeFullAccess
@@ -219,20 +213,6 @@ func (s *Service) promptConfigClaudeProfileID(inst *state.InstanceRecord, surfac
 		return inst.ClaudeProfileID
 	}
 	return state.DefaultClaudeProfileID
-}
-
-func defaultPromptModelForBackend(backend agentproto.Backend) string {
-	if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
-		return ""
-	}
-	return defaultModel
-}
-
-func defaultPromptReasoningEffortForBackend(backend agentproto.Backend) string {
-	if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
-		return ""
-	}
-	return defaultReasoningEffort
 }
 
 func (s *Service) resolveBasePromptConfig(inst *state.InstanceRecord, surface *state.SurfaceConsoleRecord, threadID, cwd string) (configValue, configValue, configValue) {

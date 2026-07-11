@@ -52,10 +52,10 @@ func TestCodexHeadlessObservedCWDDefaultsDoNotPersistWorkspaceDefaults(t *testin
 	if snapshot == nil {
 		t.Fatal("expected surface snapshot")
 	}
-	if snapshot.NextPrompt.EffectiveModel != "gpt-5.4" || snapshot.NextPrompt.EffectiveModelSource != "surface_default" {
+	if snapshot.NextPrompt.EffectiveModel != "" || snapshot.NextPrompt.EffectiveModelSource != "unknown" {
 		t.Fatalf("expected codex observed cwd model not to affect snapshot, got %#v", snapshot.NextPrompt)
 	}
-	if snapshot.NextPrompt.EffectiveReasoningEffort != "xhigh" || snapshot.NextPrompt.EffectiveReasoningEffortSource != "surface_default" {
+	if snapshot.NextPrompt.EffectiveReasoningEffort != "" || snapshot.NextPrompt.EffectiveReasoningEffortSource != "unknown" {
 		t.Fatalf("expected codex observed cwd effort not to affect snapshot, got %#v", snapshot.NextPrompt)
 	}
 	if snapshot.NextPrompt.EffectiveAccessMode != agentproto.AccessModeFullAccess || snapshot.NextPrompt.EffectiveAccessModeSource != "surface_default" {
@@ -77,8 +77,8 @@ func TestCodexHeadlessObservedCWDDefaultsDoNotPersistWorkspaceDefaults(t *testin
 	if item == nil {
 		t.Fatal("expected queue item")
 	}
-	if item.FrozenOverride.Model != "gpt-5.4" || item.FrozenOverride.ReasoningEffort != "xhigh" {
-		t.Fatalf("expected queue item to freeze fallback model/effort, got %#v", item.FrozenOverride)
+	if item.FrozenOverride.Model != "" || item.FrozenOverride.ReasoningEffort != "" {
+		t.Fatalf("expected queue item to leave model/effort unforced (follow codex config), got %#v", item.FrozenOverride)
 	}
 	if item.FrozenOverride.AccessMode != agentproto.AccessModeFullAccess {
 		t.Fatalf("expected queue item to freeze fallback access, got %#v", item.FrozenOverride)
