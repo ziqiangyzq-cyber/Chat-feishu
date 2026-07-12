@@ -424,10 +424,21 @@ func (s *Service) TryAutoResumeHeadlessSurface(surfaceID string, attempt Surface
 		return nil, SurfaceResumeResult{Status: SurfaceResumeStatusSkipped}
 	}
 	// gateway 策略：恢复目标所在工作区不在允许根目录内时直接判失败，
-	// 不再尝试 attach / 后台拉起（避免绕过工作区白名单）。
+	// 不再尝试 attach / 后台拉起（避免绕过工作区白名单）。策略拒绝是永久失败，
+	// daemon 侧收到该 failure code 后会清除 pinned 恢复目标终止重试；
+	// 这里同时带上一条失败 notice，让用户知道恢复被策略终止（headless 恢复
+	// 分支在 daemon tick 里不会补发 surface-resume 族通知）。
 	if resumeWorkspaceKey := normalizeHeadlessResumeWorkspaceKey(attempt.WorkspaceKey, attempt.ThreadCWD); resumeWorkspaceKey != "" &&
 		!s.surfaceWorkspaceAllowedByPolicy(surface, resumeWorkspaceKey) {
-		return nil, SurfaceResumeResult{Status: SurfaceResumeStatusFailed, FailureCode: "workspace_policy_denied"}
+		var events []eventcontract.Event
+		if attempt.ResumeHeadless {
+			events = []eventcontract.Event{{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           headlessRestoreFailureNotice("workspace_policy_denied"),
+			}}
+		}
+		return events, SurfaceResumeResult{Status: SurfaceResumeStatusFailed, FailureCode: "workspace_policy_denied"}
 	}
 
 	failureCode := ""

@@ -218,7 +218,7 @@ func TestGatewayPolicyAutoResumeOutsideRootsFails(t *testing.T) {
 		"app-locked": {WorkspaceRoots: []string{"/data/allowed"}},
 	})
 	svc.MaterializeSurface("surface-resume", "app-locked", "chat-1", "user-1")
-	_, result := svc.TryAutoResumeHeadlessSurface("surface-resume", SurfaceResumeAttempt{
+	events, result := svc.TryAutoResumeHeadlessSurface("surface-resume", SurfaceResumeAttempt{
 		ThreadID:       "thread-x",
 		ThreadCWD:      "/data/other/repo",
 		WorkspaceKey:   "/data/other/repo",
@@ -226,6 +226,12 @@ func TestGatewayPolicyAutoResumeOutsideRootsFails(t *testing.T) {
 	}, true)
 	if result.Status != SurfaceResumeStatusFailed || result.FailureCode != "workspace_policy_denied" {
 		t.Fatalf("expected policy-denied resume failure, got %#v", result)
+	}
+	// headless 恢复分支要求早退门自带失败 notice（daemon tick 不会为
+	// ResumeHeadless 条目补发 surface-resume 族通知）。
+	notice := firstNoticeEvent(events)
+	if notice == nil || notice.Code != "headless_restore_workspace_policy_denied" {
+		t.Fatalf("expected policy-denied restore notice, got %#v", events)
 	}
 }
 

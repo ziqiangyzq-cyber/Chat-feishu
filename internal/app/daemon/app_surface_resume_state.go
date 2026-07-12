@@ -452,6 +452,7 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 	allowMissingTargetFailure := a.initialThreadsRefreshRoundCompleteLocked()
 	events := []eventcontract.Event{}
 	updatedSurfaceIDs := make([]string, 0, len(surfaceIDs))
+	clearResumeTargets := map[string]bool{}
 	for _, surfaceID := range surfaceIDs {
 		recovery := a.surfaceResumeRuntime.recovery[surfaceID]
 		if recovery == nil {
@@ -486,6 +487,13 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 			displayCode, emit := a.recordSurfaceResumeFailureLocked(surfaceID, result.FailureCode, now)
 			restoreEvents = rewriteHeadlessRestoreFailureEvents(restoreEvents, displayCode, emit)
 			events = append(events, restoreEvents...)
+			if strings.TrimSpace(result.FailureCode) == "workspace_policy_denied" {
+				// 工作区策略拒绝是永久失败：清除 pinned 恢复目标、终止 30s 重试，
+				// 杜绝 2026-07-11 事故式的无终态重试。
+				log.Printf("surface resume permanently denied by workspace policy: surface=%s; clearing pinned resume target", surfaceID)
+				updatedSurfaceIDs = append(updatedSurfaceIDs, surfaceID)
+				clearResumeTargets[surfaceID] = true
+			}
 			if recovery.Entry.ResumeHeadless {
 				continue
 			}
@@ -502,7 +510,7 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 			}
 		}
 	}
-	a.syncSurfaceResumeStateForSurfacesLocked(updatedSurfaceIDs, nil)
+	a.syncSurfaceResumeStateForSurfacesLocked(updatedSurfaceIDs, clearResumeTargets)
 	a.syncClaudeWorkspaceProfileStateLocked()
 	return events
 }
@@ -754,6 +762,12 @@ func (a *App) recordManagedHeadlessResumeOutcomeEventsLocked(events []eventcontr
 			"headless_restore_start_failed",
 			"headless_restore_start_timeout":
 			a.recordSurfaceResumeFailureLocked(event.SurfaceSessionID, event.Notice.Code, now)
+		case "headless_restore_workspace_policy_denied":
+			// 策略拒绝：永久失败，除记账外同步清除 pinned 恢复目标终止重试。
+			surfaceID := strings.TrimSpace(event.SurfaceSessionID)
+			a.recordSurfaceResumeFailureLocked(surfaceID, event.Notice.Code, now)
+			log.Printf("managed headless resume permanently denied by workspace policy: surface=%s; clearing pinned resume target", surfaceID)
+			a.syncSurfaceResumeStateForSurfacesLocked([]string{surfaceID}, map[string]bool{surfaceID: true})
 		}
 	}
 }
