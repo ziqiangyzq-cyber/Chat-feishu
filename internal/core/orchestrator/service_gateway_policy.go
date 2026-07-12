@@ -193,7 +193,10 @@ func (s *Service) blockTargetPickerPathByWorkspacePolicy(surface *state.SurfaceC
 
 // findGatewayUserSurface 定位同一 gateway 下指定用户的单聊 surface。
 // 优先精确匹配 p2p surface id（feishu:<gatewayID>:user:<openID>），
-// 找不到时按 GatewayID + ActorUserID 扫描（取排序后第一个，保证确定性）。
+// 找不到时只在同一 base id 的 tab 变体（feishu:<gw>:user:<openID>#tabN）里
+// 按字典序取第一个。绝不回落到 chat-scope surface——群聊 surface 的
+// ActorUserID 会被覆写成"最近发言者"，把越权详情投进群聊会造成外泄；
+// 定位不到时由调用方按语义跳过推送。
 func (s *Service) findGatewayUserSurface(gatewayID, openID string) *state.SurfaceConsoleRecord {
 	gatewayID = strings.TrimSpace(gatewayID)
 	openID = strings.TrimSpace(openID)
@@ -209,10 +212,7 @@ func (s *Service) findGatewayUserSurface(gatewayID, openID string) *state.Surfac
 		if surface == nil {
 			continue
 		}
-		if strings.TrimSpace(surface.GatewayID) != gatewayID {
-			continue
-		}
-		if strings.TrimSpace(surface.ActorUserID) != openID {
+		if !strings.HasPrefix(surfaceID, exactID+"#") {
 			continue
 		}
 		matchedIDs = append(matchedIDs, surfaceID)

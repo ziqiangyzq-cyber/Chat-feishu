@@ -229,6 +229,9 @@ func TestGatewayPolicyAutoResumeOutsideRootsFails(t *testing.T) {
 	}
 }
 
+// approverPolicyRequestTestService 搭一个"远端 surface 发起的 turn"现场：
+// actorUserID 通过普通文本消息发起 turn-1（发起者身份被冻结在 queue item 上），
+// 随后的审批请求按 turn 发起者判定审批人语义。
 func approverPolicyRequestTestService(t *testing.T, now *time.Time, actorUserID string) *Service {
 	t.Helper()
 	svc := newServiceForTest(now)
@@ -246,11 +249,18 @@ func approverPolicyRequestTestService(t *testing.T, now *time.Time, actorUserID 
 	use.Kind = control.ActionUseThread
 	use.ThreadID = "thread-1"
 	svc.ApplySurfaceAction(use)
+	text := base
+	text.Kind = control.ActionTextMessage
+	text.MessageID = "om-turn-source"
+	text.Text = "执行任务"
+	if events := svc.ApplySurfaceAction(text); len(events) == 0 {
+		t.Fatal("expected text dispatch events")
+	}
 	svc.ApplyAgentEvent("inst-1", agentproto.Event{
 		Kind:      agentproto.EventTurnStarted,
 		ThreadID:  "thread-1",
 		TurnID:    "turn-1",
-		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorLocalUI},
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorUnknown},
 	})
 	return svc
 }
@@ -271,6 +281,10 @@ func approvalRequestStartedEvent(requestID string) agentproto.Event {
 func TestApproverPolicyAutoDeclinesNonApproverRequests(t *testing.T) {
 	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	svc := approverPolicyRequestTestService(t, &now, "user-2")
+
+	// 群聊场景回归：审批人随后在同一聊天里发过言（surface.ActorUserID 被覆写成
+	// admin-1），判定必须仍按 turn 发起者 user-2 走自动拒绝，不能被绕过。
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionStatus, SurfaceSessionID: "surface-1", GatewayID: "app-locked", ChatID: "chat-1", ActorUserID: "admin-1"})
 
 	events := svc.ApplyAgentEvent("inst-1", approvalRequestStartedEvent("req-1"))
 	if len(events) != 3 {
@@ -307,8 +321,131 @@ func TestApproverPolicyAutoDeclinesNonApproverRequests(t *testing.T) {
 	if !strings.Contains(approverNotice.Notice.Text, "user-2") || !strings.Contains(approverNotice.Notice.Text, "/data/dl/droid") {
 		t.Fatalf("expected approver notice to name actor and workspace, got %q", approverNotice.Notice.Text)
 	}
-	if surface := svc.root.Surfaces["surface-1"]; len(surface.PendingRequests) != 0 {
-		t.Fatalf("expected no pending request after auto decline, got %#v", surface.PendingRequests)
+	// 自动 decline 走与手动 decline 相同的 pending 生命周期：
+	// 记录保留在 submitting 状态，派发失败可按 commandID 回滚。
+	surface := svc.root.Surfaces["surface-1"]
+	request := surface.PendingRequests["req-1"]
+	if request == nil || strings.TrimSpace(request.PendingDispatchCommandID) == "" {
+		t.Fatalf("expected auto-declined request tracked in submitting lifecycle, got %#v", surface.PendingRequests)
+	}
+	if request.PendingDispatchCommandID != command.Command.CommandID {
+		t.Fatalf("expected pending dispatch command id %q to match dispatched command %q", request.PendingDispatchCommandID, command.Command.CommandID)
+	}
+}
+
+func TestApproverPolicyLocalTurnNotIntercepted(t *testing.T) {
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.SetGatewaySurfacePolicies(map[string]GatewaySurfacePolicy{
+		"app-locked": {ApproverOpenID: "admin-1"},
+	})
+	svc.UpsertInstance(policyTestInstance("inst-1", "/data/dl/droid", "thread-1", now.Add(-time.Minute)))
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", GatewayID: "app-locked", ChatID: "chat-1", ActorUserID: "user-2", InstanceID: "inst-1"})
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionUseThread, SurfaceSessionID: "surface-1", GatewayID: "app-locked", ChatID: "chat-1", ActorUserID: "user-2", ThreadID: "thread-1"})
+	// 本地（VS Code）发起的 turn：审批必须照常呈现，relay 不得抢先 decline。
+	svc.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:      agentproto.EventTurnStarted,
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorLocalUI},
+	})
+
+	events := svc.ApplyAgentEvent("inst-1", approvalRequestStartedEvent("req-local"))
+	prompt := singleRequestPromptEvent(t, events)
+	if prompt.RequestID != "req-local" {
+		t.Fatalf("expected local-initiated approval to keep normal card, got %#v", prompt)
+	}
+}
+
+func TestApproverPolicyResponderEnforcement(t *testing.T) {
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	svc := approverPolicyRequestTestService(t, &now, "admin-1")
+	events := svc.ApplyAgentEvent("inst-1", approvalRequestStartedEvent("req-resp"))
+	if prompt := singleRequestPromptEvent(t, events); prompt.RequestID != "req-resp" {
+		t.Fatalf("expected approval card for approver-initiated turn, got %#v", prompt)
+	}
+
+	// 非审批人点击"允许"：响应被兜底强制点拒绝。
+	blocked := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionRespondRequest,
+		SurfaceSessionID: "surface-1",
+		GatewayID:        "app-locked",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-3",
+		MessageID:        "om-click-1",
+		Request:          testRequestAction("req-resp", "approval", "accept", nil, 0),
+	})
+	if notice := firstNoticeEvent(blocked); notice == nil || notice.Code != "request_approver_required" {
+		t.Fatalf("expected non-approver response to be blocked, got %#v", blocked)
+	}
+	if request := svc.root.Surfaces["surface-1"].PendingRequests["req-resp"]; request == nil || strings.TrimSpace(request.PendingDispatchCommandID) != "" {
+		t.Fatalf("expected request untouched after blocked response, got %#v", request)
+	}
+
+	// 审批人本人点击：正常派发响应。
+	allowed := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionRespondRequest,
+		SurfaceSessionID: "surface-1",
+		GatewayID:        "app-locked",
+		ChatID:           "chat-1",
+		ActorUserID:      "admin-1",
+		MessageID:        "om-click-2",
+		Request:          testRequestAction("req-resp", "approval", "accept", nil, 0),
+	})
+	foundCommand := false
+	for _, event := range allowed {
+		if event.Command != nil && event.Command.Kind == agentproto.CommandRequestRespond {
+			foundCommand = true
+		}
+	}
+	if !foundCommand {
+		t.Fatalf("expected approver response to dispatch, got %#v", allowed)
+	}
+}
+
+func TestGatewayPolicyVSCodeEmptyOverrideClampedToMax(t *testing.T) {
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.SetGatewaySurfacePolicies(map[string]GatewaySurfacePolicy{
+		"app-locked": {MaxAccessMode: agentproto.AccessModeAcceptEdits},
+	})
+	svc.MaterializeSurface("surface-vscode", "app-locked", "chat-1", "user-1")
+	surface := svc.root.Surfaces["surface-vscode"]
+	surface.ProductMode = state.ProductModeVSCode
+
+	frozen := svc.resolveFrozenPromptOverride(nil, surface, "", "", state.ModelConfigRecord{})
+	if frozen.AccessMode != agentproto.AccessModeAcceptEdits {
+		t.Fatalf("expected empty vscode override to be pinned to policy max, got %#v", frozen)
+	}
+
+	frozen = svc.resolveFrozenPromptOverride(nil, surface, "", "", state.ModelConfigRecord{AccessMode: agentproto.AccessModeFullAccess})
+	if frozen.AccessMode != agentproto.AccessModeAcceptEdits {
+		t.Fatalf("expected vscode full_access override clamped, got %#v", frozen)
+	}
+
+	frozen = svc.resolveFrozenPromptOverride(nil, surface, "", "", state.ModelConfigRecord{AccessMode: agentproto.AccessModeConfirm})
+	if frozen.AccessMode != agentproto.AccessModeConfirm {
+		t.Fatalf("expected vscode confirm override untouched, got %#v", frozen)
+	}
+}
+
+func TestFindGatewayUserSurfaceNeverFallsBackToChatSurface(t *testing.T) {
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	// 群聊 surface 的 ActorUserID 恰好是审批人（刚发过言）——不允许被选中。
+	svc.MaterializeSurface("feishu:app-locked:chat:oc_group", "app-locked", "oc_group", "admin-1")
+	if got := svc.findGatewayUserSurface("app-locked", "admin-1"); got != nil {
+		t.Fatalf("expected chat-scope surface to be excluded, got %#v", got.SurfaceSessionID)
+	}
+	// tab 变体可作为 fallback。
+	svc.MaterializeSurface("feishu:app-locked:user:admin-1#tab2", "app-locked", "", "admin-1")
+	if got := svc.findGatewayUserSurface("app-locked", "admin-1"); got == nil || got.SurfaceSessionID != "feishu:app-locked:user:admin-1#tab2" {
+		t.Fatalf("expected tab variant fallback, got %#v", got)
+	}
+	// base 单聊 surface 优先。
+	svc.MaterializeSurface("feishu:app-locked:user:admin-1", "app-locked", "", "admin-1")
+	if got := svc.findGatewayUserSurface("app-locked", "admin-1"); got == nil || got.SurfaceSessionID != "feishu:app-locked:user:admin-1" {
+		t.Fatalf("expected exact p2p surface preferred, got %#v", got)
 	}
 }
 

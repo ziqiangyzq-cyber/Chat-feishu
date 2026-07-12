@@ -128,6 +128,14 @@ func (s *Service) resolveFrozenPromptOverride(inst *state.InstanceRecord, surfac
 		}
 		override = compactPromptOverride(override)
 		override.AccessMode = s.clampSurfaceAccessMode(surface, override.AccessMode)
+		// vscode 路径空 override 不会下发 approvalPolicy/sandbox，IDE 会沿用本地
+		// 配置（可能是 full）。有 MaxAccessMode 策略时把空值视为"需要 clamp 的
+		// 默认值"，显式注入上限，避免绕过。
+		if strings.TrimSpace(override.AccessMode) == "" {
+			if policy, ok := s.surfaceGatewayPolicy(surface); ok && policy.MaxAccessMode != "" {
+				override.AccessMode = policy.MaxAccessMode
+			}
+		}
 		return override
 	}
 	resolution := s.resolvePromptConfig(inst, surface, threadID, cwd, override)

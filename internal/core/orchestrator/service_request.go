@@ -33,6 +33,10 @@ func (s *Service) respondRequest(surface *state.SurfaceConsoleRecord, action con
 	if strings.TrimSpace(request.LocalKind) != "" {
 		return s.respondLocalRequest(surface, request, action)
 	}
+	// 审批人策略兜底强制点：群聊卡片任何成员都能看到，必须按点击者校验。
+	if blocked := s.approverPolicyResponderBlocked(surface, request, action.ActorUserID); blocked != nil {
+		return blocked
+	}
 	requestType := normalizeRequestType(firstNonEmpty(requestAction.RequestType, request.RequestType))
 	if requestType == "" {
 		requestType = "approval"
