@@ -36,16 +36,16 @@ func firstNoticeEvent(events []eventcontract.Event) *control.Notice {
 }
 
 func TestWorkspaceKeyWithinPolicyRoots(t *testing.T) {
-	roots := []string{"/home/admin/site", "/data/dl/"}
+	roots := []string{"/srv/proj/site", "/data/dl/"}
 	cases := []struct {
 		path string
 		want bool
 	}{
-		{"/home/admin/site", true},
-		{"/home/admin/site/sub/dir", true},
-		{"/home/admin/site-evil", false},
-		{"/home/admin/site-evil/sub", false},
-		{"/home/admin", false},
+		{"/srv/proj/site", true},
+		{"/srv/proj/site/sub/dir", true},
+		{"/srv/proj/site-evil", false},
+		{"/srv/proj/site-evil/sub", false},
+		{"/srv/proj", false},
 		{"/data/dl/repo", true},
 		{"/data/dl", true},
 		{"/data/dl2/repo", false},

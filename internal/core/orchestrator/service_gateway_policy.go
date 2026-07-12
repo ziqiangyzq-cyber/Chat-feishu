@@ -133,8 +133,8 @@ func (s *Service) surfaceWorkspaceAllowedByPolicy(surface *state.SurfaceConsoleR
 }
 
 // workspaceKeyWithinPolicyRoots 按路径段做前缀判断：
-// /home/a/site 允许 /home/a/site 与 /home/a/site/sub，
-// 但不允许 /home/a/site-evil（不是路径段边界）。
+// /srv/proj/site 允许 /srv/proj/site 与 /srv/proj/site/sub，
+// 但不允许 /srv/proj/site-evil（不是路径段边界）。
 func workspaceKeyWithinPolicyRoots(workspaceKey string, roots []string) bool {
 	path := state.NormalizeWorkspaceKey(workspaceKey)
 	if path == "" {
