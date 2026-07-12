@@ -390,6 +390,13 @@ build:
 
 // gatewaySurfacePoliciesFromFeishuApps 把 config.json 里每个飞书 app 的策略字段
 // 转成 orchestrator 的 gateway 策略 map；全部字段为空的 app 不产生策略条目。
+//
+// 安全语义（fail-closed）：
+//   - maxAccessMode 非空但无法归一化时，不允许静默失效（那等于放开上限），
+//     降级为最严格的 confirm 并打显眼错误日志；
+//   - workspaceRoots 中归一化为空的条目丢弃并告警；
+//   - 每个 root 额外尝试 EvalSymlinks，把解析后的真实路径一并加入白名单
+//     （解析失败保留原值并告警），避免 root 本身是符号链接时全量误拒。
 func gatewaySurfacePoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[string]orchestrator.GatewaySurfacePolicy {
 	policies := map[string]orchestrator.GatewaySurfacePolicy{}
 	for _, app := range apps {
@@ -397,9 +404,34 @@ func gatewaySurfacePoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[str
 		if gatewayID == "" {
 			continue
 		}
+		maxAccessMode := strings.TrimSpace(app.MaxAccessMode)
+		if maxAccessMode != "" && agentproto.NormalizeAccessMode(maxAccessMode) == "" {
+			log.Printf("ERROR: feishu app %s 的 maxAccessMode=%q 无法识别，已按最严格的 confirm 生效（fail-closed）；请修正 config.json", gatewayID, maxAccessMode)
+			maxAccessMode = agentproto.AccessModeConfirm
+		}
+		roots := make([]string, 0, len(app.WorkspaceRoots)*2)
+		for _, root := range app.WorkspaceRoots {
+			trimmed := strings.TrimSpace(root)
+			if trimmed == "" || filepath.Clean(trimmed) == "." {
+				log.Printf("WARN: feishu app %s 的 workspaceRoots 含无效条目 %q，已忽略；请修正 config.json", gatewayID, root)
+				continue
+			}
+			roots = append(roots, trimmed)
+			if resolved, err := filepath.EvalSymlinks(trimmed); err != nil {
+				log.Printf("WARN: feishu app %s 的 workspaceRoot %q 符号链接解析失败：%v（保留原值生效）", gatewayID, trimmed, err)
+			} else if filepath.Clean(resolved) != filepath.Clean(trimmed) {
+				roots = append(roots, resolved)
+			}
+		}
+		if len(app.WorkspaceRoots) != 0 && len(roots) == 0 {
+			// 配置了白名单但全部条目无效：不能静默退化成"无限制"（fail-open），
+			// 注入一个永不匹配的哨兵根，让该 app 拒绝所有工作区直到配置被修正。
+			log.Printf("ERROR: feishu app %s 的 workspaceRoots 全部无效，已按拒绝所有工作区生效（fail-closed）；请修正 config.json", gatewayID)
+			roots = []string{"/dev/null/workspace-roots-invalid"}
+		}
 		policy := orchestrator.GatewaySurfacePolicy{
-			WorkspaceRoots: append([]string(nil), app.WorkspaceRoots...),
-			MaxAccessMode:  strings.TrimSpace(app.MaxAccessMode),
+			WorkspaceRoots: roots,
+			MaxAccessMode:  maxAccessMode,
 			ApproverOpenID: strings.TrimSpace(app.ApproverOpenID),
 		}
 		if len(policy.WorkspaceRoots) == 0 && policy.MaxAccessMode == "" && policy.ApproverOpenID == "" {
