@@ -1307,7 +1307,7 @@ durable_reexec() {
     --service-type=exec \
     --unit="${unit_name}" \
     --description="codex-remote unified local release" \
-    --working-directory="${ROOT_DIR}" \
+    --property="WorkingDirectory=${ROOT_DIR}" \
     --setenv=CODEX_REMOTE_UNIFIED_RELEASE_GUARD=1 \
     --property="StandardOutput=append:${log_path}" \
     --property="StandardError=append:${log_path}" \

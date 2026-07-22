@@ -199,12 +199,14 @@ saw_user=0
 saw_wait=0
 saw_collect=0
 saw_exec_service=0
+saw_working_directory=0
 for index in "${!args[@]}"; do
   case "${args[index]}" in
     --user) saw_user=1 ;;
     --wait) saw_wait=1 ;;
     --collect) saw_collect=1 ;;
     --service-type=exec) saw_exec_service=1 ;;
+    --property=WorkingDirectory=*) saw_working_directory=1 ;;
     --unit=*) unit_name="${args[index]#--unit=}" ;;
   esac
   if [[ "${args[index]}" == "bash" ]]; then
@@ -212,7 +214,7 @@ for index in "${!args[@]}"; do
     break
   fi
 done
-[[ "${saw_user}${saw_wait}${saw_collect}${saw_exec_service}" == "1111" ]] || {
+[[ "${saw_user}${saw_wait}${saw_collect}${saw_exec_service}${saw_working_directory}" == "11111" ]] || {
   echo "fake systemd-run requires a durable user service transaction" >&2
   exit 1
 }
