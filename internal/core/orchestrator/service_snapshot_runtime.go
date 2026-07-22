@@ -509,6 +509,7 @@ func (s *Service) HandleHeadlessLaunchFailed(surfaceID, instanceID string, err e
 		return s.maybeFinalizePendingTargetPicker(surface, events, notice.Text)
 	}
 	if pending.Purpose == state.HeadlessLaunchPurposeFreshWorkspace {
+		cleanupEvents := s.terminateDefaultWorkspaceBootstrap(surface, pending)
 		notice := NoticeForProblem(agentproto.ErrorInfoFromError(err, agentproto.ErrorInfo{
 			Code:             "workspace_create_start_failed",
 			Layer:            "daemon",
@@ -520,11 +521,11 @@ func (s *Service) HandleHeadlessLaunchFailed(surfaceID, instanceID string, err e
 		}))
 		notice.Code = "workspace_create_start_failed"
 		notice.Title = "工作区准备失败"
-		events := []eventcontract.Event{{
+		events := append(cleanupEvents, eventcontract.Event{
 			Kind:             eventcontract.KindNotice,
 			SurfaceSessionID: surface.SurfaceSessionID,
 			Notice:           &notice,
-		}}
+		})
 		return s.maybeFinalizePendingTargetPicker(surface, events, notice.Text)
 	}
 	problem := agentproto.ErrorInfoFromError(err, agentproto.ErrorInfo{
@@ -582,10 +583,26 @@ func (s *Service) ApplyInstanceDisconnected(instanceID string) []eventcontract.E
 	events := s.failCompactTurn(instanceID, "当前实例已离线，上下文压缩已中断。", nil, false)
 
 	for _, surface := range s.root.Surfaces {
-		if s.consumeSurfacePendingHeadlessLaunch(surface, instanceID) == nil {
+		pending := s.consumeSurfacePendingHeadlessLaunch(surface, instanceID)
+		if pending == nil {
 			continue
 		}
-		events = append(events, s.maybeFinalizePendingTargetPicker(surface, nil, "当前工作目标准备已中断，请重新发送 /list、/use 或 /useall 再试一次。")...)
+		fallback := "当前工作目标准备已中断，请重新发送 /list、/use 或 /useall 再试一次。"
+		if pending.PreserveQueuedInputs {
+			events = append(events, s.terminateDefaultWorkspaceBootstrap(surface, pending)...)
+			notice := &control.Notice{
+				Code:  "workspace_create_start_failed",
+				Title: "工作区准备失败",
+				Text:  "默认工作区启动连接已中断，首条排队输入未执行；请重新发送消息再试。",
+			}
+			events = append(events, eventcontract.Event{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice:           notice,
+			})
+			fallback = notice.Text
+		}
+		events = append(events, s.maybeFinalizePendingTargetPicker(surface, nil, fallback)...)
 	}
 
 	surfaces := s.findAttachedSurfaces(instanceID)
@@ -724,7 +741,10 @@ func (s *Service) RemoveInstance(instanceID string) {
 		if surface == nil {
 			continue
 		}
-		s.consumeSurfacePendingHeadlessLaunch(surface, instanceID)
+		pending := s.consumeSurfacePendingHeadlessLaunch(surface, instanceID)
+		if pending != nil {
+			_ = s.terminateDefaultWorkspaceBootstrap(surface, pending)
+		}
 		if surface.AttachedInstanceID != instanceID {
 			continue
 		}

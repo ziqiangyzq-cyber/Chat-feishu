@@ -31,10 +31,17 @@ func (s *Service) prepareSurfaceForExecutionReattach(surface *state.SurfaceConso
 }
 
 func (s *Service) prepareSurfaceForExecutionReattachWithOverlayCleanup(surface *state.SurfaceConsoleRecord, cleanup surfaceOverlayRouteCleanupOptions) []eventcontract.Event {
+	return s.prepareSurfaceForExecutionReattachWithOptions(surface, cleanup, false)
+}
+
+func (s *Service) prepareSurfaceForExecutionReattachWithOptions(surface *state.SurfaceConsoleRecord, cleanup surfaceOverlayRouteCleanupOptions, preserveQueuedInputs bool) []eventcontract.Event {
 	if surface == nil {
 		return nil
 	}
-	events := s.discardDrafts(surface)
+	var events []eventcontract.Event
+	if !preserveQueuedInputs {
+		events = s.discardDrafts(surface)
+	}
 	if strings.TrimSpace(surface.AttachedInstanceID) != "" {
 		events = append(events, s.finalizeDetachedSurfaceWithOverlayCleanup(surface, cleanup)...)
 	} else {
@@ -48,7 +55,9 @@ func (s *Service) prepareSurfaceForExecutionReattachWithOverlayCleanup(surface *
 	}
 	surface.PromptOverride = state.ModelConfigRecord{}
 	s.consumeSurfacePendingHeadlessLaunch(surface, "")
-	s.clearSurfaceActiveQueueItem(surface, "")
+	if !preserveQueuedInputs {
+		s.clearSurfaceActiveQueueItem(surface, "")
+	}
 	s.resetSurfaceExecutionGates(surface)
 	return events
 }

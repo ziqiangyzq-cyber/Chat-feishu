@@ -205,9 +205,24 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 		return notice(surface, "request_pending", pendingRequestNoticeText(pending))
 	}
 
+	var bootstrapEvents []eventcontract.Event
 	inst := s.root.Instances[surface.AttachedInstanceID]
 	if inst == nil {
-		return notice(surface, "not_attached", s.notAttachedText(surface))
+		bootstrap := s.maybeBootstrapDefaultWorkspaceForInput(surface)
+		bootstrapEvents = bootstrap.Events
+		if bootstrap.Pending {
+			return append(bootstrapEvents, s.enqueuePendingDefaultWorkspaceText(surface, action, bootstrap.WorkspaceKey)...)
+		}
+		inst = s.root.Instances[surface.AttachedInstanceID]
+		if inst == nil {
+			if bootstrap.Attempted && len(bootstrapEvents) != 0 {
+				return bootstrapEvents
+			}
+			return notice(surface, "not_attached", s.notAttachedText(surface))
+		}
+	}
+	withBootstrap := func(events []eventcontract.Event) []eventcontract.Event {
+		return append(bootstrapEvents, events...)
 	}
 	reviewSession := s.activeReviewSession(surface)
 	if reviewSession != nil {
@@ -215,7 +230,7 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 	}
 	detour, detourProblem := s.resolveDetourDirective(surface, inst, text)
 	if detourProblem != "" {
-		return notice(surface, "detour_invalid", detourProblem)
+		return withBootstrap(notice(surface, "detour_invalid", detourProblem))
 	}
 	text = detour.CleanText
 	sanitizedAction := action
@@ -225,17 +240,17 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 	}
 	if !detour.Triggered {
 		if autoSteer := s.maybeAutoSteerReply(surface, sanitizedAction); autoSteer != nil {
-			return append(s.maybeSealPlanProposalForInput(surface), autoSteer...)
+			return withBootstrap(append(s.maybeSealPlanProposalForInput(surface), autoSteer...))
 		}
 		if reviewSession == nil {
 			if blocked := s.maybePrepareImplicitNewThreadFromUnboundText(surface, inst, text); blocked != nil {
-				return blocked
+				return withBootstrap(blocked)
 			}
 			if blocked := s.unboundInputBlocked(surface); blocked != nil {
-				return blocked
+				return withBootstrap(blocked)
 			}
 			if surface.RouteMode == state.RouteModeNewThreadReady && s.preparedNewThreadHasPendingCreate(surface) {
-				return notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；请等待它落地后再继续发送。")
+				return withBootstrap(notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；请等待它落地后再继续发送。"))
 			}
 		}
 	}
@@ -256,7 +271,7 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 			messageInputs = []agentproto.Input{{Type: agentproto.InputText, Text: text}}
 		} else if detour.Triggered && len(inputs) == 0 {
 			s.restoreStagedInputs(surface, stagedMessageIDs)
-			return notice(surface, "detour_empty_prompt", detourEmptyPromptText)
+			return withBootstrap(notice(surface, "detour_empty_prompt", detourEmptyPromptText))
 		}
 	}
 	inputs = append(inputs, messageInputs...)
@@ -266,26 +281,26 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 		createThread = false
 		if threadID == "" || strings.TrimSpace(cwd) == "" {
 			s.restoreStagedInputs(surface, stagedMessageIDs)
-			return notice(surface, "review_thread_not_ready", "当前审阅会话不可继续使用，请重新进入审阅。")
+			return withBootstrap(notice(surface, "review_thread_not_ready", "当前审阅会话不可继续使用，请重新进入审阅。"))
 		}
 	}
 	if !detour.Triggered && reviewSession == nil && !createThread && threadID == "" {
 		s.restoreStagedInputs(surface, stagedMessageIDs)
-		return notice(surface, "thread_not_ready", "当前还没有可发送的目标会话。请先 /use 重新选择会话；headless 模式可直接发送文本开启新会话（也可 /new 先进入待命），如需跟随 VS Code 请先 /mode vscode 再 /follow。")
+		return withBootstrap(notice(surface, "thread_not_ready", "当前还没有可发送的目标会话。请先 /use 重新选择会话；headless 模式可直接发送文本开启新会话（也可 /new 先进入待命），如需跟随 VS Code 请先 /mode vscode 再 /follow。"))
 	}
 	if strings.TrimSpace(cwd) == "" {
 		s.restoreStagedInputs(surface, stagedMessageIDs)
 		if detour.Triggered {
-			return notice(surface, "detour_cwd_missing", "当前无法获取临时会话的工作目录，请先重新选择工作区或会话。")
+			return withBootstrap(notice(surface, "detour_cwd_missing", "当前无法获取临时会话的工作目录，请先重新选择工作区或会话。"))
 		}
 		if createThread {
-			return notice(surface, "new_thread_cwd_missing", "当前无法获取新会话的工作目录，请先重新 /use 一个有工作目录的会话。")
+			return withBootstrap(notice(surface, "new_thread_cwd_missing", "当前无法获取新会话的工作目录，请先重新 /use 一个有工作目录的会话。"))
 		}
-		return notice(surface, "thread_not_ready", "当前还没有可发送的目标会话。请先 /use 重新选择会话；headless 模式可直接发送文本开启新会话（也可 /new 先进入待命），如需跟随 VS Code 请先 /mode vscode 再 /follow。")
+		return withBootstrap(notice(surface, "thread_not_ready", "当前还没有可发送的目标会话。请先 /use 重新选择会话；headless 模式可直接发送文本开启新会话（也可 /new 先进入待命），如需跟随 VS Code 请先 /mode vscode 再 /follow。"))
 	}
 	events := s.maybeSealPlanProposalForInput(surface)
 	if detour.Triggered {
-		return append(events, s.enqueueQueueItemWithTarget(
+		return withBootstrap(append(events, s.enqueueQueueItemWithTarget(
 			surface,
 			action.MessageID,
 			text,
@@ -299,10 +314,10 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 			detour.SourceThreadID,
 			detour.SurfaceBindingPolicy,
 			false,
-		)...)
+		)...))
 	}
 	if reviewSession != nil {
-		return append(events, s.enqueueQueueItemWithTarget(
+		return withBootstrap(append(events, s.enqueueQueueItemWithTarget(
 			surface,
 			action.MessageID,
 			text,
@@ -316,34 +331,50 @@ func (s *Service) handleText(surface *state.SurfaceConsoleRecord, action control
 			reviewSession.ParentThreadID,
 			agentproto.SurfaceBindingPolicyKeepSurfaceSelection,
 			false,
-		)...)
+		)...))
 	}
-	return append(events, s.enqueueQueueItem(surface, action.MessageID, action.Text, stagedMessageIDs, inputs, threadID, cwd, routeMode, surface.PromptOverride, false)...)
+	return withBootstrap(append(events, s.enqueueQueueItem(surface, action.MessageID, action.Text, stagedMessageIDs, inputs, threadID, cwd, routeMode, surface.PromptOverride, false)...))
 }
 
 func (s *Service) stageImage(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {
+	var bootstrapEvents []eventcontract.Event
+	pendingBootstrap := false
 	inst := s.root.Instances[surface.AttachedInstanceID]
 	if inst == nil {
-		return notice(surface, "not_attached", s.notAttachedText(surface))
+		bootstrap := s.maybeBootstrapDefaultWorkspaceForInput(surface)
+		bootstrapEvents = bootstrap.Events
+		pendingBootstrap = bootstrap.Pending
+		inst = s.root.Instances[surface.AttachedInstanceID]
+		if inst == nil && !pendingBootstrap {
+			if bootstrap.Attempted && len(bootstrapEvents) != 0 {
+				return bootstrapEvents
+			}
+			return notice(surface, "not_attached", s.notAttachedText(surface))
+		}
 	}
-	if autoSteer := s.maybeAutoSteerReply(surface, action); autoSteer != nil {
-		return append(s.maybeSealPlanProposalForInput(surface), autoSteer...)
+	withBootstrap := func(events []eventcontract.Event) []eventcontract.Event {
+		return append(bootstrapEvents, events...)
 	}
-	if blocked := s.maybePrepareImplicitNewThreadFromUnboundImage(surface, inst); blocked != nil {
-		return blocked
-	}
-	if blocked := s.unboundInputBlocked(surface); blocked != nil {
-		return blocked
+	if !pendingBootstrap {
+		if autoSteer := s.maybeAutoSteerReply(surface, action); autoSteer != nil {
+			return withBootstrap(append(s.maybeSealPlanProposalForInput(surface), autoSteer...))
+		}
+		if blocked := s.maybePrepareImplicitNewThreadFromUnboundImage(surface, inst); blocked != nil {
+			return withBootstrap(blocked)
+		}
+		if blocked := s.unboundInputBlocked(surface); blocked != nil {
+			return withBootstrap(blocked)
+		}
 	}
 	if surface.ActiveRequestCapture != nil {
-		return notice(surface, "request_capture_waiting_text", "当前正在等待你发送一条文字处理意见，请先发送文本或重新处理确认卡片。")
+		return withBootstrap(notice(surface, "request_capture_waiting_text", "当前正在等待你发送一条文字处理意见，请先发送文本或重新处理确认卡片。"))
 	}
 	if pending := activePendingRequest(surface); pending != nil {
 		_ = pending
-		return notice(surface, "request_pending", pendingRequestNoticeText(pending))
+		return withBootstrap(notice(surface, "request_pending", pendingRequestNoticeText(pending)))
 	}
-	if surface.RouteMode == state.RouteModeNewThreadReady && s.preparedNewThreadHasPendingCreate(surface) {
-		return notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；如需带图，请等它创建完成后再发送下一条。")
+	if (surface.RouteMode == state.RouteModeNewThreadReady && s.preparedNewThreadHasPendingCreate(surface)) || (pendingBootstrap && s.defaultWorkspaceBootstrapHasQueuedCreate(surface)) {
+		return withBootstrap(notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；如需带图，请等它创建完成后再发送下一条。"))
 	}
 	s.nextImageID++
 	image := &state.StagedImageRecord{
@@ -367,29 +398,45 @@ func (s *Service) stageImage(surface *state.SurfaceConsoleRecord, action control
 			QueueOn:         true,
 		},
 	})
-	return events
+	return withBootstrap(events)
 }
 
 func (s *Service) stageFile(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {
+	var bootstrapEvents []eventcontract.Event
+	pendingBootstrap := false
 	inst := s.root.Instances[surface.AttachedInstanceID]
 	if inst == nil {
-		return notice(surface, "not_attached", s.notAttachedText(surface))
+		bootstrap := s.maybeBootstrapDefaultWorkspaceForInput(surface)
+		bootstrapEvents = bootstrap.Events
+		pendingBootstrap = bootstrap.Pending
+		inst = s.root.Instances[surface.AttachedInstanceID]
+		if inst == nil && !pendingBootstrap {
+			if bootstrap.Attempted && len(bootstrapEvents) != 0 {
+				return bootstrapEvents
+			}
+			return notice(surface, "not_attached", s.notAttachedText(surface))
+		}
 	}
-	if blocked := s.maybePrepareImplicitNewThreadFromUnboundFile(surface, inst); blocked != nil {
-		return blocked
+	withBootstrap := func(events []eventcontract.Event) []eventcontract.Event {
+		return append(bootstrapEvents, events...)
 	}
-	if blocked := s.unboundInputBlocked(surface); blocked != nil {
-		return blocked
+	if !pendingBootstrap {
+		if blocked := s.maybePrepareImplicitNewThreadFromUnboundFile(surface, inst); blocked != nil {
+			return withBootstrap(blocked)
+		}
+		if blocked := s.unboundInputBlocked(surface); blocked != nil {
+			return withBootstrap(blocked)
+		}
 	}
 	if surface.ActiveRequestCapture != nil {
-		return notice(surface, "request_capture_waiting_text", "当前正在等待你发送一条文字处理意见，请先发送文本或重新处理确认卡片。")
+		return withBootstrap(notice(surface, "request_capture_waiting_text", "当前正在等待你发送一条文字处理意见，请先发送文本或重新处理确认卡片。"))
 	}
 	if pending := activePendingRequest(surface); pending != nil {
 		_ = pending
-		return notice(surface, "request_pending", pendingRequestNoticeText(pending))
+		return withBootstrap(notice(surface, "request_pending", pendingRequestNoticeText(pending)))
 	}
-	if surface.RouteMode == state.RouteModeNewThreadReady && s.preparedNewThreadHasPendingCreate(surface) {
-		return notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；如需带文件，请等它创建完成后再发送下一条。")
+	if (surface.RouteMode == state.RouteModeNewThreadReady && s.preparedNewThreadHasPendingCreate(surface)) || (pendingBootstrap && s.defaultWorkspaceBootstrapHasQueuedCreate(surface)) {
+		return withBootstrap(notice(surface, "new_thread_first_input_pending", "当前新会话的首条消息已经在排队或发送中；如需带文件，请等它创建完成后再发送下一条。"))
 	}
 	if surface.StagedFiles == nil {
 		surface.StagedFiles = map[string]*state.StagedFileRecord{}
@@ -416,7 +463,7 @@ func (s *Service) stageFile(surface *state.SurfaceConsoleRecord, action control.
 			QueueOn:         true,
 		},
 	})
-	return events
+	return withBootstrap(events)
 }
 
 func (s *Service) handleReactionCreated(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {

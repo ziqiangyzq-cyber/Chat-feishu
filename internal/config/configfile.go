@@ -128,6 +128,12 @@ type FeishuAppConfig struct {
 	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
 	// WorkspaceRoots 非空时：该 app 的 surface 只能看到/使用这些根目录下的工作区。
 	WorkspaceRoots []string `json:"workspaceRoots,omitempty"`
+	// DefaultWorkspaceRoot 非空时：未接管的 headless surface 收到首条输入后，
+	// 自动进入这个工作区，无需先通过 /list 选择。
+	DefaultWorkspaceRoot string `json:"defaultWorkspaceRoot,omitempty"`
+	// AllowConcurrentWorkspaceSurfaces 允许同一 app 的多个 surface 共享默认工作区目录，
+	// 但 instance 与 thread 仍保持独占。
+	AllowConcurrentWorkspaceSurfaces bool `json:"allowConcurrentWorkspaceSurfaces,omitempty"`
 	// MaxAccessMode 非空时：该 app 的 surface 生效权限不得超过此级别
 	// （权限强弱：full_access > accept_edits > confirm）。
 	MaxAccessMode string `json:"maxAccessMode,omitempty"`

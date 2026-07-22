@@ -268,19 +268,21 @@ func (s *Service) resolveWorkspaceContract(surface *state.SurfaceConsoleRecord, 
 		}
 	}
 	resolved := s.resolveHeadlessContract(surface, contractResolutionContext{
-		SubjectKind:        contractResolutionSubjectWorkspace,
-		WorkspaceKey:       workspaceKey,
-		Backend:            backend,
-		CWD:                workspaceKey,
-		VisibleCandidates:  visibleCandidates,
-		PreferredManaged:   s.reusableManagedHeadlessForResolution(surface, workspaceKey, backend),
-		AllowDirectVisible: func(inst *state.InstanceRecord) bool { return inst != nil },
-		NotFoundCode:       "workspace_not_found",
-		NotFoundText:       "目标工作区已失效，请重新发送 /list。",
-		CWDMissingCode:     "workspace_key_missing",
-		CWDMissingText:     "当前无法确定目标对应的工作区，暂时不能在 headless 模式接管。请切到 `/mode vscode` 后再试。",
-		BusyCode:           "workspace_instance_busy",
-		BusyText:           "目标工作区当前暂时不可接管，请稍后重试。",
+		SubjectKind:       contractResolutionSubjectWorkspace,
+		WorkspaceKey:      workspaceKey,
+		Backend:           backend,
+		CWD:               workspaceKey,
+		VisibleCandidates: visibleCandidates,
+		PreferredManaged:  s.reusableManagedHeadlessForResolution(surface, workspaceKey, backend),
+		AllowDirectVisible: func(inst *state.InstanceRecord) bool {
+			return inst != nil && s.instanceBusyOwnerForSurface(surface, inst.InstanceID) == nil
+		},
+		NotFoundCode:   "workspace_not_found",
+		NotFoundText:   "目标工作区已失效，请重新发送 /list。",
+		CWDMissingCode: "workspace_key_missing",
+		CWDMissingText: "当前无法确定目标对应的工作区，暂时不能在 headless 模式接管。请切到 `/mode vscode` 后再试。",
+		BusyCode:       "workspace_instance_busy",
+		BusyText:       "目标工作区当前暂时不可接管，请稍后重试。",
 	})
 	if resolved.Mode == contractResolutionCreateHeadless {
 		resolved.IncompatibleSeen = resolved.IncompatibleSeen || incompatibleSeen

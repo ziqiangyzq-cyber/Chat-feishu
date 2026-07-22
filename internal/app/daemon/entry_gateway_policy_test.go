@@ -69,3 +69,40 @@ func TestGatewaySurfacePoliciesResolveSymlinkRoots(t *testing.T) {
 		t.Fatalf("expected unresolvable root kept as-is, got %#v", roots)
 	}
 }
+
+func TestGatewaySurfacePoliciesDefaultWorkspaceAndConcurrentSurfaces(t *testing.T) {
+	root := t.TempDir()
+	policies := gatewaySurfacePoliciesFromFeishuApps([]config.FeishuAppConfig{{
+		ID:                               "app-default",
+		WorkspaceRoots:                   []string{root},
+		DefaultWorkspaceRoot:             root,
+		AllowConcurrentWorkspaceSurfaces: true,
+	}})
+
+	policy := policies["app-default"]
+	if policy.DefaultWorkspaceRoot != root {
+		t.Fatalf("expected default workspace %q, got %#v", root, policy)
+	}
+	if !policy.AllowConcurrentWorkspaceSurfaces {
+		t.Fatalf("expected concurrent workspace surfaces to be enabled, got %#v", policy)
+	}
+}
+
+func TestGatewaySurfacePoliciesRejectDefaultOutsideWorkspaceRoots(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	policies := gatewaySurfacePoliciesFromFeishuApps([]config.FeishuAppConfig{{
+		ID:                               "app-invalid-default",
+		WorkspaceRoots:                   []string{allowed},
+		DefaultWorkspaceRoot:             outside,
+		AllowConcurrentWorkspaceSurfaces: true,
+	}})
+
+	policy := policies["app-invalid-default"]
+	if policy.DefaultWorkspaceRoot != "" {
+		t.Fatalf("expected out-of-policy default workspace to fail closed, got %#v", policy)
+	}
+	if policy.AllowConcurrentWorkspaceSurfaces {
+		t.Fatalf("expected concurrency to stay disabled without a valid default workspace, got %#v", policy)
+	}
+}

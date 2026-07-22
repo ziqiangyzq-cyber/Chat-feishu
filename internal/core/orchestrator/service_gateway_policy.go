@@ -17,6 +17,12 @@ type GatewaySurfacePolicy struct {
 	// WorkspaceRoots 非空时：该 gateway 的 surface 只能看到/使用这些根目录
 	// （含子目录）下的工作区。
 	WorkspaceRoots []string
+	// DefaultWorkspaceRoot 非空时，detached headless surface 的首条输入会自动进入
+	// 该工作区。
+	DefaultWorkspaceRoot string
+	// AllowConcurrentWorkspaceSurfaces 允许同一 gateway 的多个 surface 共享默认
+	// 工作区 claim；instance 与 thread claim 不受此字段影响，仍保持独占。
+	AllowConcurrentWorkspaceSurfaces bool
 	// MaxAccessMode 非空时：生效执行权限不得超过此级别
 	// （权限强弱：full_access > accept_edits > confirm）。
 	MaxAccessMode string
@@ -25,7 +31,7 @@ type GatewaySurfacePolicy struct {
 	ApproverOpenID string
 }
 
-func (p GatewaySurfacePolicy) normalized() GatewaySurfacePolicy {
+func (p GatewaySurfacePolicy) Normalized() GatewaySurfacePolicy {
 	roots := make([]string, 0, len(p.WorkspaceRoots))
 	seen := map[string]bool{}
 	for _, root := range p.WorkspaceRoots {
@@ -37,13 +43,20 @@ func (p GatewaySurfacePolicy) normalized() GatewaySurfacePolicy {
 		roots = append(roots, normalized)
 	}
 	p.WorkspaceRoots = roots
+	p.DefaultWorkspaceRoot = state.NormalizeWorkspaceKey(p.DefaultWorkspaceRoot)
+	if p.DefaultWorkspaceRoot != "" && len(p.WorkspaceRoots) != 0 && !workspaceKeyWithinPolicyRoots(p.DefaultWorkspaceRoot, p.WorkspaceRoots) {
+		p.DefaultWorkspaceRoot = ""
+	}
+	if p.DefaultWorkspaceRoot == "" {
+		p.AllowConcurrentWorkspaceSurfaces = false
+	}
 	p.MaxAccessMode = agentproto.NormalizeAccessMode(p.MaxAccessMode)
 	p.ApproverOpenID = strings.TrimSpace(p.ApproverOpenID)
 	return p
 }
 
 func (p GatewaySurfacePolicy) isZero() bool {
-	return len(p.WorkspaceRoots) == 0 && p.MaxAccessMode == "" && p.ApproverOpenID == ""
+	return len(p.WorkspaceRoots) == 0 && p.DefaultWorkspaceRoot == "" && !p.AllowConcurrentWorkspaceSurfaces && p.MaxAccessMode == "" && p.ApproverOpenID == ""
 }
 
 // SetGatewaySurfacePolicies 注入按 gatewayID 索引的 surface 策略。
@@ -55,7 +68,7 @@ func (s *Service) SetGatewaySurfacePolicies(policies map[string]GatewaySurfacePo
 	normalized := map[string]GatewaySurfacePolicy{}
 	for gatewayID, policy := range policies {
 		gatewayID = strings.TrimSpace(gatewayID)
-		policy = policy.normalized()
+		policy = policy.Normalized()
 		if gatewayID == "" || policy.isZero() {
 			continue
 		}
@@ -74,6 +87,36 @@ func (s *Service) surfaceGatewayPolicy(surface *state.SurfaceConsoleRecord) (Gat
 	}
 	policy, ok := s.gatewayPolicies[strings.TrimSpace(surface.GatewayID)]
 	return policy, ok
+}
+
+func (s *Service) surfaceDefaultWorkspaceRoot(surface *state.SurfaceConsoleRecord) string {
+	policy, ok := s.surfaceGatewayPolicy(surface)
+	if !ok {
+		return ""
+	}
+	workspaceKey := state.NormalizeWorkspaceKey(policy.DefaultWorkspaceRoot)
+	if workspaceKey == "" || !s.surfaceWorkspaceAllowedByPolicy(surface, workspaceKey) {
+		return ""
+	}
+	return workspaceKey
+}
+
+func (s *Service) surfacesMayShareDefaultWorkspaceClaim(surface, owner *state.SurfaceConsoleRecord, workspaceKey string) bool {
+	if surface == nil || owner == nil || surface.SurfaceSessionID == owner.SurfaceSessionID {
+		return false
+	}
+	if strings.TrimSpace(surface.GatewayID) == "" || strings.TrimSpace(surface.GatewayID) != strings.TrimSpace(owner.GatewayID) {
+		return false
+	}
+	policy, surfaceOK := s.surfaceGatewayPolicy(surface)
+	ownerPolicy, ownerOK := s.surfaceGatewayPolicy(owner)
+	if !surfaceOK || !ownerOK || !policy.AllowConcurrentWorkspaceSurfaces || !ownerPolicy.AllowConcurrentWorkspaceSurfaces {
+		return false
+	}
+	workspaceKey = state.NormalizeWorkspaceKey(workspaceKey)
+	return workspaceKey != "" &&
+		workspaceKey == state.NormalizeWorkspaceKey(policy.DefaultWorkspaceRoot) &&
+		workspaceKey == state.NormalizeWorkspaceKey(ownerPolicy.DefaultWorkspaceRoot)
 }
 
 // accessModeRank 给权限模式排序：full_access(3) > accept_edits(2) > confirm(1)。

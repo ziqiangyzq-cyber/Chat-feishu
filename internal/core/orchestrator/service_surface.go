@@ -53,9 +53,10 @@ const (
 )
 
 type attachWorkspaceOptions struct {
-	ResumeNotice     bool
-	PrepareNewThread bool
-	OverlayCleanup   surfaceOverlayRouteCleanupOptions
+	ResumeNotice         bool
+	PrepareNewThread     bool
+	PreserveQueuedInputs bool
+	OverlayCleanup       surfaceOverlayRouteCleanupOptions
 }
 
 type attachInstanceMode string
@@ -162,8 +163,8 @@ func (s *Service) expirePendingHeadless(surface *state.SurfaceConsoleRecord, pen
 	if current := s.consumeSurfacePendingHeadlessLaunch(surface, pending.InstanceID); current == nil {
 		return nil
 	}
-	events := []eventcontract.Event{}
-	if surface.AttachedInstanceID == pending.InstanceID {
+	events := s.terminateDefaultWorkspaceBootstrap(surface, pending)
+	if !pending.PreserveQueuedInputs && surface.AttachedInstanceID == pending.InstanceID {
 		events = append(events, s.finalizeDetachedSurface(surface)...)
 	}
 	events = append(events, eventcontract.Event{
@@ -193,6 +194,17 @@ func pendingHeadlessTimeoutNotice(pending *state.HeadlessLaunchRecord) *control.
 			Code:  "headless_restore_start_timeout",
 			Title: "恢复失败",
 			Text:  "之前的会话恢复超时，请稍后重试或尝试其他会话。",
+		}
+	}
+	if pending != nil && pending.Purpose == state.HeadlessLaunchPurposeFreshWorkspace {
+		text := "工作区准备超时，已自动取消。请重新接入工作区后再试。"
+		if pending.PreserveQueuedInputs {
+			text = "默认工作区准备超时，首条排队输入未执行；请重新发送消息再试。"
+		}
+		return &control.Notice{
+			Code:  "workspace_create_start_timeout",
+			Title: "工作区准备超时",
+			Text:  text,
 		}
 	}
 	return &control.Notice{

@@ -53,7 +53,7 @@ func (s *Service) attachWorkspaceWithOptions(surface *state.SurfaceConsoleRecord
 		return notice(surface, "workspace_instance_busy", "目标工作区当前暂时不可接管，请稍后重试。")
 	}
 
-	events := s.prepareSurfaceForExecutionReattachWithOverlayCleanup(surface, options.OverlayCleanup)
+	events := s.prepareSurfaceForExecutionReattachWithOptions(surface, options.OverlayCleanup, options.PreserveQueuedInputs)
 
 	if !s.transitionSurfaceRouteCore(surface, inst, surfaceRouteCoreState{
 		AttachedInstanceID: inst.InstanceID,
@@ -70,6 +70,9 @@ func (s *Service) attachWorkspaceWithOptions(surface *state.SurfaceConsoleRecord
 	}
 	s.restoreCurrentClaudeWorkspaceProfileSnapshot(surface)
 	if options.PrepareNewThread {
+		if options.PreserveQueuedInputs {
+			return append(events, s.prepareNewThreadAfterDefaultWorkspaceBootstrap(surface, inst, workspaceKey)...)
+		}
 		return s.prepareNewThreadWithOverlayCleanup(surface, options.OverlayCleanup)
 	}
 
@@ -307,8 +310,9 @@ func (s *Service) attachHeadlessInstance(surface *state.SurfaceConsoleRecord, in
 		workspaceKey := normalizeWorkspaceClaimKey(firstNonEmpty(pending.WorkspaceKey, pending.ThreadCWD))
 		if pending.PrepareNewThread {
 			return s.attachWorkspaceWithOptions(surface, workspaceKey, attachWorkspaceOptions{
-				PrepareNewThread: true,
-				OverlayCleanup:   cleanup,
+				PrepareNewThread:     true,
+				PreserveQueuedInputs: pending.PreserveQueuedInputs,
+				OverlayCleanup:       cleanup,
 			})
 		}
 		return s.attachWorkspaceWithOptions(surface, workspaceKey, attachWorkspaceOptions{

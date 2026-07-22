@@ -327,7 +327,9 @@ func (s *Service) claimWorkspace(surface *state.SurfaceConsoleRecord, workspaceK
 		return false
 	}
 	if owner := s.workspaceClaimSurface(workspaceKey); owner != nil && owner.SurfaceSessionID != surface.SurfaceSessionID {
-		return false
+		if !s.surfacesMayShareHeadlessAttachment(surface, owner) && !s.surfacesMayShareDefaultWorkspaceClaim(surface, owner, workspaceKey) {
+			return false
+		}
 	}
 	if current := s.surfaceCurrentWorkspaceKey(surface); current != "" && current != workspaceKey {
 		s.releaseSurfaceWorkspaceClaim(surface)
@@ -362,6 +364,9 @@ func (s *Service) workspaceBusyOwnerForSurface(surface *state.SurfaceConsoleReco
 		return nil
 	}
 	if s.surfacesMayShareHeadlessAttachment(surface, owner) {
+		return nil
+	}
+	if s.surfacesMayShareDefaultWorkspaceClaim(surface, owner, workspaceKey) {
 		return nil
 	}
 	return owner

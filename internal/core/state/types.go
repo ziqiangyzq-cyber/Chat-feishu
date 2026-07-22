@@ -490,6 +490,7 @@ type HeadlessLaunchRecord struct {
 	Status                HeadlessLaunchStatus
 	Purpose               HeadlessLaunchPurpose
 	PrepareNewThread      bool
+	PreserveQueuedInputs  bool
 	PID                   int
 	SourceInstanceID      string
 	AutoRestore           bool
