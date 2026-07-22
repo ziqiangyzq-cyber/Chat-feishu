@@ -28,7 +28,7 @@ func TestObserveClientTurnStartProducesLocalInteraction(t *testing.T) {
 
 func TestObserveClientTurnStartEmitsObservedThreadConfig(t *testing.T) {
 	tr := NewTranslator("inst-1")
-	result, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"custom","settings":{"model":"gpt-5.4","reasoning_effort":"high"}}}}`))
+	result, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"default","settings":{"model":"gpt-5.4","reasoning_effort":"high","developer_instructions":null}}}}`))
 	if err != nil {
 		t.Fatalf("observe client: %v", err)
 	}
