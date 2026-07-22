@@ -720,6 +720,48 @@ test_active_watchdog_is_paused_and_restored() {
   [[ ! -e "${fake_home}/.local/state/claude-remote/watchdog.paused" ]]
 }
 
+test_default_manifest_keeps_full_fleet_active() {
+  local manifest_path="${ROOT_DIR}/deploy/local-stacks.tsv"
+  local expected_unit stack unit role lifecycle
+  local expected_units=(
+    codex-remote.service
+    codex-remote-site.service
+    codex-remote-2.service
+    codex-remote-2-site.service
+    claude-remote.service
+    claude-remote-site.service
+  )
+  local seen_units=" "
+  local unit_count=0
+
+  while IFS='|' read -r stack _ _ unit role _ _ lifecycle _ || [[ -n "${stack}${unit}${role}${lifecycle}" ]]; do
+    [[ -n "${stack}" && "${stack}" != \#* ]] || continue
+    unit_count=$((unit_count + 1))
+    if [[ " ${expected_units[*]} " != *" ${unit} "* ]]; then
+      echo "default deployment manifest contains unexpected unit ${unit}" >&2
+      return 1
+    fi
+    if [[ "${seen_units}" == *" ${unit} "* ]]; then
+      echo "default deployment manifest contains duplicate unit ${unit}" >&2
+      return 1
+    fi
+    seen_units+="${unit} "
+    if [[ "${lifecycle}" != "active" ]]; then
+      echo "default deployment manifest must keep ${unit} (${role}) active, got ${lifecycle}" >&2
+      return 1
+    fi
+  done < "${manifest_path}"
+
+  [[ "${unit_count}" -eq "${#expected_units[@]}" ]]
+  for expected_unit in "${expected_units[@]}"; do
+    if [[ "${seen_units}" != *" ${expected_unit} "* ]]; then
+      echo "default deployment manifest is missing unit ${expected_unit}" >&2
+      return 1
+    fi
+  done
+}
+
+test_default_manifest_keeps_full_fleet_active
 test_success_and_audit
 test_inactive_lifecycle_preserved
 test_mutation_lock_contention_fails_closed
