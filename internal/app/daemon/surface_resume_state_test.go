@@ -1199,8 +1199,10 @@ func TestDaemonNormalResumePrefersVisibleThreadOverHeadlessFallback(t *testing.T
 	if snapshot.PendingHeadless.InstanceID != "" {
 		t.Fatalf("expected visible resume to avoid headless fallback, got %#v", snapshot)
 	}
-	if len(gateway.operations) == 0 || !strings.Contains(gateway.operations[len(gateway.operations)-1].CardBody, "已恢复到之前会话") {
-		t.Fatalf("expected recovery notice after visible resume, got %#v", gateway.operations)
+	for _, op := range gateway.operations {
+		if strings.Contains(op.CardBody, "已恢复到之前会话") {
+			t.Fatalf("expected resume-success notice to stay silent, got %#v", gateway.operations)
+		}
 	}
 }
 

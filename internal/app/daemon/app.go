@@ -166,8 +166,6 @@ type App struct {
 	externalAccessListener net.Listener
 	externalAccessServer   *http.Server
 
-	shutdownGracePeriod      time.Duration
-	shutdownNoticeTimeout    time.Duration
 	gatewayStopTimeout       time.Duration
 	shutdownDrainTimeout     time.Duration
 	shutdownDrainPoll        time.Duration
@@ -220,8 +218,6 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 		wecomRunDone:                map[string]chan struct{}{},
 		adminAuth:                   authManager,
 		webPreviewGrants:            map[string]*previewGrantRecord{},
-		shutdownGracePeriod:         5 * time.Second,
-		shutdownNoticeTimeout:       2 * time.Second,
 		gatewayStopTimeout:          3 * time.Second,
 		shutdownDrainTimeout:        3 * time.Second,
 		shutdownDrainPoll:           50 * time.Millisecond,

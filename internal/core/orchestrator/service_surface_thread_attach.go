@@ -261,9 +261,10 @@ func (s *Service) attachSurfaceToKnownThreadWithOverlayCleanup(surface *state.Su
 			Kind:             eventcontract.KindNotice,
 			SurfaceSessionID: surface.SurfaceSessionID,
 			Notice: &control.Notice{
-				Code:  "headless_restore_attached",
-				Title: "会话已恢复",
-				Text:  fmt.Sprintf("重连成功，已恢复到之前会话：%s", title),
+				Code:   "headless_restore_attached",
+				Title:  "会话已恢复",
+				Text:   fmt.Sprintf("重连成功，已恢复到之前会话：%s", title),
+				Silent: true,
 			},
 		})
 	} else if mode == attachSurfaceToKnownThreadSurfaceResume {
@@ -278,9 +279,10 @@ func (s *Service) attachSurfaceToKnownThreadWithOverlayCleanup(surface *state.Su
 			Kind:             eventcontract.KindNotice,
 			SurfaceSessionID: surface.SurfaceSessionID,
 			Notice: &control.Notice{
-				Code:  "surface_resume_attached",
-				Title: "会话已恢复",
-				Text:  fmt.Sprintf("已恢复到之前会话：%s", title),
+				Code:   "surface_resume_attached",
+				Title:  "会话已恢复",
+				Text:   fmt.Sprintf("已恢复到之前会话：%s", title),
+				Silent: true,
 			},
 		})
 	} else {

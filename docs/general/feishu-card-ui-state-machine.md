@@ -613,7 +613,7 @@ MCP request 卡片当前新增的可视语义：
     - 这条提醒不是新的 owner-card / request-card substrate，而是原事件自身的 delivery annotation；若原事件未送达，或 `global runtime` notice 被节流 / suppress，则不会额外补发第二条 `@` 消息
     - request prompt started 命中 `approval` / `request_user_input` / `permissions_request_approval` / `mcp_server_elicitation` 时，当前按 `surface + request_id + revision` 只标注一次；inline rerender 不会重复标注；request dedupe 只在带 attention 的原 request 卡真正送达后记账，因此原 request 卡投递失败后的同 revision 重试仍可补发 attention。`tool_callback` 当前不进入 attention policy，因为它不等待用户处理
     - turn 结束批次里，`turn_failed` 优先于 final；若同批既有 final 又有 `提案计划` 卡，则只把“本轮已结束且有提案待确认”的 attention 挂到 `提案计划` 卡上
-    - `attached_instance_transport_degraded`、`gateway_apply_failure`、`daemon_shutting_down` 这三类 `global runtime` notice 当前也会把 attention 直接挂到原 notice card，并继续复用同一套 family + dedupe key + throttle window
+    - `attached_instance_transport_degraded`、`gateway_apply_failure` 这两类 `global runtime` notice 当前也会把 attention 直接挂到原 notice card，并继续复用同一套 family + dedupe key + throttle window（`daemon_shutting_down` 2026-07-22 起不再有生产者，见 `docs/general/remote-surface-state-machine.md` 4.21；family 与 attention/throttle 基础设施仍保留）
     - 若原事件是 reply-chain（例如 final reply），attention 也跟随这张原消息 reply 到同一 anchor；若原事件本来是顶层 append（例如 request prompt、plan proposal、global runtime notice），attention 也保持顶层 append
     - mention 目标固定取当前 surface 的 `ActorUserID`；若当前 surface 没有可用 actor identity，则直接跳过 attention annotation，原事件照常投递
   - 这两类新增 reply-thread 文本当前都属于 live delivery；`ThreadReplayRecord` 仍只负责 final reply / notice replay，中途脱离 surface 时不承诺补发完整 reply-thread 文本轨迹
@@ -645,7 +645,7 @@ MCP request 卡片当前新增的可视语义：
 - `global runtime` 提示当前也明确保持 append-only，但它和普通 turn-owned notice 的差异不再是 reply anchor，而是独立 delivery lane：
   - 它们通过 `control.Notice.DeliveryClass=global_runtime` 明确标记，不再只靠“刚好没传 `SourceMessageID`”这种隐式约定
   - projector 当前对所有 notice 都不会 reply 到任何 turn 源消息；`global runtime` 的特殊点只剩 dedupe / family 与独立系统车道
-  - 当前这条车道覆盖真正脱离当前 owner-card / guidance-card 上下文的：surface resume failure、无 active guidance card 可复用的 VS Code resume failure / `open VS Code` prompt、`attached_instance_transport_degraded`、`daemon_shutting_down`、`gateway_apply_failed`
+  - 当前这条车道覆盖真正脱离当前 owner-card / guidance-card 上下文的：surface resume failure、无 active guidance card 可复用的 VS Code resume failure / `open VS Code` prompt、`attached_instance_transport_degraded`、`gateway_apply_failed`（`daemon_shutting_down` 2026-07-22 起不再产生，见 `remote-surface-state-machine.md` 4.21）；`headless_restore_attached` / `surface_resume_attached` 恢复成功 notice 同日起改为 `Notice.Silent`，仍会流经这条车道用于内部记账，但不再投递给用户
   - 若 `VS Code` 兼容修复、`open VS Code` prompt、恢复成功/失败或 `not_attached_vscode` guidance 已经拥有当前 surface 的 active `vscode guidance card`，daemon 会先把 notice 改写成 patchable direct-command card 并回写同一张 guidance card；只有没有可复用 guidance card 的后台 runtime 路径才会落到这条独立车道
 - 这些真正的 global runtime 系统提示不会借用 final-card anchor 或 turn reply-chain；它们仍作为独立系统提示出现在主时间线
 - `/cron`、`/upgrade`、`/debug` 的 stamped 菜单入口与 stamped page callback，当前都会直接把下一张 page 或结果卡同位替回当前卡，不再先外跳 append 一张独立状态/输入卡。
@@ -686,9 +686,8 @@ MCP request 卡片当前新增的可视语义：
   - `surface_resume_*`
   - `vscode_open_required`
   - `attached_instance_transport_degraded`
-  - `daemon_shutting_down`
   - `gateway_apply_failure`
-  - 这些提示继续走独立 runtime notice 车道，不伪装成某张前台业务卡的 notice 区
+  - 这些提示继续走独立 runtime notice 车道，不伪装成某张前台业务卡的 notice 区（`daemon_shutting_down` 2026-07-22 起不再产生，见 `remote-surface-state-machine.md` 4.21）
 2. freshness / ownership 拒绝
   - `old_card`
   - `owner_card_expired`

@@ -170,6 +170,12 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 	if isSurfaceResumeFailureNoticeEvent(event) && !a.resumeFailureNoticeThrottle.allow(event.SurfaceSessionID, time.Now()) {
 		return nil
 	}
+	// Silent notices (e.g. resume-success) still need to reach the caller for
+	// Notice.Code-keyed bookkeeping (see recordManagedHeadlessResumeOutcomeEventsLocked),
+	// but must never be delivered to the user.
+	if event.Notice != nil && event.Notice.Silent {
+		return nil
+	}
 	event = a.enrichTemporarySessionEventLocked(event)
 	chatID := a.service.SurfaceChatID(event.SurfaceSessionID)
 	actorUserID := a.service.SurfaceActorUserID(event.SurfaceSessionID)

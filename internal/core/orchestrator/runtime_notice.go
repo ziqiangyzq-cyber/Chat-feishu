@@ -18,10 +18,6 @@ func globalRuntimeNotice(family control.NoticeDeliveryFamily, code, title, text 
 	}
 }
 
-func GlobalRuntimeShutdownNotice(text string) control.Notice {
-	return globalRuntimeNotice(control.NoticeDeliveryFamilyDaemonShutdown, "daemon_shutting_down", "", text)
-}
-
 func GlobalRuntimeGatewayApplyFailureNotice(problem agentproto.ErrorInfo) control.Notice {
 	return globalRuntimeNoticeFromProblem(control.NoticeDeliveryFamilyGatewayApplyFailure, problem)
 }

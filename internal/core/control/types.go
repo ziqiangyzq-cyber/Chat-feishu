@@ -409,6 +409,10 @@ type Notice struct {
 	DeliveryClass         NoticeDeliveryClass
 	DeliveryFamily        NoticeDeliveryFamily
 	DeliveryDedupKey      string
+	// Silent notices still flow through the normal event pipeline (so any
+	// bookkeeping keyed on Notice.Code still runs) but are never delivered
+	// to the user as a message.
+	Silent bool
 }
 
 type ThreadSelectionChanged struct {

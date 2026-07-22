@@ -10,12 +10,8 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/app/desktopsession"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
-	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
-	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/shutdownctx"
 )
-
-const daemonShutdownNoticeText = "服务正在关闭，当前飞书窗口会暂时离线。若稍后完成重启或升级，请重新发送消息或命令继续使用。"
 
 type relayShutdownTarget struct {
 	InstanceID string
@@ -47,11 +43,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return a.shutdownForConsoleClose()
 	}
 
-	events := a.beginShutdownNotices()
+	a.markShuttingDown()
 	handledRelayTargets, relayDrainErr := a.shutdownRelayInstancesWithTimeout(a.shutdownDrainTimeoutValue(), a.shutdownDrainPollValue())
 	a.stopIngressAndServers()
 
-	a.deliverShutdownNotices(events)
 	a.stopGatewayRuntime(true)
 	cleanupErr := a.shutdownManagedHeadless(handledRelayTargets)
 	return a.finishShutdown(relayDrainErr, cleanupErr)
@@ -117,59 +112,10 @@ func (a *App) stopGatewayRuntime(wait bool) {
 	}
 }
 
-func (a *App) beginShutdownNotices() []eventcontract.Event {
+func (a *App) markShuttingDown() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
 	a.shuttingDown = true
-	surfaces := a.service.Surfaces()
-	events := make([]eventcontract.Event, 0, len(surfaces))
-	seen := make(map[string]struct{}, len(surfaces))
-	for _, surface := range surfaces {
-		if surface == nil {
-			continue
-		}
-		surfaceID := strings.TrimSpace(surface.SurfaceSessionID)
-		if surfaceID == "" {
-			continue
-		}
-		if _, ok := seen[surfaceID]; ok {
-			continue
-		}
-		seen[surfaceID] = struct{}{}
-		notice := orchestrator.GlobalRuntimeShutdownNotice(daemonShutdownNoticeText)
-		events = append(events, eventcontract.Event{
-			Kind:             eventcontract.KindNotice,
-			SurfaceSessionID: surfaceID,
-			Notice:           &notice,
-		})
-	}
-	return events
-}
-
-func (a *App) deliverShutdownNotices(events []eventcontract.Event) {
-	if len(events) == 0 {
-		return
-	}
-
-	deadline := time.Now().Add(a.shutdownGracePeriodValue())
-	for _, event := range events {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			log.Printf("daemon shutdown: final notice grace exhausted before surface=%s", event.SurfaceSessionID)
-			return
-		}
-		timeout := remaining
-		if perNotice := a.shutdownNoticeTimeoutValue(); perNotice > 0 && perNotice < timeout {
-			timeout = perNotice
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		err := a.deliverUIEventWithContext(ctx, event)
-		cancel()
-		if err != nil {
-			log.Printf("daemon shutdown: final notice failed: surface=%s err=%v", event.SurfaceSessionID, err)
-		}
-	}
 }
 
 func (a *App) clearListeners() {
@@ -180,20 +126,6 @@ func (a *App) clearListeners() {
 	a.pprofListener = nil
 	a.toolRuntime.Listener = nil
 	a.externalAccessListener = nil
-}
-
-func (a *App) shutdownGracePeriodValue() time.Duration {
-	if a.shutdownGracePeriod <= 0 {
-		return 5 * time.Second
-	}
-	return a.shutdownGracePeriod
-}
-
-func (a *App) shutdownNoticeTimeoutValue() time.Duration {
-	if a.shutdownNoticeTimeout <= 0 {
-		return 2 * time.Second
-	}
-	return a.shutdownNoticeTimeout
 }
 
 func (a *App) gatewayStopTimeoutValue() time.Duration {
