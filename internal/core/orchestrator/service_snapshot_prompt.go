@@ -30,7 +30,7 @@ func (s *Service) resolveNextPromptSummary(inst *state.InstanceRecord, surface *
 	var observedThreadPermission *agentproto.ObservedPermissionState
 	if threadID != "" {
 		thread := inst.Threads[threadID]
-		threadTitle = displayThreadTitle(inst, thread)
+		threadTitle = s.displayThreadTitle(inst, thread)
 		if thread != nil && thread.ObservedPermission != nil {
 			observedThreadPermission = agentproto.CloneObservedPermissionState(thread.ObservedPermission)
 			if observed := agentproto.NormalizeAccessMode(observedThreadPermission.ProjectedAccessMode); observed != "" {

@@ -28,6 +28,21 @@ func TestWorkspaceShortName(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDisplayLabel(t *testing.T) {
+	displayNames := NormalizeWorkspaceDisplayNames(map[string]string{
+		"/data/dl/droid": "  owner remote workspace  ",
+		"   ":            "ignored",
+		"/data/dl/empty": "   ",
+	})
+
+	if got := WorkspaceDisplayLabel("/data/dl/droid", displayNames); got != "owner remote workspace" {
+		t.Fatalf("WorkspaceDisplayLabel(alias) = %q, want %q", got, "owner remote workspace")
+	}
+	if got := WorkspaceDisplayLabel("/data/dl/atlas", displayNames); got != "atlas" {
+		t.Fatalf("WorkspaceDisplayLabel(fallback) = %q, want %q", got, "atlas")
+	}
+}
+
 func TestResolveWorkspaceRootOnHostResolvesSymlink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "real")

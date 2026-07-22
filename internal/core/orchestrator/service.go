@@ -18,6 +18,7 @@ type Config struct {
 	LocalPauseMaxWait  time.Duration
 	DetachAbandonWait  time.Duration
 	GitAvailable       bool
+	WorkspaceDisplayNames map[string]string
 }
 
 type Service struct {
@@ -202,6 +203,7 @@ func NewService(now func() time.Time, cfg Config, planner *renderer.Planner) *Se
 	if planner == nil {
 		planner = renderer.NewPlanner()
 	}
+	cfg.WorkspaceDisplayNames = state.NormalizeWorkspaceDisplayNames(cfg.WorkspaceDisplayNames)
 	svc := &Service{
 		now:              now,
 		config:           cfg,
@@ -225,6 +227,20 @@ func NewService(now func() time.Time, cfg Config, planner *renderer.Planner) *Se
 	svc.RegisterPathPickerConsumer(targetPickerAddWorkspacePathPickerConsumerKind, targetPickerAddWorkspacePathPickerConsumer{})
 	svc.RegisterPathPickerConsumer(sendFilePathPickerConsumerKind, sendFilePathPickerConsumer{})
 	return svc
+}
+
+func (s *Service) SetWorkspaceDisplayNames(displayNames map[string]string) {
+	if s == nil {
+		return
+	}
+	s.config.WorkspaceDisplayNames = state.NormalizeWorkspaceDisplayNames(displayNames)
+}
+
+func (s *Service) WorkspaceDisplayNames() map[string]string {
+	if s == nil {
+		return nil
+	}
+	return state.NormalizeWorkspaceDisplayNames(s.config.WorkspaceDisplayNames)
 }
 
 func (s *Service) normalizeSurfaceProductMode(surface *state.SurfaceConsoleRecord) state.ProductMode {

@@ -97,6 +97,44 @@ func TestBuildWorkspaceSelectionModelKeepsSemanticEntries(t *testing.T) {
 	}
 }
 
+func TestBuildWorkspaceSelectionModelUsesWorkspaceDisplayAlias(t *testing.T) {
+	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
+	svc := NewService(func() time.Time { return now }, Config{
+		TurnHandoffWait:      800 * time.Millisecond,
+		GitAvailable:         true,
+		WorkspaceDisplayNames: map[string]string{"/home/admin/site": "claude-remote-workspace"},
+	}, nil)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		DisplayName:   "claude-remote",
+		WorkspaceRoot: "/home/admin/site",
+		WorkspaceKey:  "/home/admin/site",
+		ShortName:     "site",
+		Online:        true,
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {
+				ThreadID:   "thread-1",
+				Name:       "会话-1",
+				CWD:        "/home/admin/site",
+				LastUsedAt: now,
+			},
+		},
+	})
+
+	model, events := svc.buildWorkspaceSelectionModel(svc.ensureSurface(control.Action{
+		Kind:             control.ActionListInstances,
+		SurfaceSessionID: "surface-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+	}), 1)
+	if len(events) != 0 || model == nil || len(model.Entries) != 1 {
+		t.Fatalf("expected one workspace entry, got model=%#v events=%#v", model, events)
+	}
+	if model.Entries[0].WorkspaceLabel != "claude-remote-workspace" {
+		t.Fatalf("workspace label = %q, want %q", model.Entries[0].WorkspaceLabel, "claude-remote-workspace")
+	}
+}
+
 func TestBuildWorkspaceSelectionModelIncludesRecoverableWorkspaceOutsideInstanceRoot(t *testing.T) {
 	now := time.Date(2026, 4, 14, 9, 0, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

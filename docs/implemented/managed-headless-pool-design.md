@@ -70,7 +70,7 @@
 
 1. 若目标 thread 只剩离线快照，但存在 idle managed headless，可直接复用该 idle member。
 2. 复用或 preselected create 成功后，实例会自动 attach 到目标 thread。
-3. managed headless 的 `WorkspaceRoot / DisplayName` 会收敛到当前真实目标 thread 的 `cwd`，避免 admin 面继续显示复用前的旧 root。
+3. managed headless 的 `WorkspaceRoot / ShortName` 会收敛到当前真实目标 thread 的 `cwd`；若实例本身带了显式自定义 `DisplayName`，则保留该显示名，避免 retarget 时把用户命名又覆盖回 workspace basename。
 4. source instance 上暂存的 notice / final replay 会在 headless 接手时一并回放。
 
 这意味着当前实现已经不再把 managed headless 当成“和 VS Code 实例并列的手工恢复入口”，而是当成 daemon 背后的 thread resolver 资源。

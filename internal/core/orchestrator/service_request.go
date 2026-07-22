@@ -138,7 +138,7 @@ func (s *Service) presentRequestPrompt(instanceID string, event agentproto.Event
 	if inst != nil {
 		thread = inst.Threads[event.ThreadID]
 	}
-	threadTitle := displayThreadTitle(inst, thread)
+	threadTitle := s.displayThreadTitle(inst, thread)
 	if unsupportedText != "" {
 		return notice(surface, "request_unsupported", unsupportedText)
 	}
@@ -385,7 +385,7 @@ func (s *Service) requestPromptView(record *state.RequestPromptRecord, threadTit
 		if inst != nil {
 			thread = inst.Threads[record.ThreadID]
 		}
-		threadTitle = displayThreadTitle(inst, thread)
+		threadTitle = s.displayThreadTitle(inst, thread)
 	}
 	view := control.FeishuRequestView{
 		RequestID:             record.RequestID,

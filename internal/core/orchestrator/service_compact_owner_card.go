@@ -66,9 +66,13 @@ func compactThreadLabel(_ string, thread *state.ThreadRecord) string {
 	return displayThreadTitle(nil, thread)
 }
 
-func compactOwnerCardSections(threadID string, thread *state.ThreadRecord, lines ...string) []control.FeishuCardTextSection {
+func (s *Service) compactOwnerCardSections(threadID string, thread *state.ThreadRecord, lines ...string) []control.FeishuCardTextSection {
 	sections := make([]control.FeishuCardTextSection, 0, 2)
-	if label := compactThreadLabel(threadID, thread); label != "" {
+	label := compactThreadLabel(threadID, thread)
+	if s != nil {
+		label = s.displayThreadTitle(nil, thread)
+	}
+	if label != "" {
 		sections = append(sections, control.FeishuCardTextSection{
 			Label: "当前会话",
 			Lines: []string{label},
@@ -117,7 +121,7 @@ func (s *Service) emitCompactOwnerDispatching(surface *state.SurfaceConsoleRecor
 		return nil
 	}
 	refreshOwnerCardFlow(flow, ownerCardFlowPhaseLoading, s.now(), defaultCompactOwnerTTL)
-	sections := compactOwnerCardSections(
+	sections := s.compactOwnerCardSections(
 		binding.ThreadID,
 		s.compactThreadForBinding(binding),
 		"正在向本地 Codex 发起上下文压缩请求。",
@@ -131,7 +135,7 @@ func (s *Service) emitCompactOwnerRunning(surface *state.SurfaceConsoleRecord, b
 		return nil
 	}
 	refreshOwnerCardFlow(flow, ownerCardFlowPhaseRunning, s.now(), defaultCompactOwnerTTL)
-	sections := compactOwnerCardSections(
+	sections := s.compactOwnerCardSections(
 		binding.ThreadID,
 		s.compactThreadForBinding(binding),
 		"正在压缩当前会话的上下文。",
@@ -145,7 +149,7 @@ func (s *Service) emitCompactOwnerCompleted(surface *state.SurfaceConsoleRecord,
 		return nil
 	}
 	refreshOwnerCardFlow(flow, ownerCardFlowPhaseCompleted, s.now(), defaultCompactOwnerTTL)
-	sections := compactOwnerCardSections(
+	sections := s.compactOwnerCardSections(
 		binding.ThreadID,
 		s.compactThreadForBinding(binding),
 		"当前会话的上下文已压缩完成。",
@@ -166,7 +170,7 @@ func (s *Service) emitCompactOwnerFailed(surface *state.SurfaceConsoleRecord, bi
 		return nil
 	}
 	refreshOwnerCardFlow(flow, ownerCardFlowPhaseError, s.now(), defaultCompactOwnerTTL)
-	sections := compactOwnerCardSections(
+	sections := s.compactOwnerCardSections(
 		binding.ThreadID,
 		s.compactThreadForBinding(binding),
 		detail,

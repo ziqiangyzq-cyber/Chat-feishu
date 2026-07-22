@@ -85,7 +85,7 @@ func (s *Service) buildWorkspaceThreadSelectionModel(surface *state.SurfaceConso
 		ReturnPage: returnPage,
 		Workspace: &control.FeishuThreadSelectionWorkspaceContext{
 			WorkspaceKey:   workspaceKey,
-			WorkspaceLabel: workspaceSelectionLabel(workspaceKey),
+			WorkspaceLabel: s.workspaceSelectionLabel(workspaceKey),
 		},
 		Entries: make([]control.FeishuThreadSelectionEntry, 0, maxInt(end-start, 0)),
 	}
@@ -171,7 +171,7 @@ func (s *Service) buildThreadSelectionModelAtCursor(surface *state.SurfaceConsol
 			if workspaceKey := s.surfaceCurrentWorkspaceKey(surface); workspaceKey != "" {
 				model.CurrentWorkspace = &control.FeishuThreadSelectionWorkspaceContext{
 					WorkspaceKey:   workspaceKey,
-					WorkspaceLabel: workspaceSelectionLabel(workspaceKey),
+					WorkspaceLabel: s.workspaceSelectionLabel(workspaceKey),
 					AgeText:        humanizeRelativeTime(s.now(), threadViewsLatestUsedAt(s.scopedMergedThreadViews(surface))),
 				}
 			}
@@ -356,7 +356,7 @@ func (s *Service) threadSelectionViewEntry(surface *state.SurfaceConsoleRecord, 
 		ThreadID:            view.ThreadID,
 		Summary:             s.threadSelectionSummary(surface, view),
 		WorkspaceKey:        workspaceKey,
-		WorkspaceLabel:      workspaceSelectionLabel(workspaceKey),
+		WorkspaceLabel:      s.workspaceSelectionLabel(workspaceKey),
 		AgeText:             humanizeRelativeTime(s.now(), threadLastUsedAt(view)),
 		Status:              status,
 		VSCodeFocused:       view != nil && view.Inst != nil && strings.TrimSpace(view.Inst.ObservedFocusedThreadID) == view.ThreadID,
@@ -368,16 +368,16 @@ func (s *Service) threadSelectionViewEntry(surface *state.SurfaceConsoleRecord, 
 
 func (s *Service) threadSelectionSummary(surface *state.SurfaceConsoleRecord, view *mergedThreadView) string {
 	if s.surfaceIsVSCode(surface) && strings.TrimSpace(surface.AttachedInstanceID) != "" {
-		return vscodeThreadSelectionDropdownLabel(view)
+		return s.vscodeThreadSelectionDropdownLabel(view)
 	}
-	return threadSelectionButtonLabel(view.Thread)
+	return s.threadSelectionButtonLabel(view.Thread)
 }
 
-func vscodeThreadSelectionDropdownLabel(view *mergedThreadView) string {
+func (s *Service) vscodeThreadSelectionDropdownLabel(view *mergedThreadView) string {
 	if view == nil {
 		return ""
 	}
-	return displayThreadTitle(view.Inst, view.Thread)
+	return s.displayThreadTitle(view.Inst, view.Thread)
 }
 
 func (s *Service) vscodeInstanceSurfaceStatus(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord) string {

@@ -338,6 +338,7 @@ func (a *App) SetHeadlessRuntime(cfg HeadlessRuntimeConfig) {
 	a.configureClaudeWorkspaceProfileStateLocked(cfg.Paths.StateDir)
 	a.configureSurfaceResumeStateLocked(cfg.Paths.StateDir)
 	if loaded, err := a.loadAdminConfig(); err == nil {
+		a.service.SetWorkspaceDisplayNames(loaded.Config.Workspace.DisplayNames)
 		a.syncCodexProvidersCatalogLocked(loaded.Config)
 		a.syncClaudeProfilesCatalogLocked(loaded.Config)
 	} else {

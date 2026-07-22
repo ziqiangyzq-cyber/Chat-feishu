@@ -287,7 +287,26 @@ func isDigits(value string) bool {
 }
 
 func displayThreadTitle(inst *state.InstanceRecord, thread *state.ThreadRecord) string {
-	return threadtitle.DisplayTitle(inst, thread, threadtitle.DefaultDisplayLimit)
+	return threadDisplayTitle(inst, thread, nil)
+}
+
+func threadDisplayTitle(inst *state.InstanceRecord, thread *state.ThreadRecord, displayNames map[string]string) string {
+	body := threadtitle.DisplayBody(thread, threadtitle.DefaultDisplayLimit)
+	if body == "" {
+		return ""
+	}
+	prefix := threadtitle.WorkspaceLabel(inst, thread, displayNames)
+	if prefix == "" {
+		return body
+	}
+	return fmt.Sprintf("%s · %s", prefix, body)
+}
+
+func (s *Service) displayThreadTitle(inst *state.InstanceRecord, thread *state.ThreadRecord) string {
+	if s == nil {
+		return displayThreadTitle(inst, thread)
+	}
+	return threadDisplayTitle(inst, thread, s.config.WorkspaceDisplayNames)
 }
 
 func duplicateThreadTitle(inst *state.InstanceRecord, title string) bool {
@@ -325,6 +344,13 @@ func threadPreview(thread *state.ThreadRecord) string {
 
 func threadSelectionButtonLabel(thread *state.ThreadRecord) string {
 	return threadtitle.DisplayTitle(nil, thread, threadtitle.DefaultDisplayLimit)
+}
+
+func (s *Service) threadSelectionButtonLabel(thread *state.ThreadRecord) string {
+	if s == nil {
+		return threadSelectionButtonLabel(thread)
+	}
+	return threadDisplayTitle(nil, thread, s.config.WorkspaceDisplayNames)
 }
 
 func (s *Service) maybeRequestThreadRefresh(surface *state.SurfaceConsoleRecord, inst *state.InstanceRecord, threadID string) []eventcontract.Event {

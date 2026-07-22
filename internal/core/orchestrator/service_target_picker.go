@@ -559,7 +559,7 @@ func (s *Service) buildTargetPickerView(surface *state.SurfaceConsoleRecord, rec
 
 	selectedWorkspaceLabel, selectedWorkspaceMeta := targetPickerSelectedWorkspaceSummary(workspaceOptions, selectedWorkspace)
 	if workspaceSelectionLocked && selectedWorkspace != "" && strings.TrimSpace(selectedWorkspaceLabel) == "" {
-		selectedWorkspaceLabel, selectedWorkspaceMeta = targetPickerLockedWorkspaceSummary(workspaceEntries, selectedWorkspace)
+		selectedWorkspaceLabel, selectedWorkspaceMeta = s.targetPickerLockedWorkspaceSummary(workspaceEntries, selectedWorkspace)
 	}
 	selectedSessionLabel, selectedSessionMeta := targetPickerSelectedSessionSummary(sessionOptions, selectedSession)
 	localDirectoryPath := strings.TrimSpace(record.LocalDirectoryPath)
@@ -826,7 +826,7 @@ func (s *Service) targetPickerWorkspaceEntries(surface *state.SurfaceConsoleReco
 		entries = append(entries, workspaceSelectionEntry{
 			workspaceKey:      workspaceKey,
 			latestUsedAt:      latestUsedAt,
-			label:             workspaceSelectionLabel(workspaceKey),
+			label:             s.workspaceSelectionLabel(workspaceKey),
 			gitInfo:           gitInfo,
 			ageText:           ageText,
 			hasVSCodeActivity: hasVSCodeActivity,
