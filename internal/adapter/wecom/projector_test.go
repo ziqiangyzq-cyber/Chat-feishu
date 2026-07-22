@@ -277,8 +277,8 @@ func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	if card == nil || card.CardType != cardTypeButtonInteraction {
 		t.Fatalf("expected button_interaction card, got %+v", card)
 	}
-	if card.TaskID != "req-1" {
-		t.Fatalf("expected task_id=req-1, got %q", card.TaskID)
+	if card.TaskID != requestCardTaskID("req-1", 3, "options") {
+		t.Fatalf("unexpected request option task_id: %q", card.TaskID)
 	}
 	if len(card.ButtonList) != 2 {
 		t.Fatalf("expected 2 buttons, got %d", len(card.ButtonList))
@@ -341,6 +341,18 @@ func TestProjectRequestUserInputDirectOptionsRenderChoiceAndControlCards(t *test
 	}
 	if len(controlCard.ButtonList) != 1 || controlCard.ButtonList[0].Text != "取消" {
 		t.Fatalf("expected only cancel button on first required question, got %+v", controlCard.ButtonList)
+	}
+	if choiceCard.TaskID == controlCard.TaskID {
+		t.Fatalf("request cards in one delivery must have unique task IDs, got %q", choiceCard.TaskID)
+	}
+	if requestIDFromCardTaskID(choiceCard.TaskID) != "req-ui-1" || requestIDFromCardTaskID(controlCard.TaskID) != "req-ui-1" {
+		t.Fatalf("request card task IDs must decode to req-ui-1: choice=%q control=%q", choiceCard.TaskID, controlCard.TaskID)
+	}
+	next := view
+	next.RequestRevision++
+	nextFrames := NewProjector().ProjectEvent(eventcontract.Event{Payload: eventcontract.RequestPayload{View: next}})
+	if len(nextFrames) != 3 || nextFrames[1].TemplateCard.TaskID == choiceCard.TaskID || nextFrames[2].TemplateCard.TaskID == controlCard.TaskID {
+		t.Fatalf("new request revision must mint fresh task IDs: old=%q/%q new=%+v", choiceCard.TaskID, controlCard.TaskID, nextFrames)
 	}
 }
 

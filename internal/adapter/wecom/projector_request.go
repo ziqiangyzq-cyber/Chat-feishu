@@ -9,6 +9,25 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/frontstagecontract"
 )
 
+const requestCardTaskIDMarker = "--crf-card--"
+
+func requestCardTaskID(requestID string, revision int, role string) string {
+	requestID = strings.TrimSpace(requestID)
+	role = strings.TrimSpace(role)
+	if requestID == "" || role == "" {
+		return requestID
+	}
+	return requestID + requestCardTaskIDMarker + strconv.Itoa(max(revision, 0)) + "-" + role
+}
+
+func requestIDFromCardTaskID(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if index := strings.LastIndex(taskID, requestCardTaskIDMarker); index > 0 {
+		return strings.TrimSpace(taskID[:index])
+	}
+	return taskID
+}
+
 // ---- request (approve / reject / request_user_input) -----------------------
 
 // projectRequest renders approvals, request_user_input flows, and request
@@ -457,7 +476,7 @@ func (p *Projector) projectRequestStructuredFormInputCard(view control.FeishuReq
 		}
 		return &templateCard{
 			CardType:  cardTypeMultipleInteraction,
-			TaskID:    requestID,
+			TaskID:    requestCardTaskID(requestID, view.RequestRevision, "form-input"),
 			MainTitle: &cardMainTitle{Title: title, Desc: desc},
 			SelectList: []cardSelect{{
 				QuestionKey: requestStructuredFormQuestionKey(field.Name),
@@ -532,7 +551,7 @@ func (p *Projector) projectRequestStructuredFormControlCard(view control.FeishuR
 	}
 	return &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestID,
+		TaskID:     requestCardTaskID(requestID, view.RequestRevision, "form-control"),
 		MainTitle:  &cardMainTitle{Title: "可选操作"},
 		ButtonList: buttons,
 	}
@@ -557,7 +576,7 @@ func (p *Projector) projectRequestQuestionChoiceCard(view control.FeishuRequestV
 	if len(options) <= p.maxButtons {
 		return &templateCard{
 			CardType:  cardTypeButtonInteraction,
-			TaskID:    requestID,
+			TaskID:    requestCardTaskID(requestID, view.RequestRevision, "question-input"),
 			MainTitle: &cardMainTitle{Title: title, Desc: requestQuestionLabel(index, len(view.Questions))},
 			ButtonList: requestQuestionOptionButtons(
 				question,
@@ -572,7 +591,7 @@ func (p *Projector) projectRequestQuestionChoiceCard(view control.FeishuRequestV
 	}
 	return &templateCard{
 		CardType:  cardTypeMultipleInteraction,
-		TaskID:    requestID,
+		TaskID:    requestCardTaskID(requestID, view.RequestRevision, "question-input"),
 		MainTitle: &cardMainTitle{Title: title, Desc: requestQuestionLabel(index, len(view.Questions))},
 		SelectList: []cardSelect{{
 			QuestionKey: requestAnswerQuestionKey(question.ID),
@@ -660,7 +679,7 @@ func (p *Projector) projectRequestQuestionControlCard(view control.FeishuRequest
 	}
 	return &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestID,
+		TaskID:     requestCardTaskID(requestID, view.RequestRevision, "question-control"),
 		MainTitle:  &cardMainTitle{Title: "可选操作"},
 		ButtonList: buttons,
 	}
@@ -676,7 +695,7 @@ func (p *Projector) projectRequestOptionCard(title, requestID string, options []
 	}
 	card := &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestID,
+		TaskID:     requestCardTaskID(requestID, revision, "options"),
 		MainTitle:  &cardMainTitle{Title: title},
 		ButtonList: buttons,
 	}

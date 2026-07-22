@@ -140,6 +140,19 @@ func TestMapCardEventRequestRespond(t *testing.T) {
 	}
 }
 
+func TestMapCardEventRequestRespondDecodesUniqueCardTaskID(t *testing.T) {
+	action, ok := MapCardEventToAction(InboundCardEvent{
+		TaskID:   requestCardTaskID("req-unique-7", 3, "question-control"),
+		EventKey: composeEncodedKey(keyPrefixRequestRespond, "3", "approve"),
+	})
+	if !ok || action.Kind != control.ActionRespondRequest || action.Request == nil {
+		t.Fatalf("unexpected result: ok=%v action=%+v", ok, action)
+	}
+	if action.Request.RequestID != "req-unique-7" || action.Request.RequestRevision != 3 {
+		t.Fatalf("unique card task ID did not recover request identity: %+v", action.Request)
+	}
+}
+
 func TestMapCardEventRejectSemanticallyEquivalent(t *testing.T) {
 	action, ok := MapCardEventToAction(InboundCardEvent{
 		TaskID:   "req-7",

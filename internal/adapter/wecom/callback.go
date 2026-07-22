@@ -220,6 +220,7 @@ func (e InboundCardEvent) selectedOptions(questionKey string) []string {
 func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 	key := strings.TrimSpace(event.EventKey)
 	taskID := strings.TrimSpace(event.TaskID)
+	requestID := requestIDFromCardTaskID(taskID)
 
 	base := control.Action{
 		ChatID:      strings.TrimSpace(event.ChatID),
@@ -271,37 +272,37 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 
 	case keyPrefixRequestRespond:
 		requestRevision, optionID, ok := decodeRequestRespondKey(value)
-		if taskID == "" || !ok {
+		if requestID == "" || !ok {
 			return control.Action{}, false
 		}
 		base.Kind = control.ActionRespondRequest
 		base.Request = &control.ActionRequestResponse{
-			RequestID:       taskID,
+			RequestID:       requestID,
 			RequestOptionID: optionID,
 			RequestRevision: requestRevision,
 		}
 		return base, true
 
 	case keyPrefixRequestSubmit:
-		if taskID == "" {
+		if requestID == "" {
 			return control.Action{}, false
 		}
 		revision, _ := strconv.Atoi(strings.TrimSpace(firstRequestKeyPart(value)))
 		base.Kind = control.ActionRespondRequest
 		base.Request = &control.ActionRequestResponse{
-			RequestID:       taskID,
+			RequestID:       requestID,
 			RequestRevision: revision,
 		}
 		return base, true
 
 	case keyPrefixRequestAnswer:
 		revision, questionID, answer, ok := decodeRequestAnswerKey(value)
-		if taskID == "" || !ok {
+		if requestID == "" || !ok {
 			return control.Action{}, false
 		}
 		base.Kind = control.ActionRespondRequest
 		base.Request = &control.ActionRequestResponse{
-			RequestID:       taskID,
+			RequestID:       requestID,
 			RequestRevision: revision,
 			Answers: map[string][]string{
 				questionID: {answer},
@@ -311,7 +312,7 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 
 	case keyPrefixRequestAnswerSubmit:
 		revision, questionID, ok := decodeRequestAnswerSubmitKey(value)
-		if taskID == "" || !ok {
+		if requestID == "" || !ok {
 			return control.Action{}, false
 		}
 		answers := event.selectedOptions(requestStructuredFormQuestionKey(questionID))
@@ -323,7 +324,7 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 		}
 		base.Kind = control.ActionRespondRequest
 		base.Request = &control.ActionRequestResponse{
-			RequestID:       taskID,
+			RequestID:       requestID,
 			RequestRevision: revision,
 			Answers: map[string][]string{
 				questionID: answers,
@@ -333,12 +334,12 @@ func MapCardEventToAction(event InboundCardEvent) (control.Action, bool) {
 
 	case keyPrefixRequestControl:
 		revision, controlName, questionID, ok := decodeRequestControlKey(value)
-		if taskID == "" || !ok {
+		if requestID == "" || !ok {
 			return control.Action{}, false
 		}
 		base.Kind = control.ActionControlRequest
 		base.RequestControl = &control.ActionRequestControl{
-			RequestID:       taskID,
+			RequestID:       requestID,
 			Control:         controlName,
 			QuestionID:      questionID,
 			RequestRevision: revision,
