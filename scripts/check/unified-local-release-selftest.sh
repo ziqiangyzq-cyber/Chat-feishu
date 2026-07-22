@@ -701,9 +701,29 @@ test_mutation_lock_contention_fails_closed() {
   exec {held_lock_fd}>&-
 }
 
+test_active_watchdog_is_paused_and_restored() {
+  setup_fixture watchdog-pause
+  active_mv_bin=/bin/mv
+  local watchdog_unit="codex-remote-2-watchdog.service"
+  printf 'active\n' > "${fake_state}/${watchdog_unit}.active"
+  printf '4900\n' > "${fake_state}/${watchdog_unit}.pid"
+  mkdir -p "${proc_root}/4900" "${fake_home}/.local/state/codex-remote"
+  ln -s /bin/true "${proc_root}/4900/exe"
+  printf 'manual-pause\n' > "${fake_home}/.local/state/codex-remote/watchdog.paused"
+
+  mapfile -t args < <(deploy_args)
+  run_guarded_operator "${args[@]}" > "${scenario_dir}/watchdog.log" 2>&1
+
+  grep -F "stop ${watchdog_unit}" "${fake_state}/systemctl.log" >/dev/null
+  [[ "$(<"${fake_home}/.local/state/codex-remote/watchdog.paused")" == "manual-pause" ]]
+  [[ ! -e "${fake_home}/.local/state/codex-remote-2/watchdog.paused" ]]
+  [[ ! -e "${fake_home}/.local/state/claude-remote/watchdog.paused" ]]
+}
+
 test_success_and_audit
 test_inactive_lifecycle_preserved
 test_mutation_lock_contention_fails_closed
+test_active_watchdog_is_paused_and_restored
 test_inventory_fail_closed
 test_preflight_cleans_staging
 test_failure_rolls_back publish

@@ -554,6 +554,47 @@ stop_all_units() {
   done
 }
 
+declare -a CREATED_WATCHDOG_PAUSE_FILES=()
+watchdogs_paused=0
+
+pause_stack_watchdogs() {
+  local state_root="${XDG_STATE_HOME:-${HOME}/.local/state}"
+  local stack identity pause_file watchdog_unit load_state active_state
+  watchdogs_paused=1
+  CREATED_WATCHDOG_PAUSE_FILES=()
+  for stack in "${STACKS[@]}"; do
+    identity="${STACK_XDG_IDENTITY[${stack}]}"
+    pause_file="${state_root}/${identity}/watchdog.paused"
+    if [[ ! -e "${pause_file}" ]]; then
+      mkdir -p "$(dirname "${pause_file}")" || return 1
+      printf 'unified-release transaction=%s\n' "${transaction_id}" > "${pause_file}" || return 1
+      CREATED_WATCHDOG_PAUSE_FILES+=("${pause_file}")
+    fi
+    watchdog_unit="${identity}-watchdog.service"
+    load_state="$(show_property "${watchdog_unit}" LoadState 2>/dev/null || true)"
+    [[ "${load_state}" == "loaded" ]] || continue
+    active_state="$(show_property "${watchdog_unit}" ActiveState 2>/dev/null || true)"
+    case "${active_state}" in
+      active|activating|reloading)
+        systemctl_user stop "${watchdog_unit}" || return 1
+        ;;
+    esac
+  done
+}
+
+resume_stack_watchdogs() {
+  local pause_file failed=0
+  [[ "${watchdogs_paused}" == "1" ]] || return 0
+  for pause_file in "${CREATED_WATCHDOG_PAUSE_FILES[@]}"; do
+    "${RM_BIN}" -f -- "${pause_file}" || failed=1
+  done
+  if [[ "${failed}" == "0" ]]; then
+    CREATED_WATCHDOG_PAUSE_FILES=()
+    watchdogs_paused=0
+  fi
+  return "${failed}"
+}
+
 start_expected_units() {
   local unit
   mapfile -t start_units < <(ordered_units forward)
@@ -865,6 +906,7 @@ deploy_exit_trap() {
   local status=$?
   local rollback_status=0
   local cleanup_status=0
+  local watchdog_status=0
   trap - EXIT INT TERM
   if [[ "${status}" -ne 0 ]]; then
     set +e
@@ -874,11 +916,14 @@ deploy_exit_trap() {
       rollback_changed_state
       rollback_status=$?
     fi
+    resume_stack_watchdogs
+    watchdog_status=$?
     if [[ -n "${transaction_dir}" ]]; then
       printf '%s\n' "failed" > "${transaction_dir}/status"
       printf '%s\n' "${status}" > "${transaction_dir}/primary-exit-status"
       printf '%s\n' "${rollback_status}" > "${transaction_dir}/rollback-exit-status"
       printf '%s\n' "${cleanup_status}" > "${transaction_dir}/cleanup-exit-status"
+      printf '%s\n' "${watchdog_status}" > "${transaction_dir}/watchdog-resume-exit-status"
     fi
     if [[ "${transaction_active}" == "1" && "${rollback_status}" -ne 0 ]]; then
       echo "automatic rollback was incomplete; all reachable units were left stopped where possible" >&2
@@ -940,6 +985,7 @@ run_deploy() {
   "${CP_BIN}" -- "${manifest_path}" "${transaction_dir}/manifest.tsv"
 
   prepare_publish_links "${transaction_dir}/before" "${release_dir}" || die "failed to stage all target links"
+  pause_stack_watchdogs || die "failed to pause stack watchdogs"
   transaction_active=1
   printf '%s\n' "stopping" > "${transaction_dir}/status"
   stop_all_units || die "failed to stop the complete allowlisted service set"
@@ -950,6 +996,7 @@ run_deploy() {
   start_expected_units || die "failed to start the expected active service set"
   printf '%s\n' "observing" > "${transaction_dir}/status"
   health_check_all "${release_dir}" "${artifact_sha}" "${source_commit}" || die "one or more stacks failed health validation"
+  resume_stack_watchdogs || die "failed to resume stack watchdogs"
   if ! cleanup_deploy_staging; then
     echo "warning: deployment committed with residual staging paths" >&2
   fi
