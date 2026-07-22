@@ -100,8 +100,8 @@ func TestBuildWorkspaceSelectionModelKeepsSemanticEntries(t *testing.T) {
 func TestBuildWorkspaceSelectionModelUsesWorkspaceDisplayAlias(t *testing.T) {
 	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
 	svc := NewService(func() time.Time { return now }, Config{
-		TurnHandoffWait:      800 * time.Millisecond,
-		GitAvailable:         true,
+		TurnHandoffWait:       800 * time.Millisecond,
+		GitAvailable:          true,
 		WorkspaceDisplayNames: map[string]string{"/home/demo/site": "claude-remote-workspace"},
 	}, nil)
 	svc.UpsertInstance(&state.InstanceRecord{

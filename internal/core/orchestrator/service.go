@@ -13,11 +13,11 @@ import (
 )
 
 type Config struct {
-	TurnHandoffWait    time.Duration
-	HeadlessLaunchWait time.Duration
-	LocalPauseMaxWait  time.Duration
-	DetachAbandonWait  time.Duration
-	GitAvailable       bool
+	TurnHandoffWait       time.Duration
+	HeadlessLaunchWait    time.Duration
+	LocalPauseMaxWait     time.Duration
+	DetachAbandonWait     time.Duration
+	GitAvailable          bool
 	WorkspaceDisplayNames map[string]string
 }
 
