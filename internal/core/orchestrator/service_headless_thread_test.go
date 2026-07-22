@@ -8,6 +8,7 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
+	"github.com/kxn/codex-remote-feishu/internal/core/frontstagecontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
 
@@ -448,7 +449,7 @@ func TestRepeatNewThreadReadyDiscardsQueuedDraft(t *testing.T) {
 	}
 }
 
-func TestNewThreadRejectedDuringRequestCapture(t *testing.T) {
+func TestNewThreadClearsPendingRequestAndCapture(t *testing.T) {
 	now := time.Date(2026, 4, 6, 12, 30, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)
 	svc.UpsertInstance(&state.InstanceRecord{
@@ -464,8 +465,23 @@ func TestNewThreadRejectedDuringRequestCapture(t *testing.T) {
 		},
 	})
 	svc.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
-	svc.root.Surfaces["surface-1"].ActiveRequestCapture = &state.RequestCaptureRecord{
+	surface := svc.root.Surfaces["surface-1"]
+	request := &state.RequestPromptRecord{
+		RequestID:       "req-1",
+		RequestType:     "request_user_input",
+		SemanticKind:    control.RequestSemanticRequestUserInput,
+		ThreadID:        "thread-1",
+		TurnID:          "turn-1",
+		LifecycleState:  requestLifecycleEditingVisible,
+		VisibilityState: requestVisibilityVisible,
+		Phase:           frontstagecontract.PhaseEditing,
+	}
+	surface.PendingRequests[request.RequestID] = request
+	surface.PendingRequestOrder = []string{request.RequestID}
+	surface.ActiveRequestCapture = &state.RequestCaptureRecord{
 		RequestID: "req-1",
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
 	}
 
 	events := svc.ApplySurfaceAction(control.Action{
@@ -473,8 +489,20 @@ func TestNewThreadRejectedDuringRequestCapture(t *testing.T) {
 		SurfaceSessionID: "surface-1",
 	})
 
-	if len(events) != 1 || events[0].Notice == nil || events[0].Notice.Code != "request_capture_waiting_text" {
-		t.Fatalf("expected request capture gate to reject /new, got %#v", events)
+	if surface.RouteMode != state.RouteModeNewThreadReady || surface.SelectedThreadID != "" {
+		t.Fatalf("expected /new to enter new-thread ready state, got %#v", surface)
+	}
+	if activePendingRequest(surface) != nil || len(surface.PendingRequests) != 0 || len(surface.PendingRequestOrder) != 0 {
+		t.Fatalf("expected /new to clear pending request state, got pending=%#v order=%#v", surface.PendingRequests, surface.PendingRequestOrder)
+	}
+	if surface.ActiveRequestCapture != nil {
+		t.Fatalf("expected /new to clear active request capture, got %#v", surface.ActiveRequestCapture)
+	}
+	if request.LifecycleState != requestLifecycleAborted || request.Phase != frontstagecontract.PhaseExpired {
+		t.Fatalf("expected /new to abort the pending request through the shared cleanup path, got %#v", request)
+	}
+	if len(events) == 0 || events[len(events)-1].Notice == nil || events[len(events)-1].Notice.Code != "new_thread_ready" {
+		t.Fatalf("expected /new readiness notice, got %#v", events)
 	}
 }
 

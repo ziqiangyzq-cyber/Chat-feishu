@@ -26,13 +26,6 @@ func (s *Service) prepareNewThreadWithOverlayCleanup(surface *state.SurfaceConso
 	if inst == nil {
 		return notice(surface, "not_attached", s.notAttachedText(surface))
 	}
-	if surface.ActiveRequestCapture != nil {
-		return notice(surface, "request_capture_waiting_text", "当前正在等待你发送一条文字处理意见，请先发送文本或重新处理确认卡片。")
-	}
-	if pending := activePendingRequest(surface); pending != nil {
-		_ = pending
-		return notice(surface, "request_pending", pendingRequestNoticeText(activePendingRequest(surface)))
-	}
 	if surface.RouteMode == state.RouteModeNewThreadReady {
 		if blocked := s.blockPreparedNewThreadReprepare(surface); blocked != nil {
 			return blocked
@@ -54,6 +47,7 @@ func (s *Service) prepareNewThreadWithOverlayCleanup(surface *state.SurfaceConso
 		if cwd == "" {
 			return notice(surface, "new_thread_cwd_missing", "当前无法获取新会话的工作目录，请先重新 /use 一个有工作目录的会话。")
 		}
+		clearSurfaceRequests(surface)
 		discarded := countPendingDrafts(surface)
 		events := s.maybeSealPlanProposalForRouteChange(surface, "当前工作目标已切换到新会话待命状态，之前的提案计划已失效。")
 		clearIdleReviewSession(surface)
@@ -75,6 +69,7 @@ func (s *Service) prepareNewThreadWithOverlayCleanup(surface *state.SurfaceConso
 	if blocked := s.blockNewThreadPreparation(surface); blocked != nil {
 		return blocked
 	}
+	clearSurfaceRequests(surface)
 	discarded := countPendingDrafts(surface)
 	events := s.maybeSealPlanProposalForRouteChange(surface, "当前工作目标已切换到新会话待命状态，之前的提案计划已失效。")
 	clearIdleReviewSession(surface)

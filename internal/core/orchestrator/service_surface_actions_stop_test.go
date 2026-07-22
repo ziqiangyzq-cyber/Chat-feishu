@@ -195,3 +195,63 @@ func TestStopWithoutActiveTurnReturnsNotice(t *testing.T) {
 		t.Fatalf("expected stop_no_active_turn notice, got %#v", events)
 	}
 }
+
+func TestStopClearsPendingRequestAndCapture(t *testing.T) {
+	now := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "修复登录流程", CWD: "/data/dl/droid"},
+		},
+	})
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
+	surface := svc.root.Surfaces["surface-1"]
+	request := &state.RequestPromptRecord{
+		RequestID:       "req-1",
+		RequestType:     "request_user_input",
+		SemanticKind:    control.RequestSemanticRequestUserInput,
+		ThreadID:        "thread-1",
+		TurnID:          "turn-1",
+		LifecycleState:  requestLifecycleEditingVisible,
+		VisibilityState: requestVisibilityVisible,
+	}
+	surface.PendingRequests[request.RequestID] = request
+	surface.PendingRequestOrder = []string{request.RequestID}
+	surface.ActiveRequestCapture = &state.RequestCaptureRecord{RequestID: request.RequestID, ThreadID: request.ThreadID, TurnID: request.TurnID}
+
+	events := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionStop,
+		SurfaceSessionID: "surface-1",
+	})
+	if len(events) != 1 || events[0].Notice == nil || events[0].Notice.Code != "stop_no_active_turn" {
+		t.Fatalf("expected stop_no_active_turn notice, got %#v", events)
+	}
+	if activePendingRequest(surface) != nil || len(surface.PendingRequests) != 0 || len(surface.PendingRequestOrder) != 0 {
+		t.Fatalf("expected /stop to clear pending request state, got pending=%#v order=%#v", surface.PendingRequests, surface.PendingRequestOrder)
+	}
+	if surface.ActiveRequestCapture != nil {
+		t.Fatalf("expected /stop to clear active request capture, got %#v", surface.ActiveRequestCapture)
+	}
+
+	afterStop := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-1",
+		MessageID:        "msg-after-stop",
+		Text:             "继续处理",
+	})
+	if len(afterStop) == 0 {
+		t.Fatal("expected ordinary text to proceed after /stop")
+	}
+	for _, event := range afterStop {
+		if event.Notice != nil && (event.Notice.Code == "request_pending" || event.Notice.Code == "request_capture_waiting_text") {
+			t.Fatalf("expected ordinary text not to be caught by the cleared request gate, got %#v", afterStop)
+		}
+	}
+}

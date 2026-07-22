@@ -9,6 +9,20 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
 
+func TestPendingRequestNoticeTextForRequestUserInputIncludesEscapeHint(t *testing.T) {
+	request := &state.RequestPromptRecord{
+		RequestType:     "request_user_input",
+		SemanticKind:    control.RequestSemanticRequestUserInput,
+		VisibilityState: requestVisibilityVisible,
+	}
+
+	got := pendingRequestNoticeText(request)
+	want := "\n如需放弃这个提问：发送 /new 放弃并新建会话，或 /stop 取消当前操作。"
+	if !strings.HasSuffix(got, want) {
+		t.Fatalf("pendingRequestNoticeText() = %q, want suffix %q", got, want)
+	}
+}
+
 func TestPendingRequestNoticeTextForCanUseTool(t *testing.T) {
 	request := &state.RequestPromptRecord{
 		RequestType:     string(agentproto.RequestTypeApproval),

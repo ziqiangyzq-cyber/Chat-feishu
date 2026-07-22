@@ -827,7 +827,7 @@ func pendingRequestNoticeText(request *state.RequestPromptRecord) string {
 	}
 	switch requestPromptSemanticKind(request) {
 	case control.RequestSemanticRequestUserInput:
-		return "当前有待回答问题。请先在卡片上点击选项、提交当前答案，或跳过可选题。"
+		return "当前有待回答问题。请先在卡片上点击选项、提交当前答案，或跳过可选题。\n如需放弃这个提问：发送 /new 放弃并新建会话，或 /stop 取消当前操作。"
 	case control.RequestSemanticApprovalCommand:
 		return "当前有待确认执行命令请求。请先处理这张确认卡片后再继续。"
 	case control.RequestSemanticApprovalFileChange:
