@@ -1995,7 +1995,7 @@ func TestRetargetManagedHeadlessPreservesCustomDisplayName(t *testing.T) {
 		Managed:       true,
 	}
 
-	svc.retargetManagedHeadlessInstance(inst, "/home/admin/site")
+	svc.retargetManagedHeadlessInstance(inst, "/home/demo/site")
 
 	if inst.DisplayName != "claude-remote" {
 		t.Fatalf("display name = %q, want %q", inst.DisplayName, "claude-remote")

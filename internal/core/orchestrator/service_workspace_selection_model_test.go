@@ -102,20 +102,20 @@ func TestBuildWorkspaceSelectionModelUsesWorkspaceDisplayAlias(t *testing.T) {
 	svc := NewService(func() time.Time { return now }, Config{
 		TurnHandoffWait:      800 * time.Millisecond,
 		GitAvailable:         true,
-		WorkspaceDisplayNames: map[string]string{"/home/admin/site": "claude-remote-workspace"},
+		WorkspaceDisplayNames: map[string]string{"/home/demo/site": "claude-remote-workspace"},
 	}, nil)
 	svc.UpsertInstance(&state.InstanceRecord{
 		InstanceID:    "inst-1",
 		DisplayName:   "claude-remote",
-		WorkspaceRoot: "/home/admin/site",
-		WorkspaceKey:  "/home/admin/site",
+		WorkspaceRoot: "/home/demo/site",
+		WorkspaceKey:  "/home/demo/site",
 		ShortName:     "site",
 		Online:        true,
 		Threads: map[string]*state.ThreadRecord{
 			"thread-1": {
 				ThreadID:   "thread-1",
 				Name:       "会话-1",
-				CWD:        "/home/admin/site",
+				CWD:        "/home/demo/site",
 				LastUsedAt: now,
 			},
 		},
