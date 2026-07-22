@@ -90,28 +90,21 @@ func applyPromptOverridesToTurnStart(template map[string]any, overrides agentpro
 		}
 		collaborationMode["mode"] = planMode
 	}
-	if overrides.Model != "" || lookupStringFromAny(settings["model"]) != "" {
-		if len(collaborationMode) == 0 {
-			collaborationMode = map[string]any{}
-		}
-		if lookupStringFromAny(collaborationMode["mode"]) == "" {
-			collaborationMode["mode"] = "custom"
-		}
+	if len(collaborationMode) != 0 {
 		if overrides.Model != "" {
 			settings["model"] = overrides.Model
 		}
 		if overrides.ReasoningEffort != "" {
 			settings["reasoning_effort"] = overrides.ReasoningEffort
 		}
+		// App-server requires a complete Settings object whenever collaborationMode is non-null.
+		setDefault(settings, "model", lookupStringFromAny(template["model"]))
+		setDefault(settings, "reasoning_effort", template["effort"])
+		setDefault(settings, "developer_instructions", nil)
 		collaborationMode["settings"] = settings
 		template["collaborationMode"] = collaborationMode
-	} else if len(collaborationMode) != 0 {
-		if len(settings) != 0 {
-			collaborationMode["settings"] = settings
-		} else {
-			delete(collaborationMode, "settings")
-		}
-		template["collaborationMode"] = collaborationMode
+	} else {
+		template["collaborationMode"] = nil
 	}
 	if agentproto.NormalizeAccessMode(overrides.AccessMode) != "" {
 		template["approvalPolicy"] = agentproto.ApprovalPolicyForAccessMode(overrides.AccessMode)

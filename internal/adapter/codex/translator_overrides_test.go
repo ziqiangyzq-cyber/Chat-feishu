@@ -10,7 +10,7 @@ import (
 
 func TestTranslatePromptSendAppliesOverridesToExistingThreadTurnStart(t *testing.T) {
 	tr := NewTranslator("inst-1")
-	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"custom","settings":{"model":"gpt-5.3-codex","reasoning_effort":"medium"}}}}`)); err != nil {
+	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"default","settings":{"model":"gpt-5.3-codex","reasoning_effort":"medium","developer_instructions":null}}}}`)); err != nil {
 		t.Fatalf("observe client turn start: %v", err)
 	}
 
@@ -97,6 +97,42 @@ func TestTranslatePromptSendAppliesOverridesToNewThreadStartAndFollowupTurn(t *t
 	}
 }
 
+func TestTranslatePromptSendNewThreadPlanModeOffBuildsCompleteCollaborationMode(t *testing.T) {
+	tr := NewTranslator("inst-1")
+
+	commands, err := tr.TranslateCommand(agentproto.Command{
+		Kind:      agentproto.CommandPromptSend,
+		Origin:    agentproto.Origin{ChatID: "surface-1"},
+		Target:    agentproto.Target{CWD: "/tmp/project"},
+		Prompt:    agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+		Overrides: agentproto.PromptOverrides{PlanMode: "off"},
+	})
+	if err != nil {
+		t.Fatalf("translate command: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("expected one thread/start command, got %d", len(commands))
+	}
+
+	result, err := tr.ObserveServer([]byte(`{"id":"relay-thread-start-0","result":{"thread":{"id":"thread-created"}}}`))
+	if err != nil {
+		t.Fatalf("observe server response: %v", err)
+	}
+	if len(result.OutboundToCodex) != 1 {
+		t.Fatalf("expected followup turn/start, got %#v", result)
+	}
+	var turnStart map[string]any
+	if err := json.Unmarshal(result.OutboundToCodex[0], &turnStart); err != nil {
+		t.Fatalf("unmarshal followup turn/start: %v", err)
+	}
+	turnParams, _ := turnStart["params"].(map[string]any)
+	collaborationMode, _ := turnParams["collaborationMode"].(map[string]any)
+	if collaborationMode["mode"] != "default" {
+		t.Fatalf("expected default collaboration mode, got %#v", collaborationMode)
+	}
+	assertCompleteCollaborationModeSettings(t, collaborationMode)
+}
+
 func TestTranslatePromptSendConfirmAccessModeOverridesPolicies(t *testing.T) {
 	tr := NewTranslator("inst-1")
 
@@ -170,6 +206,39 @@ func TestTranslatePromptSendEmptyAccessPreservesObservedPolicies(t *testing.T) {
 	}
 }
 
+func TestTranslatePromptSendModelOverrideDoesNotInventCollaborationMode(t *testing.T) {
+	tr := NewTranslator("inst-1")
+	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project"}}`)); err != nil {
+		t.Fatalf("observe current thread turn start: %v", err)
+	}
+
+	commands, err := tr.TranslateCommand(agentproto.Command{
+		Kind:      agentproto.CommandPromptSend,
+		Origin:    agentproto.Origin{ChatID: "surface-1"},
+		Target:    agentproto.Target{ThreadID: "thread-1", CWD: "/tmp/project"},
+		Prompt:    agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+		Overrides: agentproto.PromptOverrides{Model: "gpt-5.4", ReasoningEffort: "high"},
+	})
+	if err != nil {
+		t.Fatalf("translate command: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("expected one turn/start command, got %d", len(commands))
+	}
+
+	var turnStart map[string]any
+	if err := json.Unmarshal(commands[0], &turnStart); err != nil {
+		t.Fatalf("unmarshal turn/start: %v", err)
+	}
+	params, _ := turnStart["params"].(map[string]any)
+	if params["model"] != "gpt-5.4" || params["effort"] != "high" {
+		t.Fatalf("expected top-level model overrides, got %#v", params)
+	}
+	if params["collaborationMode"] != nil {
+		t.Fatalf("model override invented collaborationMode, got %#v", params["collaborationMode"])
+	}
+}
+
 func TestTranslatePromptSendPlanModeOnMapsToUpstreamPlanMode(t *testing.T) {
 	tr := NewTranslator("inst-1")
 	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project"}}`)); err != nil {
@@ -199,6 +268,7 @@ func TestTranslatePromptSendPlanModeOnMapsToUpstreamPlanMode(t *testing.T) {
 	if collaborationMode["mode"] != "plan" {
 		t.Fatalf("expected plan mode override in turn/start, got %#v", params["collaborationMode"])
 	}
+	assertCompleteCollaborationModeSettings(t, collaborationMode)
 }
 
 func TestTranslatePromptSendPlanModeOffMapsToUpstreamDefaultMode(t *testing.T) {
@@ -230,6 +300,24 @@ func TestTranslatePromptSendPlanModeOffMapsToUpstreamDefaultMode(t *testing.T) {
 	if collaborationMode["mode"] != "default" {
 		t.Fatalf("expected default mode override in turn/start, got %#v", params["collaborationMode"])
 	}
+	assertCompleteCollaborationModeSettings(t, collaborationMode)
+}
+
+func assertCompleteCollaborationModeSettings(t *testing.T, collaborationMode map[string]any) {
+	t.Helper()
+	settings, ok := collaborationMode["settings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected collaborationMode settings object, got %#v", collaborationMode)
+	}
+	if model, ok := settings["model"]; !ok || model != "" {
+		t.Fatalf("expected empty model fallback in collaborationMode settings, got %#v", settings)
+	}
+	if effort, ok := settings["reasoning_effort"]; !ok || effort != nil {
+		t.Fatalf("expected null reasoning effort fallback in collaborationMode settings, got %#v", settings)
+	}
+	if instructions, ok := settings["developer_instructions"]; !ok || instructions != nil {
+		t.Fatalf("expected null developer instructions fallback in collaborationMode settings, got %#v", settings)
+	}
 }
 
 func TestObserveClientTurnStartReportsObservedAccessMode(t *testing.T) {
@@ -257,10 +345,10 @@ func TestObserveClientTurnStartReportsObservedAccessMode(t *testing.T) {
 
 func TestStructuredLocalTurnStartDoesNotOverwriteReusableTurnTemplate(t *testing.T) {
 	tr := NewTranslator("inst-1")
-	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"custom","settings":{"model":"gpt-5.3-codex","reasoning_effort":"medium"}}}}`)); err != nil {
+	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","collaborationMode":{"mode":"default","settings":{"model":"gpt-5.3-codex","reasoning_effort":"medium","developer_instructions":null}}}}`)); err != nil {
 		t.Fatalf("observe baseline turn start: %v", err)
 	}
-	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","outputSchema":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}}},"collaborationMode":{"mode":"custom","settings":{"model":"gpt-5.3-codex","reasoning_effort":"low"}}}}`)); err != nil {
+	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","outputSchema":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}}},"collaborationMode":{"mode":"default","settings":{"model":"gpt-5.3-codex","reasoning_effort":"low","developer_instructions":null}}}}`)); err != nil {
 		t.Fatalf("observe structured helper turn start: %v", err)
 	}
 
