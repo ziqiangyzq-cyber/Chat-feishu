@@ -2,6 +2,45 @@ package buildinfo
 
 import "testing"
 
+func TestDetailedVersionIncludesExactProvenance(t *testing.T) {
+	info := Info{
+		Version:      "v1.2.3",
+		Branch:       "master",
+		Commit:       "0123456789abcdef0123456789abcdef01234567",
+		BuildTimeUTC: "2026-07-22T03:04:05Z",
+		Dirty:        "false",
+		Flavor:       FlavorShipping,
+	}
+	want := "codex-remote version=v1.2.3 commit=0123456789abcdef0123456789abcdef01234567 built_at=2026-07-22T03:04:05Z dirty=false branch=master flavor=shipping"
+	if got := info.DetailedVersion(); got != want {
+		t.Fatalf("DetailedVersion() = %q, want %q", got, want)
+	}
+}
+
+func TestDetailedVersionDoesNotEmitWhitespaceOrInvalidDirtyValue(t *testing.T) {
+	info := Info{Version: "bad version", Branch: "bad branch", Dirty: "maybe"}
+	want := "codex-remote version=dev commit=unknown built_at=unknown dirty=unknown branch=dev flavor=dev"
+	if got := info.DetailedVersion(); got != want {
+		t.Fatalf("DetailedVersion() = %q, want %q", got, want)
+	}
+}
+
+func TestCurrentWithLegacyPreservesExternalLinkerCompatibility(t *testing.T) {
+	previousVersion := VersionValue
+	previousBranch := BranchValue
+	VersionValue = "dev"
+	BranchValue = "dev"
+	t.Cleanup(func() {
+		VersionValue = previousVersion
+		BranchValue = previousBranch
+	})
+
+	info := CurrentWithLegacy("v9.8.7", "legacy-builder")
+	if info.Version != "v9.8.7" || info.Branch != "legacy-builder" {
+		t.Fatalf("CurrentWithLegacy() = %#v", info)
+	}
+}
+
 func TestParseFlavorDefaultsToDev(t *testing.T) {
 	if got := ParseFlavor(""); got != FlavorDev {
 		t.Fatalf("ParseFlavor(\"\") = %q, want %q", got, FlavorDev)

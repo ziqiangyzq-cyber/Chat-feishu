@@ -7,6 +7,7 @@ type Role string
 const (
 	RoleHelp                 Role = "help"
 	RoleVersion              Role = "version"
+	RoleDetailedVersion      Role = "detailed_version"
 	RoleDaemon               Role = "daemon"
 	RoleInstall              Role = "install"
 	RolePackagedInstall      Role = "packaged_install"
@@ -41,6 +42,8 @@ func Detect(args []string) (Decision, error) {
 		return Decision{Role: RoleHelp}, nil
 	case "version", "--version":
 		return Decision{Role: RoleVersion}, nil
+	case "--version-detail":
+		return Decision{Role: RoleDetailedVersion}, nil
 	case "daemon":
 		return Decision{Role: RoleDaemon, Args: args[1:]}, nil
 	case "install":

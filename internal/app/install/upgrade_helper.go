@@ -65,6 +65,14 @@ func RunUpgradeHelperWithStatePath(ctx context.Context, statePath string) error 
 	if stateValue.RollbackCandidate == nil || strings.TrimSpace(stateValue.RollbackCandidate.BinaryPath) == "" {
 		return errors.New("rollback candidate is missing")
 	}
+	releaseMutationLock, err := acquireBinaryMutationLock(stateValue.CurrentBinaryPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = releaseMutationLock() }()
+	if err := EnsureStandaloneUpgradeAllowed(stateValue.CurrentBinaryPath); err != nil {
+		return err
+	}
 
 	cfg, err := loadUpgradeHelperConfig(stateValue)
 	if err != nil {

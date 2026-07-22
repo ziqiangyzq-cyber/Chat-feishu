@@ -55,6 +55,9 @@ func RunLocalBinaryUpgradeWithStatePath(opts LocalBinaryUpgradeOptions) (string,
 	if strings.TrimSpace(stateValue.CurrentBinaryPath) == "" {
 		return "", fmt.Errorf("current binary path is missing from install state")
 	}
+	if err := EnsureStandaloneUpgradeAllowed(stateValue.CurrentBinaryPath); err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(stateValue.VersionsRoot) == "" {
 		return "", fmt.Errorf("versions root is missing from install state")
 	}

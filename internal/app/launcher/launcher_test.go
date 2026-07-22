@@ -83,6 +83,11 @@ func TestDetect(t *testing.T) {
 			want: Decision{Role: RoleVersion},
 		},
 		{
+			name: "detailed version role",
+			args: []string{"--version-detail"},
+			want: Decision{Role: RoleDetailedVersion},
+		},
+		{
 			name: "empty args defaults to daemon",
 			args: nil,
 			want: Decision{Role: RoleDaemon},
@@ -116,6 +121,36 @@ func TestDetect(t *testing.T) {
 			}
 			if strings.Join(got.Args, "\x00") != strings.Join(tt.want.Args, "\x00") {
 				t.Fatalf("Detect(%v) args = %#v, want %#v", tt.args, got.Args, tt.want.Args)
+			}
+		})
+	}
+}
+
+func TestMainKeepsLegacyVersionAndPrintsDetailedVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "legacy subcommand", args: []string{"version"}, want: "v1.2.3\n"},
+		{name: "legacy flag", args: []string{"--version"}, want: "v1.2.3\n"},
+		{name: "detailed", args: []string{"--version-detail"}, want: "codex-remote version=v1.2.3 commit=0123456789abcdef0123456789abcdef01234567 built_at=2026-07-22T03:04:05Z dirty=false branch=master flavor=shipping\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			exitCode := Main(Options{
+				Args:            tt.args,
+				Stdout:          &stdout,
+				Stderr:          &bytes.Buffer{},
+				Version:         "v1.2.3",
+				DetailedVersion: "codex-remote version=v1.2.3 commit=0123456789abcdef0123456789abcdef01234567 built_at=2026-07-22T03:04:05Z dirty=false branch=master flavor=shipping",
+			})
+			if exitCode != 0 {
+				t.Fatalf("Main() exit code = %d", exitCode)
+			}
+			if got := stdout.String(); got != tt.want {
+				t.Fatalf("stdout = %q, want %q", got, tt.want)
 			}
 		})
 	}

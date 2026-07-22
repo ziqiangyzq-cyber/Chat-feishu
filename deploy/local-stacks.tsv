@@ -1,0 +1,7 @@
+# stack|xdg_identity|health_base_url|unit|role|start_order|allowed_exec_paths|lifecycle
+codex-remote|codex-remote|http://127.0.0.1:9501|codex-remote.service|daemon|10|@HOME@/.local/share/codex-remote/bin/codex-remote,@HOME@/.local/bin/codex-remote|active
+codex-remote|codex-remote|http://127.0.0.1:9501|codex-remote-site.service|site|20|@HOME@/.local/share/codex-remote/bin/codex-remote,@HOME@/.local/bin/codex-remote|inactive
+codex-remote-2|codex-remote-2|http://127.0.0.1:9701|codex-remote-2.service|daemon|10|@HOME@/.local/share/codex-remote-2/bin/codex-remote,@HOME@/.local/bin/codex-remote-2|active
+codex-remote-2|codex-remote-2|http://127.0.0.1:9701|codex-remote-2-site.service|site|20|@HOME@/.local/share/codex-remote-2/bin/codex-remote,@HOME@/.local/bin/codex-remote-2|active
+claude-remote|claude-remote|http://127.0.0.1:9601|claude-remote.service|daemon|10|@HOME@/.local/bin/codex-remote-claude-wecom,@HOME@/.local/share/claude-remote/bin/codex-remote|active
+claude-remote|claude-remote|http://127.0.0.1:9601|claude-remote-site.service|site|20|@HOME@/.local/share/claude-remote/bin/codex-remote,@HOME@/.local/bin/codex-remote-claude-wecom|active

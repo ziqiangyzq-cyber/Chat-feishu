@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BUILD_HELPER="${ROOT_DIR}/scripts/build/build-codex-remote.sh"
 cd "${ROOT_DIR}"
 
 usage() {
@@ -13,6 +14,7 @@ options:
   --jobs <count>             build up to <count> platforms concurrently
   --current-platform-only    build only the current host platform
   --skip-admin-ui-build      reuse the existing admin UI dist instead of rebuilding it
+  --allow-dirty-fixture      test fixtures only; never publish the resulting dirty artifact
   -h, --help                 show this help
 EOF
 }
@@ -129,27 +131,43 @@ build_platform_archive() {
     extension=".exe"
   fi
 
-  CLOUDFLARED_EMBED_ALLOW_DOWNLOAD=0 \
-    bash "${ROOT_DIR}/scripts/externalaccess/prepare-cloudflared-embed.sh" "${goos}" "${goarch}"
-  bash "${ROOT_DIR}/scripts/managedshim/prepare-vscode-shim-embed.sh" "${goos}" "${goarch}"
-  bash "${ROOT_DIR}/scripts/upgradeshim/prepare-upgrade-shim-embed.sh" "${goos}" "${goarch}"
-
-  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-    go build -trimpath -ldflags "-X main.version=${version} -X main.branch=${build_branch} -X github.com/kxn/codex-remote-feishu/internal/buildinfo.FlavorValue=${build_flavor}" \
-    -o "${staging_dir}/codex-remote${extension}" ./cmd/codex-remote
+  local -a build_args=(
+    --output "${staging_dir}/codex-remote${extension}"
+    --version "${version}"
+    --branch "${build_branch}"
+    --flavor "${build_flavor}"
+    --expected-ref "${source_ref}"
+    --build-time "${build_time_utc}"
+    --goos "${goos}"
+    --goarch "${goarch}"
+  )
+  if [[ "${allow_dirty_fixture}" != "1" ]]; then
+    build_args+=(--require-clean)
+  fi
+  if [[ "${allow_dirty_fixture}" == "1" ]]; then
+    CODEX_REMOTE_ALLOW_UNTAGGED_FIXTURE=1 bash "${BUILD_HELPER}" "${build_args[@]}"
+  else
+    bash "${BUILD_HELPER}" "${build_args[@]}"
+  fi
 
   cp README.md QUICKSTART.md CHANGELOG.md "${staging_dir}/"
   cp -R deploy "${staging_dir}/"
+  find "${staging_dir}" -exec touch -h -d "@${source_date_epoch}" {} +
 
   if [[ "${goos}" == "windows" ]]; then
     archive_path="${output_dir}/${package_name}.zip"
     (
       cd "${work_dir}"
-      zip -qr "${archive_path}" "${package_name}"
+      find "${package_name}" -print | LC_ALL=C sort | zip -X -q "${archive_path}" -@
     )
   else
     archive_path="${output_dir}/${package_name}.tar.gz"
-    tar -C "${work_dir}" -czf "${archive_path}" "${package_name}"
+    tar -C "${work_dir}" \
+      --sort=name \
+      --mtime="@${source_date_epoch}" \
+      --owner=0 --group=0 --numeric-owner \
+      --mode='u+rwX,go+rX,go-w' \
+      -cf - "${package_name}" | gzip -n > "${archive_path}"
   fi
 
   rm -rf "${work_dir}"
@@ -180,6 +198,7 @@ flush_platform_batch() {
 version=""
 output_dir="dist"
 skip_admin_ui_build=0
+allow_dirty_fixture=0
 requested_platforms=()
 build_jobs=""
 
@@ -199,6 +218,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-admin-ui-build)
       skip_admin_ui_build=1
+      shift
+      ;;
+    --allow-dirty-fixture)
+      allow_dirty_fixture=1
       shift
       ;;
     -h|--help)
@@ -228,6 +251,14 @@ fi
 build_branch="$(resolve_build_branch)"
 build_flavor="$(resolve_build_flavor)"
 package_version_label="$(resolve_package_version_label)"
+source_commit="$(git rev-parse --verify HEAD^{commit})"
+source_date_epoch="$(git show -s --format=%ct "${source_commit}")"
+[[ "${source_date_epoch}" =~ ^[0-9]+$ ]] || { echo "unable to resolve SOURCE_DATE_EPOCH" >&2; exit 1; }
+source_ref="${source_commit}"
+if [[ "${build_flavor}" != "dev" && "${allow_dirty_fixture}" != "1" ]]; then
+  source_ref="${version}"
+fi
+build_time_utc="${CODEX_REMOTE_BUILD_TIME_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 if [[ "${skip_admin_ui_build}" == "1" ]]; then
   if [[ ! -f "${ROOT_DIR}/internal/app/daemon/adminui/dist/index.html" ]]; then

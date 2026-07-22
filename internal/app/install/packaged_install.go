@@ -251,6 +251,16 @@ func runPackagedRepair(ctx context.Context, flagSet *flag.FlagSet, opts packaged
 	state.CurrentBinaryPath = liveBinaryPath
 	state.InstalledBinary = liveBinaryPath
 	state.VersionsRoot = firstNonEmpty(strings.TrimSpace(opts.VersionsRoot), strings.TrimSpace(state.VersionsRoot), defaultVersionsRootForStatePath(state.StatePath))
+	releaseMutationLock, err := acquireBinaryMutationLock(liveBinaryPath)
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+	defer func() { _ = releaseMutationLock() }()
+	if err := EnsureStandaloneUpgradeAllowed(liveBinaryPath); err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
 
 	targetSlot, err := importLocalBinaryForUpgrade(state, opts.SourceBinary, opts.CurrentSlot)
 	if err != nil {

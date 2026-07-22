@@ -160,7 +160,8 @@ ensure_dist_dir() {
     "${version_value}" \
     "${target_dir}" \
     --current-platform-only \
-    --skip-admin-ui-build
+    --skip-admin-ui-build \
+    --allow-dirty-fixture
 }
 
 copy_current_platform_asset() {

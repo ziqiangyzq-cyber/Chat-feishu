@@ -1,8 +1,8 @@
 # Release Roadmap Workflow
 
 > Type: `general`
-> Updated: `2026-04-27`
-> Summary: 定义 `master` 单主干、短命 `release/*` 封版分支、固定 `dev-latest` 滚动 prerelease，以及 milestone / release tracker / 显式 production 版本号驱动的发版闸门。
+> Updated: `2026-07-22`
+> Summary: 补充历史 refs bundle 收敛目标，并明确 source-control publish 与本地三套 stack deploy 是两个独立审计动作。
 
 ## 1. 当前基线
 
@@ -18,6 +18,8 @@
 - 不再引入长期 `dev` 分支。
 - 不再把多个旧 `release/*` 当成长期常驻维护分支。
 - `dev-latest` 和正式版本历史展示面分离，避免 GitHub Releases 被连续 alpha 冲散。
+
+本次 unified release 验收后的仓库收敛目标更严格：远端只保留默认分支 `master` 和一个最终验收通过的 annotated release tag。旧 feature/release branches 与旧 tags 只有在 Hermes 创建、外置保存并验证可恢复的 git bundle 后才能删除。这个一次性清理不改变后续 release workflow 可以按明确计划再创建新 tag 的正常语义。
 
 ## 2. 目的
 
@@ -154,6 +156,17 @@ readiness 通过的条件是：
 - release workflow 会优先把 `CHANGELOG.md` 中当前版本的小节提取进 GitHub release notes
 - release tracker issue 负责版本号、轨道、发布分支、检查项和发版闸门，不负责承载完整 changelog 正文
 - tracker issue 里可以保留一段很短的发布摘要，或直接放 `CHANGELOG.md` / GitHub Release 的链接
+
+### 5.6 Source publish 与本地 deploy
+
+push/tag/release 与本机三套 stack 部署是两个独立动作：
+
+- GitHub workflow 只构建和发布 source artifacts，不控制本机 user services；
+- `deploy-local-release.sh` 只消费 reviewed exact tag/full commit，不 push、merge、打 tag 或删除 remote ref；
+- 每次 deploy 单独保存 preflight、transaction id、artifact SHA-256、operator log 和 deploy 后 audit；
+- 不因一次 push 成功就自动部署 `codex-remote`、`codex-remote-2`、`claude-remote`。
+
+本地统一部署的 operator contract 见 [unified-local-release-runbook.md](./unified-local-release-runbook.md)。
 
 ## 6. 建议边界
 

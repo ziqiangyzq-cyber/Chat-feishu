@@ -4,12 +4,65 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestRunPackagedRepairRejectsUnifiedManagedBinaryBeforeStaging(t *testing.T) {
+	baseDir := t.TempDir()
+	statePath := defaultInstallStatePathForInstance(baseDir, defaultInstanceID)
+	releaseDir := filepath.Join(baseDir, "unified", "releases", "commit-sha")
+	releaseBinary := seedBinary(t, filepath.Join(releaseDir, executableName(runtime.GOOS)), "managed-binary")
+	if err := os.WriteFile(filepath.Join(releaseDir, UnifiedReleaseMarkerFilename), []byte("managed\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	liveBinary := filepath.Join(baseDir, "installed-bin", executableName(runtime.GOOS))
+	if err := os.MkdirAll(filepath.Dir(liveBinary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(releaseBinary, liveBinary); err != nil {
+		t.Fatal(err)
+	}
+	sourceBinary := seedBinary(t, filepath.Join(baseDir, "package", executableName(runtime.GOOS)), "replacement")
+	versionsRoot := filepath.Join(baseDir, "versions")
+	if err := WriteState(statePath, InstallState{
+		InstanceID:        defaultInstanceID,
+		BaseDir:           baseDir,
+		StatePath:         statePath,
+		ServiceManager:    ServiceManagerDetached,
+		CurrentBinaryPath: liveBinary,
+		InstalledBinary:   liveBinary,
+		VersionsRoot:      versionsRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runPackagedRepair(context.Background(), nil, packagedInstallOptions{
+		StatePath:      statePath,
+		SourceBinary:   sourceBinary,
+		CurrentVersion: "v1.2.3",
+		CurrentSlot:    "v1.2.3",
+		VersionsRoot:   versionsRoot,
+	})
+	if !errors.Is(err, ErrUnifiedReleaseManaged) {
+		t.Fatalf("runPackagedRepair() error = %v, want ErrUnifiedReleaseManaged", err)
+	}
+	if result.Error == "" {
+		t.Fatal("packaged repair result did not report unified ownership")
+	}
+	if _, statErr := os.Stat(filepath.Join(versionsRoot, "v1.2.3")); !os.IsNotExist(statErr) {
+		t.Fatalf("packaged repair staged a replacement before ownership rejection: %v", statErr)
+	}
+	if info, statErr := os.Lstat(liveBinary); statErr != nil {
+		t.Fatal(statErr)
+	} else if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("packaged repair replaced the unified-managed symlink")
+	}
+}
 
 func TestRunPackagedInstallFirstInstallWritesStateAndJSONResult(t *testing.T) {
 	t.Setenv(repoRootEnvVar, t.TempDir())

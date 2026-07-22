@@ -1,8 +1,8 @@
 # 安装与部署设计
 
 > Type: `general`
-> Updated: `2026-05-31`
-> Summary: 同步当前安装、配置与部署模型，并补记 shared packaged-install contract 的跨平台启动语义：packaged installer 不再直接决定底层 `service-manager`；first-install 走平台默认登录后自动启动，repair 保持现有启动方式；Windows NSIS 包装层现已固定为 `probe + install + 结果页` 模型。
+> Updated: `2026-07-22`
+> Summary: 补充统一 build provenance helper 与三套本地 systemd stack 的 immutable fleet deployment 边界，并修正 upgrade helper 来源说明。
 
 ## 1. 范围
 
@@ -93,8 +93,9 @@ Windows PowerShell:
 - `setup.ps1`
   - Windows 上的源码仓库 helper
   - 默认执行本地构建后再跑 `-bootstrap-only -start-daemon`
-- `go build -o ./bin/codex-remote ./cmd/codex-remote`
-  - Linux / macOS 上先构建本地二进制
+- `bash scripts/build/build-codex-remote.sh --output ./bin/codex-remote`
+  - Linux / macOS 上构建带完整 provenance 的本地二进制
+  - 直接 `go build` 只生成 provenance 未证明的 debug binary，不能作为部署产物
 - `./bin/codex-remote install -bootstrap-only -start-daemon`
   - 已经构建过本地二进制时，可直接重复 bootstrap
 - `./bin/codex-remote daemon`
@@ -455,7 +456,7 @@ Windows 下文件名为 `codex-remote.exe`。
 
 - 把目标 binary 准备到 `versionsRoot/<slot>/`
 - 写入 `PendingUpgrade` 与 rollback candidate
-- daemon 复制当前 live binary 作为 `upgrade-helper`
+- daemon 从当前 binary 释放构建时内嵌的 tiny upgrade shim，并写入绑定目标 install-state 的 sidecar
 - 在 `systemd_user` 模式下，通过独立 transient unit 启动 helper，避免 stop 旧服务时把 helper 一并杀掉
 - helper 负责 stop old service -> switch stable binary -> start new service -> observe health
 - 新版本启动或健康检查失败时，自动回滚 binary 和 live config
@@ -463,6 +464,22 @@ Windows 下文件名为 `codex-remote.exe`。
 本地自升级链路的完整时序、helper 来源、路径布局和回滚细节，单独见：
 
 - [local-self-upgrade-flow.md](./local-self-upgrade-flow.md)
+
+### 4.6 三套本地 stack 的 unified deployment
+
+`upgrade-local.sh` / `upgrade-self.sh` 与 daemon upgrade-helper 都以一份 `install-state.json` 为事务边界。它们不能把缺少 install-state 的其他实例伪装成同一套 managed install，也不能原子管理多个 daemon/site pair。
+
+本机同时运行 `codex-remote`、`codex-remote-2`、`claude-remote` 时，使用仓库 operator：
+
+```bash
+./deploy-local-release.sh <audit|preflight|deploy|rollback|canonical-checkout>
+```
+
+这条路径从 systemd user units 发现实际 `ExecStart`，再用显式 allowlist 校验完整 inventory；它从 exact clean commit/tag 构建一次，把同一 SHA-256 artifact 发布到 immutable release store，并让所有 stack path 通过各自 `current` indirection 解析到同一 inode。它不读取或复制任何 stack config/state。
+
+迁入 unified layout 后，普通 install、packaged repair、单实例 local/release upgrade 都会识别 ownership marker 并拒绝覆盖 unified alias。完整布局、首次迁移、health assumptions 与回滚限制见：
+
+- [unified-local-release-runbook.md](./unified-local-release-runbook.md)
 
 ## 5. VS Code 接管模型
 
@@ -531,7 +548,7 @@ detect/apply/reinstall 的当前规则也同步收紧：
 
 对仓库联调：
 
-- `go build -o ./bin/codex-remote ./cmd/codex-remote`
+- `bash scripts/build/build-codex-remote.sh --output ./bin/codex-remote`
 - `./bin/codex-remote install -bootstrap-only -start-daemon`
 - `codex-remote install -interactive`
 
@@ -548,6 +565,8 @@ detect/apply/reinstall 的当前规则也同步收紧：
 - `QUICKSTART.md`
 - `CHANGELOG.md`
 - `deploy/`
+
+所有 `codex-remote` binary 都复用 `scripts/build/build-codex-remote.sh` 组装 ldflags，固定写入 semantic version、full commit、UTC build time、dirty state、branch 与 flavor。release/deployment build 必须来自 exact clean ref；dirty artifact 不允许发布。
 
 另外单独生成：
 
@@ -735,7 +754,7 @@ curl -fsSL https://raw.githubusercontent.com/kxn/codex-remote-feishu/master/inst
 仓库联调：
 
 ```bash
-go build -o ./bin/codex-remote ./cmd/codex-remote
+bash scripts/build/build-codex-remote.sh --output ./bin/codex-remote
 ./bin/codex-remote install -bootstrap-only -start-daemon
 ./bin/codex-remote daemon
 ```

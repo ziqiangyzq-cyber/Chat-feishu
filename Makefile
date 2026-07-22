@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: check test build fmt install-hooks release-artifacts smoke-release-install release-track-version start stop status web-build
+.PHONY: canonical-checkout-selftest check test build fmt install-hooks provenance-selftest release-artifacts smoke-release-install unified-release-selftest release-track-version start stop status web-build
 
 check:
 	bash scripts/web/build-admin-ui.sh
@@ -9,6 +9,9 @@ check:
 	bash scripts/check/no-legacy-names.sh
 	files="$$(find cmd internal testkit -name '*.go' | sort)"; output="$$(gofmt -l $$files)"; test -z "$$output" || (echo "$$output" >&2; exit 1)
 	bash scripts/check/release-track-version.sh
+	bash scripts/check/build-provenance-selftest.sh
+	bash scripts/check/canonical-checkout-selftest.sh
+	bash scripts/check/unified-local-release-selftest.sh
 	bash scripts/check/smoke-install-release.sh
 	$(GO) test ./...
 
@@ -19,7 +22,7 @@ test:
 build:
 	bash scripts/web/build-admin-ui.sh
 	bash scripts/externalaccess/prepare-cloudflared-embed.sh
-	$(GO) build ./cmd/codex-remote
+	GO_BIN="$(GO)" bash scripts/build/build-codex-remote.sh --output ./bin/codex-remote
 	$(GO) build ./cmd/relayd
 	$(GO) build ./cmd/relay-wrapper
 	$(GO) build ./cmd/relay-install
@@ -40,13 +43,20 @@ release-artifacts:
 smoke-release-install:
 	bash scripts/check/smoke-install-release.sh
 
+canonical-checkout-selftest:
+	bash scripts/check/canonical-checkout-selftest.sh
+
+provenance-selftest:
+	bash scripts/check/build-provenance-selftest.sh
+
+unified-release-selftest:
+	bash scripts/check/unified-local-release-selftest.sh
+
 release-track-version:
 	bash scripts/check/release-track-version.sh
 
 start:
-	bash scripts/externalaccess/prepare-cloudflared-embed.sh
-	mkdir -p bin
-	$(GO) build -o ./bin/codex-remote ./cmd/codex-remote
+	GO_BIN="$(GO)" bash scripts/build/build-codex-remote.sh --output ./bin/codex-remote
 	./bin/codex-remote install -bootstrap-only -start-daemon
 
 stop:

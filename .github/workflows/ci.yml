@@ -72,6 +72,18 @@ jobs:
       - name: Check release readiness script
         run: bash scripts/check/release-readiness-selftest.sh
 
+      - name: Check build provenance
+        run: bash scripts/check/build-provenance-selftest.sh
+
+      - name: Check release reproducibility
+        run: bash scripts/check/release-reproducibility-selftest.sh
+
+      - name: Check canonical deployment checkout
+        run: bash scripts/check/canonical-checkout-selftest.sh
+
+      - name: Check unified local release transaction
+        run: bash scripts/check/unified-local-release-selftest.sh
+
       - name: Test web
         working-directory: web
         run: npm run test:run

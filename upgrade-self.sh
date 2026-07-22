@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BIN_DIR="${ROOT_DIR}/bin"
 BUILD_OUTPUT="${BIN_DIR}/codex-remote"
 GO_BIN="${GO_BIN:-go}"
+BUILD_HELPER="${ROOT_DIR}/scripts/build/build-codex-remote.sh"
 SELF_TARGET_SCRIPT="${ROOT_DIR}/scripts/install/self-install-target.sh"
 PULL=0
 ALLOW_DIRTY=0
@@ -29,25 +30,12 @@ not by the currently installed binary.
 
 options:
   --pull             run git pull --ff-only before build
-  --allow-dirty      only relevant with --pull; allow git pull attempt on a dirty tree
+  --allow-dirty      deprecated compatibility flag; dirty deployment still fails
   --slot <slot>      optional explicit upgrade slot label
   --timeout <sec>    wait timeout after requesting upgrade; default 90
   --no-wait          exit after local-upgrade is submitted
   -h, --help         show this help text
 EOF
-}
-
-resolve_build_branch() {
-  if [[ -n "${CODEX_REMOTE_BUILD_BRANCH:-}" ]]; then
-    printf '%s\n' "${CODEX_REMOTE_BUILD_BRANCH}"
-    return
-  fi
-  local branch=""
-  if branch="$(git branch --show-current 2>/dev/null)" && [[ -n "${branch}" ]]; then
-    printf '%s\n' "${branch}"
-    return
-  fi
-  printf '%s\n' "dev"
 }
 
 wait_for_admin_recovery() {
@@ -116,11 +104,13 @@ fi
 
 cd "${ROOT_DIR}"
 
-if [[ "${PULL}" == "1" && "${ALLOW_DIRTY}" != "1" ]]; then
-  if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
-    echo "working tree has uncommitted changes; commit/stash them first or rerun with --allow-dirty" >&2
-    exit 1
-  fi
+WORKTREE_STATUS="$(git status --porcelain --untracked-files=normal)" || { echo "unable to inspect working tree" >&2; exit 1; }
+if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules -- || [[ -n "${WORKTREE_STATUS}" ]]; then
+  echo "working tree has uncommitted changes; deployment builds must be clean" >&2
+  exit 1
+fi
+if [[ "${ALLOW_DIRTY}" == "1" ]]; then
+  echo "warning: --allow-dirty is deprecated and no longer bypasses deployment provenance checks" >&2
 fi
 
 if [[ "${PULL}" == "1" ]]; then
@@ -157,11 +147,12 @@ EOF
 
 printf '[4/6] build %s\n' "${BUILD_OUTPUT}"
 mkdir -p "${BIN_DIR}"
-BUILD_BRANCH="$(resolve_build_branch)"
-CLOUDFLARED_EMBED_ALLOW_DOWNLOAD=0 \
-  bash "${ROOT_DIR}/scripts/externalaccess/prepare-cloudflared-embed.sh"
-bash "${ROOT_DIR}/scripts/upgradeshim/prepare-upgrade-shim-embed.sh"
-"${GO_BIN}" build -ldflags "-X main.branch=${BUILD_BRANCH}" -o "${BUILD_OUTPUT}" "${ROOT_DIR}/cmd/codex-remote"
+SOURCE_COMMIT="$(git rev-parse --verify HEAD^{commit})"
+GO_BIN="${GO_BIN}" bash "${BUILD_HELPER}" \
+  --output "${BUILD_OUTPUT}" \
+  --expected-ref "${SOURCE_COMMIT}" \
+  --flavor dev \
+  --require-clean
 
 printf '[5/6] stage local artifact %s\n' "${CODEX_REMOTE_SELF_TARGET_LOCAL_UPGRADE_ARTIFACT_PATH}"
 mkdir -p "$(dirname "${CODEX_REMOTE_SELF_TARGET_LOCAL_UPGRADE_ARTIFACT_PATH}")"

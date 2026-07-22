@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Type: `general`
-> Updated: `2026-07-08`
-> Summary: 增加 Feishu / WeCom 多通道架构文档索引。
+> Updated: `2026-07-22`
+> Summary: 增加三套本地 stack 统一不可变二进制部署与 canonical checkout runbook 索引。
 
 ## 1. 适用范围
 
@@ -133,6 +133,7 @@
 - [page-mock-guidelines.md](./general/page-mock-guidelines.md)
 - [release-roadmap-workflow.md](./general/release-roadmap-workflow.md)
 - [remote-surface-state-machine.md](./general/remote-surface-state-machine.md)
+- [unified-local-release-runbook.md](./general/unified-local-release-runbook.md)
 - [relay-error-reporting-protocol.md](./general/relay-error-reporting-protocol.md)
 - [relay-protocol-spec.md](./general/relay-protocol-spec.md)
 - [user-guide.md](./general/user-guide.md)

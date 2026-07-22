@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BIN_DIR="${ROOT_DIR}/bin"
 BUILD_OUTPUT="${BIN_DIR}/codex-remote"
 GO_BIN="${GO_BIN:-go}"
+BUILD_HELPER="${ROOT_DIR}/scripts/build/build-codex-remote.sh"
 BASE_DIR=""
 INSTANCE=""
 UPGRADE_SLOT=""
@@ -24,22 +25,9 @@ options:
   --instance <id>   override the repo install target instance
   --base-dir <dir>  override the install base dir resolved for that instance
   --slot <slot>     optional explicit upgrade slot label
-  --allow-dirty     skip the clean-worktree guard before git pull
+  --allow-dirty     deprecated compatibility flag; dirty deployment still fails
   -h, --help        show this help text
 EOF
-}
-
-resolve_build_branch() {
-  if [[ -n "${CODEX_REMOTE_BUILD_BRANCH:-}" ]]; then
-    printf '%s\n' "${CODEX_REMOTE_BUILD_BRANCH}"
-    return
-  fi
-  local branch=""
-  if branch="$(git branch --show-current 2>/dev/null)" && [[ -n "${branch}" ]]; then
-    printf '%s\n' "${branch}"
-    return
-  fi
-  printf '%s\n' "dev"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -78,11 +66,13 @@ done
 
 cd "${ROOT_DIR}"
 
-if [[ "${ALLOW_DIRTY}" != "1" ]]; then
-  if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
-    echo "working tree has uncommitted changes; commit/stash them first or rerun with --allow-dirty" >&2
-    exit 1
-  fi
+WORKTREE_STATUS="$(git status --porcelain --untracked-files=normal)" || { echo "unable to inspect working tree" >&2; exit 1; }
+if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules -- || [[ -n "${WORKTREE_STATUS}" ]]; then
+  echo "working tree has uncommitted changes; deployment builds must be clean" >&2
+  exit 1
+fi
+if [[ "${ALLOW_DIRTY}" == "1" ]]; then
+  echo "warning: --allow-dirty is deprecated and no longer bypasses deployment provenance checks" >&2
 fi
 
 printf '[1/5] git pull --ff-only\n'
@@ -105,11 +95,12 @@ printf 'target admin: %s\n' "${CODEX_REMOTE_TARGET_ADMIN_URL}"
 
 printf '[3/5] build %s\n' "${BUILD_OUTPUT}"
 mkdir -p "${BIN_DIR}"
-BUILD_BRANCH="$(resolve_build_branch)"
-CLOUDFLARED_EMBED_ALLOW_DOWNLOAD=0 \
-  bash "${ROOT_DIR}/scripts/externalaccess/prepare-cloudflared-embed.sh"
-bash "${ROOT_DIR}/scripts/upgradeshim/prepare-upgrade-shim-embed.sh"
-"${GO_BIN}" build -ldflags "-X main.branch=${BUILD_BRANCH}" -o "${BUILD_OUTPUT}" "${ROOT_DIR}/cmd/codex-remote"
+SOURCE_COMMIT="$(git rev-parse --verify HEAD^{commit})"
+GO_BIN="${GO_BIN}" bash "${BUILD_HELPER}" \
+  --output "${BUILD_OUTPUT}" \
+  --expected-ref "${SOURCE_COMMIT}" \
+  --flavor dev \
+  --require-clean
 
 if [[ ! -f "${CODEX_REMOTE_TARGET_STATE_PATH}" ]]; then
   echo "install state not found: ${CODEX_REMOTE_TARGET_STATE_PATH}" >&2

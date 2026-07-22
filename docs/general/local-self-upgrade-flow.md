@@ -1,8 +1,8 @@
 # 本地自升级流程
 
 > Type: `general`
-> Updated: `2026-04-27`
-> Summary: 说明 repo 构建产物触发本地自升级时的完整时序、内嵌 upgrade shim 的释放与启动方式、与 `/upgrade dev` 的边界、自动回滚规则，以及 repo install target 与当前 daemon self target 的语义边界。
+> Updated: `2026-07-22`
+> Summary: 同步 exact-clean shared build helper、unified release ownership guard，并明确单一 InstallState 自升级与三套 stack fleet deployment 的边界。
 
 ## 1. 这份文档回答什么问题
 
@@ -23,6 +23,8 @@
 ## 2. 范围与边界
 
 这份文档描述的是当前实现里的“repo 构建产物 -> 本地已安装实例”的自升级事务。
+
+这里的事务边界始终是一份 `install-state.json`。它不负责同时升级多套 systemd stack；三套本地 fleet 的统一部署见 [unified-local-release-runbook.md](./unified-local-release-runbook.md)。
 
 它不展开：
 
@@ -48,7 +50,7 @@
 这是源码仓库 helper。它负责：
 
 - 在工作区干净时先 `git pull --ff-only`
-- 构建新的 `./bin/codex-remote`
+- 通过 `scripts/build/build-codex-remote.sh` 从当前 exact clean commit 构建新的 `./bin/codex-remote`
 - 解析当前 repo 绑定到哪个已安装实例
 - 把构建产物复制到该实例的固定 local-upgrade artifact 路径
 - 用刚构建出的 binary 调 `local-upgrade`
@@ -60,7 +62,7 @@
 这是“升级当前 daemon 自身”的 repo helper。它负责：
 
 - 解析当前 daemon self target
-- 用当前 repo checkout 重新构建 `./bin/codex-remote`
+- 通过同一个 shared build helper 从当前 exact clean commit 构建 `./bin/codex-remote`
 - 把构建产物复制到当前 daemon 的 fixed local-upgrade artifact 路径
 - 用刚构建出的 binary 直接执行 `local-upgrade -state-path <selfStatePath>`
 - 可选地等待 admin health 恢复
@@ -101,7 +103,7 @@ helper 真正切换版本时，覆盖的是这条路径。
 
 真正执行“停旧服务 -> 切换 stable binary -> 拉起新服务 -> 观察健康 -> 必要时回滚”的，是一个独立 helper 进程。
 
-这个 helper 不再复用主 `codex-remote` binary 本体，而是一个构建时内嵌在主程序里的 tiny shim。需要执行升级事务时，当前进程会把它释放到：
+这个 helper 不再复用主 `codex-remote` binary 本体，而是一个构建时内嵌在主程序里的独立 shim。构建 shim 时会显式排除 managed-shim 与 upgrade-shim 的 embed payload，避免 shim 递归嵌入自身。需要执行升级事务时，当前进程会把它释放到：
 
 ```text
 <stateDir>/upgrade-helper/codex-remote-upgrade-shim-<timestamp>
@@ -161,18 +163,19 @@ repo 里常用的辅助解析入口是：
 
 ### 5.1 第一步：同步并构建 repo 产物
 
-`./upgrade-local.sh` 默认要求工作区干净；如果不干净，会直接拒绝继续，除非显式传 `--allow-dirty`。
+`./upgrade-local.sh` 与 `./upgrade-self.sh` 都要求工作区完全干净（包含 untracked files）。`--allow-dirty` 只保留为 deprecated CLI compatibility，不能再绕过 deployment provenance guard。
 
 通过检查后，它会：
 
 1. `git pull --ff-only`
-2. 准备 host 平台的内嵌 upgrade shim 资产
-3. 构建 `./bin/codex-remote`
+2. 解析当前 full commit，并要求 `HEAD` 精确匹配
+3. 通过 shared build helper 准备内嵌资产、集中组装 ldflags，再从该 commit 的 `git archive` snapshot 构建 `./bin/codex-remote`
 
 这一步产出的 `./bin/codex-remote` 的主要用途是：
 
 - 作为本次升级的 source build
 - 携带当前 host 平台的内嵌 upgrade shim 资产，供后续 `local-upgrade` 释放
+- 保持 `--version` 的旧语义版本输出，通过 `--version-detail` 暴露 version、full commit、UTC build time、dirty state、branch 与 flavor
 
 ### 5.2 第二步：解析 repo install target
 
@@ -358,6 +361,12 @@ helper shim 入口是一个独立 binary，本身不再接受 `upgrade-helper -s
 
 它会被放进独立 transient unit，而不是复用 `codex-remote.service` 本身。否则 stop 原 service 时，helper 也会被连带终止。
 
+### 10.5 unified alias 不属于单实例 upgrade-helper
+
+三套本地 stack 迁入 unified release layout 后，稳定入口是 unified operator 管理的 symlink。install-state upgrade、release upgrade、packaged repair 与普通 install 都会检查 `.codex-remote-unified-release` ownership marker，并拒绝覆盖该 alias。
+
+这不是临时互斥锁，而是 ownership 边界：fleet transaction 必须由 `deploy-local-release.sh` 同时 stop/publish/start/health-check 全部 allowlisted daemon/site units。要回到普通单实例管理，必须先设计并执行显式 migration，不能删除 marker 或强制 copy。
+
 ## 11. 常看路径
 
 假设目标实例的 `install-state.json` 位于 `<stateDir>/install-state.json`，那这次事务常见路径大致是：
@@ -391,6 +400,9 @@ live installed binary:
 当前实现的主要锚点在：
 
 - `upgrade-local.sh`
+- `upgrade-self.sh`
+- `scripts/build/build-codex-remote.sh`
+- `scripts/deploy/local-release.sh`
 - `internal/app/install/local_upgrade_entry.go`
 - `internal/app/install/local_upgrade.go`
 - `internal/app/install/upgrade_shim.go`

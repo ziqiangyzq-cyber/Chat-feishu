@@ -213,6 +213,14 @@ func installBinary(sourcePath, installDir string) (string, error) {
 	if samePath(sourcePath, targetPath) {
 		return targetPath, nil
 	}
+	releaseMutationLock, err := acquireBinaryMutationLock(targetPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = releaseMutationLock() }()
+	if err := EnsureStandaloneUpgradeAllowed(targetPath); err != nil {
+		return "", err
+	}
 	if err := copyFile(sourcePath, targetPath); err != nil {
 		return "", err
 	}

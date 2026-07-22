@@ -60,6 +60,10 @@ func (a *App) runPendingUpgradeStart(request upgradeStartRequest) {
 	defer cancel()
 
 	stateValue := request.State
+	if err := install.EnsureStandaloneUpgradeAllowed(stateValue.CurrentBinaryPath); err != nil {
+		a.finishUpgradeStartFailure(request, err)
+		return
+	}
 	targetVersion := strings.TrimSpace(stateValue.PendingUpgrade.TargetVersion)
 	if request.FlowID != "" {
 		a.mu.Lock()

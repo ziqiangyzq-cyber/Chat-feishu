@@ -145,7 +145,11 @@ function Build-WindowsReleaseFixture([string]$VersionValue, [string]$TargetDir) 
     $env:CGO_ENABLED = "0"
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"
-    $ldflags = "-X main.version=$VersionValue -X main.branch=$(Get-BuildBranch) -X github.com/kxn/codex-remote-feishu/internal/buildinfo.FlavorValue=shipping"
+    $commit = (git rev-parse --verify 'HEAD^{commit}').Trim()
+    $builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $branch = Get-BuildBranch
+    $dirty = if ([string]::IsNullOrWhiteSpace((git status --porcelain --untracked-files=normal | Out-String))) { "false" } else { "true" }
+    $ldflags = "-X github.com/kxn/codex-remote-feishu/internal/buildinfo.VersionValue=$VersionValue -X github.com/kxn/codex-remote-feishu/internal/buildinfo.BranchValue=$branch -X github.com/kxn/codex-remote-feishu/internal/buildinfo.CommitValue=$commit -X github.com/kxn/codex-remote-feishu/internal/buildinfo.BuildTimeUTCValue=$builtAt -X github.com/kxn/codex-remote-feishu/internal/buildinfo.DirtyValue=$dirty -X github.com/kxn/codex-remote-feishu/internal/buildinfo.FlavorValue=shipping"
 
     Push-Location $RootDir
     try {

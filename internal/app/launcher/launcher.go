@@ -12,12 +12,13 @@ import (
 )
 
 type Options struct {
-	Args    []string
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Version string
-	Branch  string
+	Args            []string
+	Stdin           io.Reader
+	Stdout          io.Writer
+	Stderr          io.Writer
+	Version         string
+	DetailedVersion string
+	Branch          string
 
 	Runners RunnerSet
 }
@@ -48,6 +49,9 @@ func Main(opts Options) int {
 		return 0
 	case RoleVersion:
 		_, _ = fmt.Fprintf(opts.Stdout, "%s\n", opts.Version)
+		return 0
+	case RoleDetailedVersion:
+		_, _ = fmt.Fprintf(opts.Stdout, "%s\n", opts.DetailedVersion)
 		return 0
 	}
 
@@ -130,6 +134,9 @@ func withDefaults(opts Options) Options {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
+	if opts.DetailedVersion == "" {
+		opts.DetailedVersion = opts.Version
+	}
 	if opts.Branch == "" {
 		opts.Branch = "dev"
 	}
@@ -174,6 +181,8 @@ func usageText() string {
   codex-remote wrapper app-server [codex app-server args...]
   codex-remote wrapper claude-app-server [claude app-server args...]
   codex-remote version
+  codex-remote --version
+  codex-remote --version-detail
   codex-remote help
 
 Notes:
