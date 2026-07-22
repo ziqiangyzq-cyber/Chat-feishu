@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/pathscope"
+	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
 
 const (
@@ -39,12 +40,17 @@ type AppConfig struct {
 	Tool           ToolSettings           `json:"tool,omitempty"`
 	ExternalAccess ExternalAccessSettings `json:"externalAccess,omitempty"`
 	Wrapper        WrapperSettings        `json:"wrapper"`
+	Workspace      WorkspaceSettings      `json:"workspace,omitempty"`
 	Codex          CodexSettings          `json:"codex,omitempty"`
 	Claude         ClaudeSettings         `json:"claude,omitempty"`
 	Feishu         FeishuSettings         `json:"feishu"`
 	WeCom          WeComSettings          `json:"wecom,omitempty"`
 	Debug          DebugSettings          `json:"debug"`
 	Storage        StorageSettings        `json:"storage,omitempty"`
+}
+
+type WorkspaceSettings struct {
+	DisplayNames map[string]string `json:"displayNames,omitempty"`
 }
 
 type RelaySettings struct {
@@ -446,6 +452,7 @@ func (cfg AppConfig) normalized() AppConfig {
 	cfg.Codex.Providers = NormalizeCodexProviders(cfg.Codex.Providers)
 	cfg.Claude.Profiles = NormalizeClaudeProfiles(cfg.Claude.Profiles)
 	cfg.WeCom = cfg.WeCom.normalized()
+	cfg.Workspace.DisplayNames = state.NormalizeWorkspaceDisplayNames(cfg.Workspace.DisplayNames)
 
 	if cfg.Debug.Pprof != nil {
 		normalized := cfg.Debug.Pprof.normalized()

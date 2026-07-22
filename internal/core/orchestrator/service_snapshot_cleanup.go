@@ -234,8 +234,12 @@ func (s *Service) retargetManagedHeadlessInstance(inst *state.InstanceRecord, cw
 	if inst == nil || cwd == "" || !isHeadlessInstance(inst) {
 		return
 	}
+	previousDisplayName := strings.TrimSpace(inst.DisplayName)
+	previousShortName := strings.TrimSpace(inst.ShortName)
 	inst.WorkspaceRoot = cwd
 	inst.WorkspaceKey = state.ResolveWorkspaceKey(cwd)
 	inst.ShortName = state.WorkspaceShortName(cwd)
-	inst.DisplayName = inst.ShortName
+	if previousDisplayName == "" || previousDisplayName == previousShortName {
+		inst.DisplayName = inst.ShortName
+	}
 }

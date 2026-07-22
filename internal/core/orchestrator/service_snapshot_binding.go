@@ -48,7 +48,7 @@ func (s *Service) bindSurfaceToThreadMode(surface *state.SurfaceConsoleRecord, i
 		surface,
 		threadID,
 		string(surface.RouteMode),
-		displayThreadTitle(inst, thread),
+		s.displayThreadTitle(inst, thread),
 	)...)
 	return events
 }

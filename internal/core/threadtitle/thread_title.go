@@ -17,6 +17,7 @@ type Context struct {
 	ThreadID     string
 	ThreadCWD    string
 	WorkspaceKey string
+	DisplayNames map[string]string
 }
 
 func RawSemanticTitle(thread *state.ThreadRecord) string {
@@ -47,24 +48,24 @@ func DisplayTitle(inst *state.InstanceRecord, thread *state.ThreadRecord, limit 
 	if body == "" {
 		return ""
 	}
-	prefix := WorkspaceLabel(inst, thread)
+	prefix := WorkspaceLabel(inst, thread, nil)
 	if prefix == "" {
 		return body
 	}
 	return fmt.Sprintf("%s · %s", prefix, body)
 }
 
-func WorkspaceLabel(inst *state.InstanceRecord, thread *state.ThreadRecord) string {
+func WorkspaceLabel(inst *state.InstanceRecord, thread *state.ThreadRecord, displayNames map[string]string) string {
 	if thread != nil {
-		if short := state.WorkspaceShortName(thread.CWD); short != "" {
+		if short := state.WorkspaceDisplayLabel(thread.CWD, displayNames); short != "" {
 			return short
 		}
 	}
 	if inst != nil {
-		if short := state.WorkspaceShortName(inst.WorkspaceKey); short != "" {
+		if short := state.WorkspaceDisplayLabel(inst.WorkspaceKey, displayNames); short != "" {
 			return short
 		}
-		if short := state.WorkspaceShortName(inst.WorkspaceRoot); short != "" {
+		if short := state.WorkspaceDisplayLabel(inst.WorkspaceRoot, displayNames); short != "" {
 			return short
 		}
 		if short := strings.TrimSpace(inst.ShortName); short != "" {
@@ -112,7 +113,7 @@ func NormalizeStoredInput(title string, ctx Context) string {
 	}
 
 stripWorkspacePrefix:
-	if workspaceShort := state.WorkspaceShortName(state.ResolveWorkspaceKey(ctx.ThreadCWD, ctx.WorkspaceKey)); workspaceShort != "" {
+	if workspaceShort := state.WorkspaceDisplayLabel(state.ResolveWorkspaceKey(ctx.ThreadCWD, ctx.WorkspaceKey), ctx.DisplayNames); workspaceShort != "" {
 		prefix := workspaceShort + " · "
 		for {
 			switch {

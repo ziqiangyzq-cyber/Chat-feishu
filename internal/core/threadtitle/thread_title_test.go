@@ -45,6 +45,14 @@ func TestDisplayTitle(t *testing.T) {
 			t.Fatalf("DisplayTitle() = %q, want %q", got, "alt · 修复登录流程")
 		}
 	})
+
+	t.Run("uses configured workspace alias for prefix", func(t *testing.T) {
+		t.Parallel()
+		thread := &state.ThreadRecord{ThreadID: "thread-1", Name: "修复登录流程", CWD: "/data/dl/site"}
+		if got := WorkspaceLabel(inst, thread, map[string]string{"/data/dl/site": "claude-remote-workspace"}); got != "claude-remote-workspace" {
+			t.Fatalf("WorkspaceLabel() = %q, want %q", got, "claude-remote-workspace")
+		}
+	})
 }
 
 func TestRawSemanticTitle(t *testing.T) {
@@ -139,6 +147,19 @@ func TestStoredTitle(t *testing.T) {
 		thread := &state.ThreadRecord{ThreadID: "thread-1", Name: "新会话"}
 		if got := StoredTitle("droid · 未命名会话", ctx, thread); got != "" {
 			t.Fatalf("StoredTitle() = %q, want empty", got)
+		}
+	})
+
+	t.Run("strips configured alias prefix", func(t *testing.T) {
+		t.Parallel()
+		ctx := Context{
+			ThreadID:     "thread-1",
+			ThreadCWD:    "/data/dl/site",
+			WorkspaceKey: "/data/dl/site",
+			DisplayNames: map[string]string{"/data/dl/site": "claude-remote-workspace"},
+		}
+		if got := NormalizeStoredInput("claude-remote-workspace · 修复登录流程", ctx); got != "修复登录流程" {
+			t.Fatalf("NormalizeStoredInput() = %q, want %q", got, "修复登录流程")
 		}
 	})
 }

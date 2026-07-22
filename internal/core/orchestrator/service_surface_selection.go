@@ -152,6 +152,16 @@ func instanceSelectionLabel(inst *state.InstanceRecord) string {
 	return label
 }
 
+func (s *Service) workspaceSelectionLabel(workspaceKey string) string {
+	if label := state.WorkspaceDisplayLabel(workspaceKey, s.config.WorkspaceDisplayNames); label != "" {
+		return label
+	}
+	if label := strings.TrimSpace(filepath.Base(workspaceKey)); label != "" && label != "." && label != string(filepath.Separator) {
+		return label
+	}
+	return workspaceKey
+}
+
 func instanceLatestVisibleThreadUsedAt(inst *state.InstanceRecord) time.Time {
 	if inst == nil {
 		return time.Time{}
@@ -277,7 +287,7 @@ func (s *Service) buildWorkspaceSelectionModel(surface *state.SurfaceConsoleReco
 		if !latestUsedAt.IsZero() {
 			ageText = humanizeRelativeTime(s.now(), latestUsedAt)
 		}
-		label := workspaceSelectionLabel(workspaceKey)
+		label := s.workspaceSelectionLabel(workspaceKey)
 		hasVSCodeActivity := s.workspaceHasVSCodeActivity(instances)
 		isCurrent := surface.AttachedInstanceID != "" && currentWorkspace != "" && currentWorkspace == workspaceKey
 		busy := s.workspaceBusyOwnerForSurface(surface, workspaceKey) != nil
@@ -581,13 +591,6 @@ func (s *Service) workspaceHasVSCodeActivity(instances []*state.InstanceRecord) 
 		}
 	}
 	return false
-}
-
-func workspaceSelectionLabel(workspaceKey string) string {
-	if label := strings.TrimSpace(filepath.Base(workspaceKey)); label != "" && label != "." && label != string(filepath.Separator) {
-		return label
-	}
-	return workspaceKey
 }
 
 func (s *Service) mergeWorkspaceSelectionRecencyFromOnlineThreads(surface *state.SurfaceConsoleRecord, latest map[string]time.Time, seen map[string]bool, visible map[string]struct{}) {

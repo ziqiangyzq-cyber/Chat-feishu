@@ -28,7 +28,7 @@ func targetPickerWorkspaceMetaText(entry workspaceSelectionEntry, metaByKey map[
 	return strings.TrimSpace(metaByKey[normalizeWorkspaceClaimKey(entry.workspaceKey)])
 }
 
-func targetPickerLockedWorkspaceSummary(entries []workspaceSelectionEntry, workspaceKey string) (string, string) {
+func (s *Service) targetPickerLockedWorkspaceSummary(entries []workspaceSelectionEntry, workspaceKey string) (string, string) {
 	workspaceKey = normalizeWorkspaceClaimKey(workspaceKey)
 	if workspaceKey == "" {
 		return "", ""
@@ -38,10 +38,10 @@ func targetPickerLockedWorkspaceSummary(entries []workspaceSelectionEntry, works
 		if normalizeWorkspaceClaimKey(entry.workspaceKey) != workspaceKey {
 			continue
 		}
-		label := strings.TrimSpace(firstNonEmpty(entry.label, workspaceSelectionLabel(workspaceKey)))
+		label := strings.TrimSpace(firstNonEmpty(entry.label, s.workspaceSelectionLabel(workspaceKey)))
 		return label, targetPickerWorkspaceMetaText(entry, metaByKey)
 	}
-	return workspaceSelectionLabel(workspaceKey), ""
+	return s.workspaceSelectionLabel(workspaceKey), ""
 }
 
 func parseTargetPickerSessionValue(value string) (control.FeishuTargetPickerSessionKind, string) {

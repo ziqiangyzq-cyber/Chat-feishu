@@ -60,7 +60,7 @@ func (s *Service) buildSnapshot(surface *state.SurfaceConsoleRecord) *control.Sn
 		selectedModelReroute := (*agentproto.TurnModelReroute)(nil)
 		selectedAgeText := ""
 		if selected != nil {
-			selectedTitle = displayThreadTitle(inst, selected)
+			selectedTitle = s.displayThreadTitle(inst, selected)
 			selectedFirstUserMessage = threadFirstUserSnippet(selected, 64)
 			selectedLastUserMessage = threadLastUserSnippet(selected, 64)
 			selectedModelReroute = agentproto.CloneTurnModelReroute(selected.LastModelReroute)
@@ -107,7 +107,7 @@ func (s *Service) buildSnapshot(surface *state.SurfaceConsoleRecord) *control.Sn
 			snapshot.Threads = append(snapshot.Threads, control.ThreadSummary{
 				ThreadID:           thread.ThreadID,
 				Name:               thread.Name,
-				DisplayTitle:       displayThreadTitle(inst, thread),
+				DisplayTitle:       s.displayThreadTitle(inst, thread),
 				Preview:            thread.Preview,
 				CWD:                thread.CWD,
 				State:              threadProjectedState(thread),

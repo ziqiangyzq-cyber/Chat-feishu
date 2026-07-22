@@ -311,6 +311,7 @@ func (a *App) currentSurfaceResumeTargetLocked(surface *state.SurfaceConsoleReco
 				ThreadID:     target.ResumeThreadID,
 				ThreadCWD:    target.ResumeThreadCWD,
 				WorkspaceKey: target.ResumeWorkspaceKey,
+				DisplayNames: a.serviceConfigWorkspaceDisplayNames(),
 			}, thread)
 		}
 		return target, true
@@ -348,6 +349,13 @@ func (a *App) currentSurfaceResumeTargetLocked(surface *state.SurfaceConsoleReco
 		}
 	}
 	return surfaceResumeTarget{}, false
+}
+
+func (a *App) serviceConfigWorkspaceDisplayNames() map[string]string {
+	if a == nil || a.service == nil {
+		return nil
+	}
+	return a.service.WorkspaceDisplayNames()
 }
 
 func (a *App) surfaceRecordLocked(surfaceID string) *state.SurfaceConsoleRecord {
