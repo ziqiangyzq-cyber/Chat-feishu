@@ -133,6 +133,11 @@ func (s *Service) newTargetPickerRecord(surface *state.SurfaceConsoleRecord, sou
 	if source == control.TargetPickerRequestSourceWorkspace && lockedWorkspaceKey == "" {
 		lockedWorkspaceKey = preferredWorkspaceKey
 	}
+	if lockedWorkspaceKey == "" && targetPickerRequiresExistingWorkspace(source) {
+		if soleKey, ok := s.targetPickerSoleWorkspaceKey(surface); ok {
+			lockedWorkspaceKey = soleKey
+		}
+	}
 	allowNewThread := opts.AllowNewThread
 	if !allowNewThread {
 		allowNewThread = targetPickerSourceDefaultsToAllowNewThread(source)
@@ -837,6 +842,17 @@ func (s *Service) targetPickerWorkspaceEntries(surface *state.SurfaceConsoleReco
 	}
 	sortWorkspaceSelectionEntries(entries)
 	return entries
+}
+
+// targetPickerSoleWorkspaceKey reports the single workspace a surface can see
+// (after policy filtering) so the picker can skip asking the user to choose
+// among workspaces when there is only one possible answer.
+func (s *Service) targetPickerSoleWorkspaceKey(surface *state.SurfaceConsoleRecord) (string, bool) {
+	entries := s.targetPickerWorkspaceEntries(surface)
+	if len(entries) != 1 {
+		return "", false
+	}
+	return entries[0].workspaceKey, true
 }
 
 func (s *Service) targetPickerSessionOptions(surface *state.SurfaceConsoleRecord, workspaceKey string, source control.TargetPickerRequestSource, allowNewThread bool) []control.FeishuTargetPickerSessionOption {

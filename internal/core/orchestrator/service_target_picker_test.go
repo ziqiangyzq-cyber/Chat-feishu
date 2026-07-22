@@ -858,6 +858,12 @@ func TestTargetPickerListPrefersRealWorkspaceAndDefaultsToNewThread(t *testing.T
 	if _, ok := targetPickerSessionOption(view, targetPickerThreadValue("thread-web")); !ok {
 		t.Fatalf("expected /list picker to keep existing session selectable, got %#v", view.SessionOptions)
 	}
+	if !view.WorkspaceSelectionLocked || view.LockedWorkspaceKey != "/data/dl/web" {
+		t.Fatalf("expected /list picker to auto-lock the only visible workspace, got %#v", view)
+	}
+	if view.ShowWorkspaceSelect {
+		t.Fatalf("expected /list picker to hide the redundant workspace dropdown when only one workspace exists, got %#v", view)
+	}
 }
 
 func TestTargetPickerListShowsRepoFamilyBranchMeta(t *testing.T) {
@@ -909,6 +915,9 @@ func TestTargetPickerListShowsRepoFamilyBranchMeta(t *testing.T) {
 	}
 	if featureOption.MetaText != "feature/auth" {
 		t.Fatalf("feature worktree meta = %q, want %q", featureOption.MetaText, "feature/auth")
+	}
+	if view.WorkspaceSelectionLocked || !view.ShowWorkspaceSelect {
+		t.Fatalf("expected /list picker to keep the workspace dropdown when more than one workspace exists, got %#v", view)
 	}
 
 	locked := singleTargetPickerEvent(t, svc.openLockedWorkspaceTargetPicker(svc.root.Surfaces["surface-1"], worktreeRoot, true))
