@@ -73,9 +73,10 @@ func TestLoadServicesConfigUsesUnifiedConfigEnvOverride(t *testing.T) {
 		Enabled:   boolPtr(true),
 	}}
 	cfg.WeCom = WeComSettings{
-		Enabled: boolPtr(true),
-		BotID:   "bot_json",
-		Secret:  "secret_json",
+		Enabled:        boolPtr(true),
+		BotID:          "bot_json",
+		Secret:         "secret_json",
+		CallbackAESKey: "callback_key_json",
 	}
 	cfg.Debug.RelayFlow = true
 	cfg.Debug.RelayRaw = true
@@ -106,6 +107,9 @@ func TestLoadServicesConfigUsesUnifiedConfigEnvOverride(t *testing.T) {
 	if loaded.WeComBotID != "bot_json" || loaded.WeComSecret != "secret_json" {
 		t.Fatalf("wecom = %q/%q", loaded.WeComBotID, loaded.WeComSecret)
 	}
+	if len(loaded.WeComBots) != 1 || loaded.WeComBots[0].CallbackAESKey != "callback_key_json" {
+		t.Fatalf("wecom callback AES key was not propagated: %#v", loaded.WeComBots)
+	}
 	if !loaded.FeishuUseSystemProxy {
 		t.Fatal("expected FeishuUseSystemProxy to be true")
 	}
@@ -123,6 +127,7 @@ func TestLoadServicesConfigUsesWeComEnvOverride(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdgHome)
 	t.Setenv("WECOM_BOT_ID", "bot_env")
 	t.Setenv("WECOM_SECRET", "secret_env")
+	t.Setenv("WECOM_CALLBACK_AES_KEY", "callback_key_env")
 
 	configPath := filepath.Join(xdgHome, "codex-remote", "config.json")
 	cfg := DefaultAppConfig()
@@ -141,6 +146,9 @@ func TestLoadServicesConfigUsesWeComEnvOverride(t *testing.T) {
 	}
 	if loaded.WeComBotID != "bot_env" || loaded.WeComSecret != "secret_env" {
 		t.Fatalf("wecom env override = %q/%q", loaded.WeComBotID, loaded.WeComSecret)
+	}
+	if len(loaded.WeComBots) != 1 || loaded.WeComBots[0].CallbackAESKey != "callback_key_env" {
+		t.Fatalf("wecom callback AES key env override was not propagated: %#v", loaded.WeComBots)
 	}
 }
 

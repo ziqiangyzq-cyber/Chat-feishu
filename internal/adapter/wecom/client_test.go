@@ -77,6 +77,38 @@ func TestDispatchMessageCallbackUsesOfficialEnvelope(t *testing.T) {
 	}
 }
 
+func TestDispatchMessageCallbackDecodesInboundMediaAndVoiceFields(t *testing.T) {
+	client := NewClient(Config{})
+	var frames []msgCallbackFrame
+	client.onMessage = func(_ context.Context, frame msgCallbackFrame) {
+		frames = append(frames, frame)
+	}
+
+	callbacks := []string{
+		`{"cmd":"aibot_msg_callback","body":{"msgtype":"image","image":{"url":"https://example.test/image","aeskey":"image-key"}}}`,
+		`{"cmd":"aibot_msg_callback","body":{"msgtype":"file","file":{"url":"https://example.test/file","aeskey":"file-key"}}}`,
+		`{"cmd":"aibot_msg_callback","body":{"msgtype":"voice","voice":{"content":"voice transcript"}}}`,
+	}
+	for _, raw := range callbacks {
+		if err := client.dispatch(context.Background(), []byte(raw)); err != nil {
+			t.Fatalf("dispatch %s: %v", raw, err)
+		}
+	}
+
+	if len(frames) != 3 {
+		t.Fatalf("decoded frames = %d, want 3", len(frames))
+	}
+	if frames[0].Image.URL != "https://example.test/image" || frames[0].Image.AESKey != "image-key" {
+		t.Fatalf("unexpected image callback: %+v", frames[0].Image)
+	}
+	if frames[1].File.URL != "https://example.test/file" || frames[1].File.AESKey != "file-key" {
+		t.Fatalf("unexpected file callback: %+v", frames[1].File)
+	}
+	if frames[2].Voice.Content != "voice transcript" {
+		t.Fatalf("unexpected voice callback: %+v", frames[2].Voice)
+	}
+}
+
 func TestNewSendMsgFrameUsesOfficialEnvelope(t *testing.T) {
 	frame := newSendMsgFrame("chat-1", Frame{
 		MsgType: "text",

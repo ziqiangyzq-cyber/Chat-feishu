@@ -153,13 +153,15 @@ func resolveWeComRuntimeCredentials(settings WeComSettings) (botID, secret strin
 func resolveWeComRuntimeBots(settings WeComSettings) []WeComBotConfig {
 	envBotID := strings.TrimSpace(os.Getenv("WECOM_BOT_ID"))
 	envSecret := strings.TrimSpace(os.Getenv("WECOM_SECRET"))
+	envCallbackAESKey := strings.TrimSpace(os.Getenv("WECOM_CALLBACK_AES_KEY"))
 	if envBotID != "" || envSecret != "" {
 		return []WeComBotConfig{{
-			ID:      envBotID,
-			Name:    configFirstNonEmpty(envBotID, "WeCom Bot"),
-			BotID:   envBotID,
-			Secret:  envSecret,
-			Enabled: boolPtr(true),
+			ID:             envBotID,
+			Name:           configFirstNonEmpty(envBotID, "WeCom Bot"),
+			BotID:          envBotID,
+			Secret:         envSecret,
+			CallbackAESKey: envCallbackAESKey,
+			Enabled:        boolPtr(true),
 		}}
 	}
 	if settings.Enabled != nil && !*settings.Enabled {
@@ -169,6 +171,12 @@ func resolveWeComRuntimeBots(settings WeComSettings) []WeComBotConfig {
 		bots := make([]WeComBotConfig, 0, len(settings.Bots))
 		for _, bot := range settings.Bots {
 			bot = bot.normalized()
+			if bot.CallbackAESKey == "" {
+				bot.CallbackAESKey = strings.TrimSpace(settings.CallbackAESKey)
+			}
+			if envCallbackAESKey != "" {
+				bot.CallbackAESKey = envCallbackAESKey
+			}
 			if bot.Enabled != nil && !*bot.Enabled {
 				continue
 			}
@@ -185,11 +193,12 @@ func resolveWeComRuntimeBots(settings WeComSettings) []WeComBotConfig {
 		return nil
 	}
 	return []WeComBotConfig{{
-		ID:      "bot",
-		Name:    "WeCom Bot",
-		BotID:   botID,
-		Secret:  secret,
-		Enabled: settings.Enabled,
+		ID:             "bot",
+		Name:           "WeCom Bot",
+		BotID:          botID,
+		Secret:         secret,
+		CallbackAESKey: configFirstNonEmpty(envCallbackAESKey, settings.CallbackAESKey),
+		Enabled:        settings.Enabled,
 	}}
 }
 

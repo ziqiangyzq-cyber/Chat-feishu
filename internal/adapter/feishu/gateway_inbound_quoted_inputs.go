@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
-	"os"
 	"strings"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -16,6 +14,7 @@ import (
 	gatewaypkg "github.com/kxn/codex-remote-feishu/internal/adapter/feishu/gateway"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
+	"github.com/kxn/codex-remote-feishu/internal/inboundmedia"
 )
 
 func (g *LiveGateway) quotedInputs(ctx context.Context, message *larkim.EventMessage) []agentproto.Input {
@@ -427,37 +426,11 @@ func (g *LiveGateway) downloadImage(ctx context.Context, messageID, imageKey str
 	if err != nil {
 		return "", "", err
 	}
-	dir := g.config.TempDir
-	if dir == "" {
-		dir = os.TempDir()
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", "", err
-	}
-	file, err := os.CreateTemp(dir, "codex-remote-image-*")
-	if err != nil {
-		return "", "", err
-	}
-	defer file.Close()
 	bytes, err := io.ReadAll(resp.File)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := file.Write(bytes); err != nil {
-		return "", "", err
-	}
-	if err := file.Close(); err != nil {
-		return "", "", err
-	}
-	mimeType := http.DetectContentType(bytes)
-	target := file.Name()
-	if ext := mimeExtension(mimeType); ext != "" && !strings.HasSuffix(target, ext) {
-		renamed := target + ext
-		if err := os.Rename(target, renamed); err == nil {
-			target = renamed
-		}
-	}
-	return target, mimeType, nil
+	return inboundmedia.StageImage(g.config.TempDir, bytes)
 }
 
 func (g *LiveGateway) downloadFile(ctx context.Context, messageID, fileKey, fileName string) (string, error) {
@@ -489,29 +462,7 @@ func (g *LiveGateway) downloadFile(ctx context.Context, messageID, fileKey, file
 	if err != nil {
 		return "", err
 	}
-	dir := g.config.TempDir
-	if dir == "" {
-		dir = os.TempDir()
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	pattern := "codex-remote-file-*"
-	if trimmed := strings.TrimSpace(fileName); trimmed != "" {
-		pattern = strings.NewReplacer("\n", "-", "\r", "-", "\\", "-", "/", "-").Replace(trimmed) + "-*"
-	}
-	file, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	if _, err := io.Copy(file, resp.File); err != nil {
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	return file.Name(), nil
+	return inboundmedia.StageFile(g.config.TempDir, fileName, resp.File)
 }
 
 func boolPtr(value *bool) bool {

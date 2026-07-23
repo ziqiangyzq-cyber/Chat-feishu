@@ -107,6 +107,17 @@ type msgCallbackFrame struct {
 	Text           struct {
 		Content string `json:"content"`
 	} `json:"text"`
+	Image struct {
+		URL    string `json:"url"`
+		AESKey string `json:"aeskey"`
+	} `json:"image"`
+	File struct {
+		URL    string `json:"url"`
+		AESKey string `json:"aeskey"`
+	} `json:"file"`
+	Voice struct {
+		Content string `json:"content"`
+	} `json:"voice"`
 }
 
 // streamMeta carries the streaming identity shared across a sequence of

@@ -123,10 +123,12 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		}
 		gatewayID := wecomGatewayIDForBot(bot.ID)
 		app.SetWeComChannelWithGateway(gatewayID, wecom.NewChannel(wecom.Config{
-			BotID:       botID,
-			Secret:      secret,
-			SessionIdle: wecomDurationEnv("WECOM_SESSION_IDLE", 30*time.Minute),
-			MaxTurn:     wecomDurationEnv("WECOM_MAX_TURN", 0),
+			BotID:          botID,
+			Secret:         secret,
+			CallbackAESKey: strings.TrimSpace(bot.CallbackAESKey),
+			TempDir:        filepath.Join(paths.StateDir, "image-staging", sanitizeGatewayPath(gatewayID)),
+			SessionIdle:    wecomDurationEnv("WECOM_SESSION_IDLE", 30*time.Minute),
+			MaxTurn:        wecomDurationEnv("WECOM_MAX_TURN", 0),
 		}))
 		log.Printf("wecom channel enabled (additive): gateway=%s bot=%s", gatewayID, botID)
 	}

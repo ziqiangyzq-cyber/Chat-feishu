@@ -9,6 +9,12 @@ type Config struct {
 	BotID string
 	// Secret authenticates the aibot subscription.
 	Secret string
+	// CallbackAESKey decrypts inbound image/file payloads when the callback
+	// frame omits its per-message aeskey.
+	CallbackAESKey string
+	// TempDir is the shared inbound-media staging directory. Empty uses the
+	// operating system temp directory.
+	TempDir string
 	// SessionIdle is how long a chat may stay quiet before ephemeral state
 	// (callback req_id bindings, open stream ids) is dropped. Zero disables
 	// idle reaping. Default applied by NewChannel is 30 minutes.

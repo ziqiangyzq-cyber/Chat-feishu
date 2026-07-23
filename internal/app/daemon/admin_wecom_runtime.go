@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/wecom"
@@ -87,11 +88,21 @@ func (a *App) mergeWeComRuntimeSummaries(persisted []adminWeComBotSummary) []adm
 	return persisted
 }
 
-func buildWeComChannel(bot config.WeComBotConfig) *wecom.Channel {
+func buildWeComChannel(bot config.WeComBotConfig, tempDir string) *wecom.Channel {
 	return wecom.NewChannel(wecom.Config{
-		BotID:  strings.TrimSpace(bot.BotID),
-		Secret: strings.TrimSpace(bot.Secret),
+		BotID:          strings.TrimSpace(bot.BotID),
+		Secret:         strings.TrimSpace(bot.Secret),
+		CallbackAESKey: strings.TrimSpace(bot.CallbackAESKey),
+		TempDir:        strings.TrimSpace(tempDir),
 	})
+}
+
+func (a *App) wecomInboundMediaTempDir(botID string) string {
+	stateDir := strings.TrimSpace(a.headlessRuntime.Paths.StateDir)
+	if stateDir == "" {
+		return ""
+	}
+	return filepath.Join(stateDir, "image-staging", sanitizeGatewayPath(wecomGatewayIDForBot(botID)))
 }
 
 func isDefaultCompatWeComBot(bot config.WeComBotConfig) bool {

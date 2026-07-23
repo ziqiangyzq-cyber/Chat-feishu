@@ -217,7 +217,7 @@ func (a *App) handleWeComBotReconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) applyPersistedWeComBot(bot config.WeComBotConfig) {
-	channel := buildWeComChannel(bot)
+	channel := buildWeComChannel(bot, a.wecomInboundMediaTempDir(bot.ID))
 	if bot.Enabled != nil && !*bot.Enabled {
 		a.removePersistedWeComBot(bot)
 		return
@@ -250,6 +250,7 @@ func buildWeComBotConfigForCreate(_ []config.WeComBotConfig, req wecomBotWriteRe
 	name := optionalStringValue(req.Name)
 	botID := optionalStringValue(req.BotID)
 	secret := optionalStringValue(req.Secret)
+	callbackAESKey := optionalStringValue(req.CallbackAESKey)
 	if botID == "" {
 		return config.WeComBotConfig{}, &apiError{Code: "wecom_bot_id_required", Message: "wecom botId is required"}
 	}
@@ -267,11 +268,12 @@ func buildWeComBotConfigForCreate(_ []config.WeComBotConfig, req wecomBotWriteRe
 		enabled = *req.Enabled
 	}
 	return config.WeComBotConfig{
-		ID:      id,
-		Name:    name,
-		BotID:   botID,
-		Secret:  secret,
-		Enabled: daemonBoolPtr(enabled),
+		ID:             id,
+		Name:           name,
+		BotID:          botID,
+		Secret:         secret,
+		CallbackAESKey: callbackAESKey,
+		Enabled:        daemonBoolPtr(enabled),
 	}, nil
 }
 
@@ -288,6 +290,9 @@ func mergeWeComBotConfig(current config.WeComBotConfig, req wecomBotWriteRequest
 	if req.Secret != nil && strings.TrimSpace(*req.Secret) != "" {
 		current.Secret = optionalStringValue(req.Secret)
 	}
+	if req.CallbackAESKey != nil && strings.TrimSpace(*req.CallbackAESKey) != "" {
+		current.CallbackAESKey = optionalStringValue(req.CallbackAESKey)
+	}
 	if req.Enabled != nil {
 		current.Enabled = daemonBoolPtr(*req.Enabled)
 	}
@@ -295,6 +300,7 @@ func mergeWeComBotConfig(current config.WeComBotConfig, req wecomBotWriteRequest
 	current.Name = strings.TrimSpace(current.Name)
 	current.BotID = strings.TrimSpace(current.BotID)
 	current.Secret = strings.TrimSpace(current.Secret)
+	current.CallbackAESKey = strings.TrimSpace(current.CallbackAESKey)
 	if current.ID == "" {
 		current.ID = current.BotID
 	}

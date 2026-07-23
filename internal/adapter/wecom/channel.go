@@ -3,7 +3,9 @@ package wecom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +32,8 @@ type Channel struct {
 	recentCardEventByKey map[string]time.Time
 	lastActivityByChat   map[string]time.Time
 	now                  func() time.Time
+	inboundHTTPClient    *http.Client
+	stageInboundMedia    func(context.Context, string, string, string) (stagedInboundMedia, error)
 
 	// inbound serialises handler execution on a dedicated worker goroutine so it
 	// never runs on the read loop. A handler that delivers synchronously ends up
@@ -46,6 +50,11 @@ type responseReqBinding struct {
 	ReqID           string
 	SourceMessageID string
 	BoundAt         time.Time
+}
+
+type inboundMediaReceiveResult struct {
+	media stagedInboundMedia
+	err   error
 }
 
 // Compile-time assertion that *Channel satisfies surface.Channel.
@@ -74,7 +83,7 @@ func NewChannel(config Config) *Channel {
 	if config.SessionIdle <= 0 {
 		config.SessionIdle = defaultSessionIdle
 	}
-	return &Channel{
+	channel := &Channel{
 		client:               NewClient(config),
 		projector:            NewProjector(),
 		config:               config,
@@ -83,7 +92,10 @@ func NewChannel(config Config) *Channel {
 		recentCardEventByKey: make(map[string]time.Time),
 		lastActivityByChat:   make(map[string]time.Time),
 		now:                  time.Now,
+		inboundHTTPClient:    newInboundMediaHTTPClient(),
 	}
+	channel.stageInboundMedia = channel.downloadAndStageInboundMedia
+	return channel
 }
 
 // Name returns the stable channel identifier.
@@ -196,16 +208,13 @@ func (c *Channel) enqueueInbound(job func()) {
 	}
 }
 
-// dispatchMessage maps an inbound user text message to a control.Action and
-// forwards it to the retained handler. Handler work runs in a new goroutine so
-// a slow orchestrator cannot stall the WebSocket read loop.
+// dispatchMessage maps an inbound user message to a control.Action and forwards
+// it to the retained handler. Media download/decryption starts immediately on a
+// separate goroutine while an ordered completion job enters the serial inbound
+// worker, so media stays ahead of later text without stalling the read loop.
 func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 	handler := c.currentHandler()
 	if handler == nil {
-		return
-	}
-	text := strings.TrimSpace(frame.Text.Content)
-	if text == "" {
 		return
 	}
 	chatID := wecomMessageChatID(frame)
@@ -215,6 +224,87 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 	c.touchActivity(chatID)
 	msgID := strings.TrimSpace(frame.MsgID)
 	reqID := frame.Headers.ReqID
+	msgType := strings.ToLower(strings.TrimSpace(frame.MsgType))
+	if msgType == "" {
+		msgType = "text"
+	}
+	switch msgType {
+	case "text":
+		c.dispatchTextMessage(ctx, handler, frame, chatID, msgID, reqID, frame.Text.Content)
+	case "voice":
+		c.dispatchTextMessage(ctx, handler, frame, chatID, msgID, reqID, frame.Voice.Content)
+	case "image", "file":
+		mediaURL := frame.Image.URL
+		mediaAESKey := frame.Image.AESKey
+		if msgType == "file" {
+			mediaURL = frame.File.URL
+			mediaAESKey = frame.File.AESKey
+		}
+		mediaAESKey = firstNonEmpty(strings.TrimSpace(mediaAESKey), strings.TrimSpace(c.config.CallbackAESKey))
+		c.queueInboundMedia(ctx, handler, frame, chatID, msgID, reqID, msgType, mediaURL, mediaAESKey)
+	default:
+		log.Printf("wecom: ignored unsupported inbound message type=%q chat=%q message=%q", msgType, chatID, msgID)
+	}
+}
+
+func (c *Channel) queueInboundMedia(
+	ctx context.Context,
+	handler surface.ActionHandler,
+	frame msgCallbackFrame,
+	chatID, msgID, reqID, msgType, mediaURL, mediaAESKey string,
+) {
+	result := make(chan inboundMediaReceiveResult, 1)
+	go func() {
+		received := inboundMediaReceiveResult{}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				received.err = fmt.Errorf("receiver panic: %v", recovered)
+			}
+			result <- received
+		}()
+		received.media, received.err = c.stageInboundMedia(ctx, msgType, mediaURL, mediaAESKey)
+	}()
+	c.enqueueInbound(func() {
+		received := <-result
+		if received.err != nil {
+			log.Printf("wecom: inbound %s receive failed: chat=%q message=%q err=%v", msgType, chatID, msgID, received.err)
+			c.replyInboundMediaFailure(ctx, reqID, chatID, msgType)
+			return
+		}
+		staged := received.media
+		action := control.Action{
+			ChatID:      chatID,
+			ActorUserID: wecomMessageActorUserID(frame),
+			MessageID:   msgID,
+			LocalPath:   staged.LocalPath,
+			FileName:    staged.FileName,
+			MIMEType:    staged.MIMEType,
+		}
+		if msgType == "image" {
+			action.Kind = control.ActionImageMessage
+			action.SteerInputs = []agentproto.Input{{
+				Type:     agentproto.InputLocalImage,
+				Path:     staged.LocalPath,
+				MIMEType: staged.MIMEType,
+			}}
+		} else {
+			action.Kind = control.ActionFileMessage
+		}
+		c.rememberResponseReq(chatID, msgID, reqID)
+		handler(ctx, action)
+	})
+}
+
+func (c *Channel) dispatchTextMessage(
+	ctx context.Context,
+	handler surface.ActionHandler,
+	frame msgCallbackFrame,
+	chatID, msgID, reqID, rawText string,
+) {
+	text := strings.TrimSpace(rawText)
+	if text == "" {
+		return
+	}
 	action := control.Action{
 		Kind:        control.ActionTextMessage,
 		ChatID:      chatID,
@@ -243,6 +333,23 @@ func (c *Channel) dispatchMessage(ctx context.Context, frame msgCallbackFrame) {
 		}
 		handler(ctx, action)
 	})
+}
+
+func (c *Channel) replyInboundMediaFailure(ctx context.Context, reqID, chatID, msgType string) {
+	label := "图片"
+	if msgType == "file" {
+		label = "文件"
+	}
+	frame := textFrame(label + "接收失败，请重新发送。")
+	var err error
+	if reqID = strings.TrimSpace(reqID); reqID != "" {
+		err = c.client.respondFrame(ctx, reqID, frame)
+	} else {
+		err = c.client.sendFrame(ctx, chatID, frame)
+	}
+	if err != nil {
+		log.Printf("wecom: inbound %s failure reply failed: chat=%q err=%v", msgType, chatID, err)
+	}
 }
 
 func wecomMessageChatID(frame msgCallbackFrame) string {

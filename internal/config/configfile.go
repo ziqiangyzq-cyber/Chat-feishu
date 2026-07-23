@@ -143,18 +143,20 @@ type FeishuAppConfig struct {
 }
 
 type WeComSettings struct {
-	Enabled *bool            `json:"enabled,omitempty"`
-	BotID   string           `json:"botId,omitempty"`
-	Secret  string           `json:"secret,omitempty"`
-	Bots    []WeComBotConfig `json:"bots,omitempty"`
+	Enabled        *bool            `json:"enabled,omitempty"`
+	BotID          string           `json:"botId,omitempty"`
+	Secret         string           `json:"secret,omitempty"`
+	CallbackAESKey string           `json:"callbackAESKey,omitempty"`
+	Bots           []WeComBotConfig `json:"bots,omitempty"`
 }
 
 type WeComBotConfig struct {
-	ID      string `json:"id,omitempty"`
-	Name    string `json:"name,omitempty"`
-	BotID   string `json:"botId,omitempty"`
-	Secret  string `json:"secret,omitempty"`
-	Enabled *bool  `json:"enabled,omitempty"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	BotID          string `json:"botId,omitempty"`
+	Secret         string `json:"secret,omitempty"`
+	CallbackAESKey string `json:"callbackAESKey,omitempty"`
+	Enabled        *bool  `json:"enabled,omitempty"`
 }
 
 type DebugSettings struct {
@@ -494,6 +496,7 @@ func (cfg PprofSettings) isZero() bool {
 }
 
 func (cfg WeComSettings) normalized() WeComSettings {
+	cfg.CallbackAESKey = strings.TrimSpace(cfg.CallbackAESKey)
 	normalizedBots := make([]WeComBotConfig, 0, len(cfg.Bots)+1)
 	seen := map[string]bool{}
 	appendBot := func(bot WeComBotConfig) {
@@ -513,11 +516,12 @@ func (cfg WeComSettings) normalized() WeComSettings {
 	}
 	if strings.TrimSpace(cfg.BotID) != "" || strings.TrimSpace(cfg.Secret) != "" {
 		appendBot(WeComBotConfig{
-			ID:      "bot",
-			Name:    "WeCom Bot",
-			BotID:   cfg.BotID,
-			Secret:  cfg.Secret,
-			Enabled: cfg.Enabled,
+			ID:             "bot",
+			Name:           "WeCom Bot",
+			BotID:          cfg.BotID,
+			Secret:         cfg.Secret,
+			CallbackAESKey: cfg.CallbackAESKey,
+			Enabled:        cfg.Enabled,
 		})
 	}
 	for _, bot := range cfg.Bots {
@@ -532,6 +536,7 @@ func (cfg WeComBotConfig) normalized() WeComBotConfig {
 	cfg.Name = strings.TrimSpace(cfg.Name)
 	cfg.BotID = strings.TrimSpace(cfg.BotID)
 	cfg.Secret = strings.TrimSpace(cfg.Secret)
+	cfg.CallbackAESKey = strings.TrimSpace(cfg.CallbackAESKey)
 	if cfg.ID == "" {
 		cfg.ID = cfg.BotID
 	}

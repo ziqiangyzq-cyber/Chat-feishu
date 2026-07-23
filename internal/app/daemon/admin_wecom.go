@@ -24,11 +24,12 @@ type wecomBotResponse struct {
 }
 
 type wecomBotWriteRequest struct {
-	ID      *string `json:"id,omitempty"`
-	Name    *string `json:"name,omitempty"`
-	BotID   *string `json:"botId,omitempty"`
-	Secret  *string `json:"secret,omitempty"`
-	Enabled *bool   `json:"enabled,omitempty"`
+	ID             *string `json:"id,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	BotID          *string `json:"botId,omitempty"`
+	Secret         *string `json:"secret,omitempty"`
+	CallbackAESKey *string `json:"callbackAESKey,omitempty"`
+	Enabled        *bool   `json:"enabled,omitempty"`
 }
 
 type adminWeComBotSummary struct {
