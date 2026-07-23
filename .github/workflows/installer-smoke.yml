@@ -100,32 +100,32 @@ jobs:
       - name: Build production fixture
         env:
           CODEX_REMOTE_BUILD_FLAVOR: shipping
-        run: bash scripts/release/build-artifacts.sh v0.0.0 dist-production
+        run: bash scripts/release/build-artifacts.sh v0.0.0 dist/production
 
       - name: Build beta fixture
         env:
           CODEX_REMOTE_BUILD_FLAVOR: shipping
-        run: bash scripts/release/build-artifacts.sh v0.1.0-beta.1 dist-beta --skip-admin-ui-build
+        run: bash scripts/release/build-artifacts.sh v0.1.0-beta.1 dist/beta --skip-admin-ui-build
 
       - name: Build production Windows NSIS installer
         run: |
           bash scripts/release/build-windows-nsis.sh \
             --version v0.0.0 \
             --track production \
-            --dist-dir dist-production
+            --dist-dir dist/production
 
       - name: Build beta Windows NSIS installer
         run: |
           bash scripts/release/build-windows-nsis.sh \
             --version v0.1.0-beta.1 \
             --track beta \
-            --dist-dir dist-beta
+            --dist-dir dist/beta
 
       - name: Upload production fixture
         uses: actions/upload-artifact@v4
         with:
           name: installer-smoke-prod
-          path: dist-production
+          path: dist/production
           if-no-files-found: error
 
       - name: Upload production macOS packaging fixture
@@ -133,22 +133,22 @@ jobs:
         with:
           name: installer-smoke-prod-macos-input
           path: |
-            dist-production/codex-remote-feishu_*_darwin_amd64.tar.gz
-            dist-production/codex-remote-feishu_*_darwin_arm64.tar.gz
+            dist/production/codex-remote-feishu_*_darwin_amd64.tar.gz
+            dist/production/codex-remote-feishu_*_darwin_arm64.tar.gz
           if-no-files-found: error
 
       - name: Upload beta fixture
         uses: actions/upload-artifact@v4
         with:
           name: installer-smoke-beta
-          path: dist-beta
+          path: dist/beta
           if-no-files-found: error
 
       - name: Upload production Windows NSIS installer
         uses: actions/upload-artifact@v4
         with:
           name: installer-smoke-prod-windows-nsis
-          path: dist-production/codex-remote-feishu_0.0.0_windows_amd64_installer.exe
+          path: dist/production/codex-remote-feishu_0.0.0_windows_amd64_installer.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -156,7 +156,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installer-smoke-beta-windows-nsis
-          path: dist-beta/codex-remote-feishu_0.1.0-beta.1_windows_amd64_installer.exe
+          path: dist/beta/codex-remote-feishu_0.1.0-beta.1_windows_amd64_installer.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -165,8 +165,8 @@ jobs:
         with:
           name: installer-smoke-beta-macos-input
           path: |
-            dist-beta/codex-remote-feishu_*_darwin_amd64.tar.gz
-            dist-beta/codex-remote-feishu_*_darwin_arm64.tar.gz
+            dist/beta/codex-remote-feishu_*_darwin_amd64.tar.gz
+            dist/beta/codex-remote-feishu_*_darwin_arm64.tar.gz
           if-no-files-found: error
 
   smoke-unix:

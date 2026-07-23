@@ -197,7 +197,7 @@ jobs:
         run: |
           bash scripts/release/build-artifacts.sh \
             "${{ steps.artifact_meta.outputs.version }}" \
-            dist-ci \
+            dist/ci \
             --jobs 5 \
             --skip-admin-ui-build
 
@@ -206,7 +206,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dev-release-dist
-          path: dist-ci/*
+          path: dist/ci/*
           if-no-files-found: error
           compression-level: 0
 
