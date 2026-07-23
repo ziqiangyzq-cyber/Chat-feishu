@@ -422,7 +422,8 @@ func (c *Channel) Deliver(ctx context.Context, chatID string, event eventcontrac
 	if payload, ok := event.CanonicalPayload().(eventcontract.BlockCommittedPayload); ok {
 		text := strings.TrimSpace(payload.Block.Text)
 		if text != "" && !payload.Block.Final {
-			return c.client.streamMarkdown(ctx, chatID, text, false)
+			response := c.consumeStreamResponseReq(chatID, event.SourceMessageID)
+			return c.client.streamMarkdownReply(ctx, chatID, response.ReqID, response.BoundAt, text, false)
 		}
 		if text != "" && payload.Block.Final {
 			// Prefer stream finish when a stream is already open; otherwise fall
@@ -489,7 +490,24 @@ func (c *Channel) RenderStream(ctx context.Context, chatID string, markdown stri
 		return errors.New("wecom: render stream requires chatID")
 	}
 	c.touchActivity(chatID)
-	return c.client.streamMarkdown(ctx, chatID, markdown, finish)
+	response := c.consumeStreamResponseReq(chatID, "")
+	return c.client.streamMarkdownReply(ctx, chatID, response.ReqID, response.BoundAt, markdown, finish)
+}
+
+// consumeStreamResponseReq binds a newly opened stream to the inbound callback
+// req_id. Once a stream is open, later updates must keep its stored req_id and
+// must not consume a newer inbound message's binding.
+func (c *Channel) consumeStreamResponseReq(chatID, sourceMessageID string) responseReqBinding {
+	if _, open := c.client.streamAge(chatID, c.now()); open {
+		return responseReqBinding{}
+	}
+	if strings.TrimSpace(sourceMessageID) != "" {
+		return c.consumeResponseReq(chatID, sourceMessageID)
+	}
+	// StreamingRenderer does not carry SourceMessageID. Its first call is still
+	// the direct output of the serialised inbound handler, so use the freshest
+	// callback binding for that chat.
+	return c.forceConsumeResponseReq(chatID)
 }
 
 func frameMarkdownContent(frame Frame) string {
@@ -530,12 +548,16 @@ func (c *Channel) reapIdleState(ctx context.Context) {
 	idle := c.config.SessionIdle
 	maxTurn := c.config.MaxTurn
 
-	// Finalize streams that exceeded MaxTurn.
-	if maxTurn > 0 {
-		for _, chatID := range c.client.activeStreamChats(now, maxTurn) {
-			log.Printf("wecom: max turn exceeded chat=%s; finishing stream", chatID)
-			_ = c.client.streamMarkdown(ctx, chatID, "⚠️ 本轮执行超过时间上限，已停止流式更新。可用 `/status` 查看状态，或重新发送指令继续。", true)
-		}
+	// A product MaxTurn may be stricter, but no response stream may cross the
+	// protocol's five-minute req_id safety line. streamMarkdown detects the
+	// expired state and sends this terminal notice via aibot_send_msg.
+	streamLimit := streamReqIDSafetyTTL
+	if maxTurn > 0 && maxTurn < streamLimit {
+		streamLimit = maxTurn
+	}
+	for _, chatID := range c.client.activeStreamChats(now, streamLimit) {
+		log.Printf("wecom: stream time limit exceeded chat=%s; finishing with standalone fallback", chatID)
+		_ = c.client.streamMarkdown(ctx, chatID, "⚠️ 本轮执行超过时间上限，已停止流式更新。可用 `/status` 查看状态，或重新发送指令继续。", true)
 	}
 
 	if idle <= 0 {

@@ -21,6 +21,8 @@ type Config struct {
 	SessionIdle time.Duration
 	// MaxTurn is a soft wall-clock budget for a single streaming turn. When
 	// exceeded, the channel finalizes the open stream with a timeout notice
-	// so the user is not left staring at a half-finished reply. Zero disables.
+	// so the user is not left staring at a half-finished reply. Zero disables
+	// this product-level budget; the WeCom req_id five-minute safety limit still
+	// applies.
 	MaxTurn time.Duration
 }

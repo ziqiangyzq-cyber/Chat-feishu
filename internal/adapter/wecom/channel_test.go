@@ -287,6 +287,30 @@ func TestResponseReqRequiresMatchingSourceMessageID(t *testing.T) {
 	}
 }
 
+func TestConsumeStreamResponseReqUsesCallbackOnlyWhenOpening(t *testing.T) {
+	ch := NewChannel(Config{})
+	ch.rememberResponseReq("chat-1", "msg-1", "callback-req-1")
+
+	binding := ch.consumeStreamResponseReq("chat-1", "msg-1")
+	if binding.ReqID != "callback-req-1" {
+		t.Fatalf("opening stream req_id = %q, want callback-req-1", binding.ReqID)
+	}
+
+	ch.client.streams["chat-1"] = &chatStream{
+		ID:        "stream-1",
+		ReqID:     "callback-req-1",
+		Started:   true,
+		StartedAt: time.Now(),
+	}
+	ch.rememberResponseReq("chat-1", "msg-2", "callback-req-2")
+	if got := ch.consumeStreamResponseReq("chat-1", "msg-2").ReqID; got != "" {
+		t.Fatalf("update must use stored stream req_id, unexpectedly consumed %q", got)
+	}
+	if got := ch.responseReqID("chat-1"); got != "callback-req-2" {
+		t.Fatalf("newer callback binding was lost, got %q", got)
+	}
+}
+
 func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 	ch := NewChannel(Config{})
 	done := make(chan control.Action, 1)

@@ -190,7 +190,7 @@ func TestStreamMarkdownOpensThenUpdates(t *testing.T) {
 	if decoded["cmd"] != frameCmdSendMsg {
 		t.Fatalf("cmd = %v", decoded["cmd"])
 	}
-	upd := newStreamUpdateFrame("chat-1", "stream-1", "hello world", true)
+	upd := newStreamUpdateFrame(open.Headers.ReqID, "chat-1", "stream-1", "hello world", true)
 	raw, err = json.Marshal(upd)
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +200,9 @@ func TestStreamMarkdownOpensThenUpdates(t *testing.T) {
 	}
 	if decoded["cmd"] != frameCmdRespondUpdateMsg {
 		t.Fatalf("update cmd = %v", decoded["cmd"])
+	}
+	if reqID := frameReqID(t, decoded); reqID != open.Headers.ReqID {
+		t.Fatalf("update req_id = %q, want opening req_id %q", reqID, open.Headers.ReqID)
 	}
 	body, _ := decoded["body"].(map[string]any)
 	stream, _ := body["stream"].(map[string]any)
@@ -299,6 +302,21 @@ func TestNewReqIDIsUniqueUnderConcurrency(t *testing.T) {
 
 	seen := make(map[string]struct{}, workers*idsPerWorker)
 	for id := range ids {
+		if id == "" {
+			t.Fatal("generated empty request ID")
+		}
+		if len(id) > maxReqIDLength {
+			t.Fatalf("request ID length = %d, want <= %d: %q", len(id), maxReqIDLength, id)
+		}
+		for _, ch := range []byte(id) {
+			if (ch >= 'a' && ch <= 'z') ||
+				(ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') ||
+				ch == '_' || ch == '-' || ch == '@' {
+				continue
+			}
+			t.Fatalf("request ID contains unsupported character %q: %q", ch, id)
+		}
 		if _, exists := seen[id]; exists {
 			t.Fatalf("duplicate request ID: %q", id)
 		}
@@ -306,10 +324,108 @@ func TestNewReqIDIsUniqueUnderConcurrency(t *testing.T) {
 	}
 }
 
-// A rejected stream update (e.g. errcode 846605 once the server-side stream
-// expired during a long turn) must not silently drop content: the client has
-// to resend it through a fresh stream.
-func TestStreamFrameErrorRecoversViaNewStream(t *testing.T) {
+func TestCallbackStreamReusesReqIDAcrossOpenAndUpdates(t *testing.T) {
+	srv, frames, _ := wsTestServer(t)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Dial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	recvFrame(t, frames) // subscribe
+
+	boundAt := time.Now()
+	if err := client.streamMarkdownReply(ctx, "chat-1", "callback-req-1", boundAt, "part 1", false); err != nil {
+		t.Fatal(err)
+	}
+	open := recvFrame(t, frames)
+	if open["cmd"] != frameCmdRespondMsg {
+		t.Fatalf("opening cmd = %v, want %q", open["cmd"], frameCmdRespondMsg)
+	}
+	if got := frameReqID(t, open); got != "callback-req-1" {
+		t.Fatalf("opening req_id = %q, want callback-req-1", got)
+	}
+	openStreamID := frameStreamMeta(t, open)["id"]
+
+	if err := client.streamMarkdown(ctx, "chat-1", "part 2", false); err != nil {
+		t.Fatal(err)
+	}
+	update1 := recvFrame(t, frames)
+	if err := client.streamMarkdown(ctx, "chat-1", "final", true); err != nil {
+		t.Fatal(err)
+	}
+	update2 := recvFrame(t, frames)
+
+	for i, update := range []map[string]any{update1, update2} {
+		if update["cmd"] != frameCmdRespondUpdateMsg {
+			t.Fatalf("update %d cmd = %v, want %q", i+1, update["cmd"], frameCmdRespondUpdateMsg)
+		}
+		if got := frameReqID(t, update); got != "callback-req-1" {
+			t.Fatalf("update %d req_id = %q, want callback-req-1", i+1, got)
+		}
+		if got := frameStreamMeta(t, update)["id"]; got != openStreamID {
+			t.Fatalf("update %d stream.id = %v, want %v", i+1, got, openStreamID)
+		}
+	}
+}
+
+func TestExpiredStreamFallsBackToStandaloneMessage(t *testing.T) {
+	srv, frames, conns := wsTestServer(t)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Dial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = client.Run(ctx) }()
+	defer func() { _ = client.Close() }()
+
+	serverConn := <-conns
+	recvFrame(t, frames) // subscribe
+	client.streams["chat-1"] = &chatStream{
+		ID:        "stream-1",
+		ReqID:     "expired-callback-req",
+		Reply:     true,
+		Started:   true,
+		StartedAt: time.Now().Add(-streamReqIDSafetyTTL),
+		LastText:  "progress",
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.streamMarkdown(ctx, "chat-1", "final answer", true)
+	}()
+	fallback := recvFrame(t, frames)
+	if fallback["cmd"] != frameCmdSendMsg {
+		t.Fatalf("fallback cmd = %v, want %q", fallback["cmd"], frameCmdSendMsg)
+	}
+	body, _ := fallback["body"].(map[string]any)
+	if _, hasStream := body["stream"]; hasStream {
+		t.Fatalf("expired stream fallback must be standalone: %#v", body)
+	}
+	markdown, _ := body["markdown"].(map[string]any)
+	if markdown["content"] != "final answer" {
+		t.Fatalf("expired stream fallback lost final content: %#v", body)
+	}
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, fallback)},
+		"errcode": 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("fallback send: %v", err)
+	}
+}
+
+// A rejected stream frame (notably errcode 846605) must stop using the invalid
+// stream req_id and deliver its content through standalone aibot_send_msg.
+func TestStreamFrame846605FallsBackToStandaloneMessage(t *testing.T) {
 	srv, frames, conns := wsTestServer(t)
 	defer srv.Close()
 	client := dialTestServer(t, srv)
@@ -329,7 +445,6 @@ func TestStreamFrameErrorRecoversViaNewStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	open := recvFrame(t, frames)
-	openStream := frameStreamMeta(t, open)
 
 	// Gateway rejects the opening frame: stream is dead server-side.
 	reject := map[string]any{
@@ -343,12 +458,25 @@ func TestStreamFrameErrorRecoversViaNewStream(t *testing.T) {
 	}
 
 	recovery := recvFrame(t, frames)
-	recoveryStream := frameStreamMeta(t, recovery)
-	if recoveryStream["id"] == openStream["id"] {
-		t.Fatalf("recovery reused dead stream id %v", openStream["id"])
+	if recovery["cmd"] != frameCmdSendMsg {
+		t.Fatalf("fallback cmd = %v, want %q", recovery["cmd"], frameCmdSendMsg)
 	}
-	if recoveryStream["content"] != "part 1" {
-		t.Fatalf("recovery lost content: %#v", recoveryStream)
+	body, _ := recovery["body"].(map[string]any)
+	if _, hasStream := body["stream"]; hasStream {
+		t.Fatalf("fallback must be standalone, got stream body: %#v", body)
+	}
+	markdown, _ := body["markdown"].(map[string]any)
+	if markdown["content"] != "part 1" {
+		t.Fatalf("fallback lost content: %#v", body)
+	}
+	if got := frameReqID(t, recovery); got == frameReqID(t, open) {
+		t.Fatalf("fallback reused rejected req_id %q", got)
+	}
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, recovery)},
+		"errcode": 0,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -373,7 +501,13 @@ func TestStreamFinishErrorStillDeliversFinalContent(t *testing.T) {
 	if err := client.streamMarkdown(ctx, "chat-1", "progress", false); err != nil {
 		t.Fatal(err)
 	}
-	recvFrame(t, frames) // opening frame, accepted (no response needed)
+	open := recvFrame(t, frames)
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, open)},
+		"errcode": 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := client.streamMarkdown(ctx, "chat-1", "final answer", true); err != nil {
 		t.Fatal(err)
@@ -394,9 +528,19 @@ func TestStreamFinishErrorStillDeliversFinalContent(t *testing.T) {
 	}
 
 	recovery := recvFrame(t, frames)
-	recoveryStream := frameStreamMeta(t, recovery)
-	if recoveryStream["content"] != "final answer" || recoveryStream["finish"] != true {
-		t.Fatalf("final content not recovered: %#v", recoveryStream)
+	if recovery["cmd"] != frameCmdSendMsg {
+		t.Fatalf("fallback cmd = %v, want %q", recovery["cmd"], frameCmdSendMsg)
+	}
+	body, _ := recovery["body"].(map[string]any)
+	markdown, _ := body["markdown"].(map[string]any)
+	if markdown["content"] != "final answer" {
+		t.Fatalf("final content not recovered: %#v", body)
+	}
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, recovery)},
+		"errcode": 0,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -404,8 +548,8 @@ func TestStreamFinishErrorStillDeliversFinalContent(t *testing.T) {
 // touching the live stream.
 func TestStreamFrameSuccessResponseKeepsStream(t *testing.T) {
 	client := NewClient(Config{BotID: "bot-1", Secret: "secret-1"})
-	client.streams["chat-1"] = &chatStream{ID: "stream-1", Started: true, StartedAt: time.Now()}
-	client.streamFrames["upd-1"] = streamFrameInfo{ChatID: "chat-1", StreamID: "stream-1", Content: "x", SentAt: time.Now()}
+	client.streams["chat-1"] = &chatStream{ID: "stream-1", ReqID: "upd-1", Started: true, StartedAt: time.Now()}
+	client.streamFrames["upd-1"] = []streamFrameInfo{{ChatID: "chat-1", StreamID: "stream-1", Content: "x", SentAt: time.Now()}}
 
 	handled := client.handleStreamFrameResponse(frameEnvelope{Headers: frameHeaders{ReqID: "upd-1"}})
 	if !handled {
@@ -419,12 +563,40 @@ func TestStreamFrameSuccessResponseKeepsStream(t *testing.T) {
 	}
 }
 
+func TestStreamFrameResponsesWithSharedReqIDAreConsumedInOrder(t *testing.T) {
+	client := NewClient(Config{})
+	client.streams["chat-1"] = &chatStream{
+		ID:        "stream-1",
+		ReqID:     "callback-req-1",
+		Started:   true,
+		StartedAt: time.Now(),
+	}
+	client.streamFrames["callback-req-1"] = []streamFrameInfo{
+		{ChatID: "chat-1", StreamID: "stream-1", Content: "part 1", SentAt: time.Now()},
+		{ChatID: "chat-1", StreamID: "stream-1", Content: "part 2", SentAt: time.Now()},
+	}
+
+	if !client.handleStreamFrameResponse(frameEnvelope{Headers: frameHeaders{ReqID: "callback-req-1"}}) {
+		t.Fatal("first response was not handled")
+	}
+	queue := client.streamFrames["callback-req-1"]
+	if len(queue) != 1 || queue[0].Content != "part 2" {
+		t.Fatalf("remaining response queue = %#v, want only part 2", queue)
+	}
+	if !client.handleStreamFrameResponse(frameEnvelope{Headers: frameHeaders{ReqID: "callback-req-1"}}) {
+		t.Fatal("second response was not handled")
+	}
+	if _, exists := client.streamFrames["callback-req-1"]; exists {
+		t.Fatalf("response queue not cleared: %#v", client.streamFrames)
+	}
+}
+
 // An error for a frame of an already-replaced stream must not clobber the
 // newer stream or trigger another resend.
 func TestStreamFrameErrorForSupersededStreamIsIgnored(t *testing.T) {
 	client := NewClient(Config{BotID: "bot-1", Secret: "secret-1"})
-	client.streams["chat-1"] = &chatStream{ID: "stream-2", Started: true, StartedAt: time.Now()}
-	client.streamFrames["upd-old"] = streamFrameInfo{ChatID: "chat-1", StreamID: "stream-1", Content: "old", SentAt: time.Now()}
+	client.streams["chat-1"] = &chatStream{ID: "stream-2", ReqID: "upd-new", Started: true, StartedAt: time.Now()}
+	client.streamFrames["upd-old"] = []streamFrameInfo{{ChatID: "chat-1", StreamID: "stream-1", Content: "old", SentAt: time.Now()}}
 
 	handled := client.handleStreamFrameResponse(frameEnvelope{
 		Headers: frameHeaders{ReqID: "upd-old"},
