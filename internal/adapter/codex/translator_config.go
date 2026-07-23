@@ -117,7 +117,11 @@ func applyPromptOverridesToTurnStart(template map[string]any, overrides agentpro
 	}
 	if agentproto.NormalizeAccessMode(overrides.AccessMode) != "" {
 		template["approvalPolicy"] = agentproto.ApprovalPolicyForAccessMode(overrides.AccessMode)
-		template["sandboxPolicy"] = agentproto.TurnSandboxPolicyForAccessMode(overrides.AccessMode)
+		sandboxPolicy := agentproto.TurnSandboxPolicyForAccessMode(overrides.AccessMode)
+		if overrides.WorkspaceWriteNetworkAccess && sandboxPolicy["type"] == "workspaceWrite" {
+			sandboxPolicy["networkAccess"] = true
+		}
+		template["sandboxPolicy"] = sandboxPolicy
 	}
 	return nil
 }

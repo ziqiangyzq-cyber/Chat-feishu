@@ -240,10 +240,11 @@ type Prompt struct {
 }
 
 type PromptOverrides struct {
-	Model           string `json:"model,omitempty"`
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	AccessMode      string `json:"accessMode,omitempty"`
-	PlanMode        string `json:"planMode,omitempty"`
+	Model                       string `json:"model,omitempty"`
+	ReasoningEffort             string `json:"reasoningEffort,omitempty"`
+	AccessMode                  string `json:"accessMode,omitempty"`
+	PlanMode                    string `json:"planMode,omitempty"`
+	WorkspaceWriteNetworkAccess bool   `json:"workspaceWriteNetworkAccess,omitempty"`
 }
 
 type Request struct {

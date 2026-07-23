@@ -26,6 +26,9 @@ type GatewaySurfacePolicy struct {
 	// MaxAccessMode 非空时：生效执行权限不得超过此级别
 	// （权限强弱：full_access > accept_edits > confirm）。
 	MaxAccessMode string
+	// WorkspaceWriteNetworkAccess 允许 workspace-write 沙箱访问网络，
+	// 不改变其文件系统边界。
+	WorkspaceWriteNetworkAccess bool
 	// ApproverOpenID 非空时：该 gateway 上的越权审批只允许此 open_id 的用户处理，
 	// 其他用户的越权请求会被自动拒绝并通知审批人。
 	ApproverOpenID string
@@ -56,7 +59,7 @@ func (p GatewaySurfacePolicy) Normalized() GatewaySurfacePolicy {
 }
 
 func (p GatewaySurfacePolicy) isZero() bool {
-	return len(p.WorkspaceRoots) == 0 && p.DefaultWorkspaceRoot == "" && !p.AllowConcurrentWorkspaceSurfaces && p.MaxAccessMode == "" && p.ApproverOpenID == ""
+	return len(p.WorkspaceRoots) == 0 && p.DefaultWorkspaceRoot == "" && !p.AllowConcurrentWorkspaceSurfaces && p.MaxAccessMode == "" && !p.WorkspaceWriteNetworkAccess && p.ApproverOpenID == ""
 }
 
 // SetGatewaySurfacePolicies 注入按 gatewayID 索引的 surface 策略。

@@ -436,6 +436,7 @@ func gatewaySurfacePoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[str
 			DefaultWorkspaceRoot:             strings.TrimSpace(app.DefaultWorkspaceRoot),
 			AllowConcurrentWorkspaceSurfaces: app.AllowConcurrentWorkspaceSurfaces,
 			MaxAccessMode:                    maxAccessMode,
+			WorkspaceWriteNetworkAccess:      app.WorkspaceWriteNetworkAccess,
 			ApproverOpenID:                   strings.TrimSpace(app.ApproverOpenID),
 		}.Normalized()
 		if strings.TrimSpace(app.DefaultWorkspaceRoot) != "" && policy.DefaultWorkspaceRoot == "" {
@@ -444,7 +445,7 @@ func gatewaySurfacePoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[str
 		if app.AllowConcurrentWorkspaceSurfaces && !policy.AllowConcurrentWorkspaceSurfaces {
 			log.Printf("ERROR: feishu app %s 开启了 allowConcurrentWorkspaceSurfaces，但没有有效的 defaultWorkspaceRoot，已关闭并发工作区 surface（fail-closed）；请修正 config.json", gatewayID)
 		}
-		if len(policy.WorkspaceRoots) == 0 && policy.DefaultWorkspaceRoot == "" && !policy.AllowConcurrentWorkspaceSurfaces && policy.MaxAccessMode == "" && policy.ApproverOpenID == "" {
+		if len(policy.WorkspaceRoots) == 0 && policy.DefaultWorkspaceRoot == "" && !policy.AllowConcurrentWorkspaceSurfaces && policy.MaxAccessMode == "" && !policy.WorkspaceWriteNetworkAccess && policy.ApproverOpenID == "" {
 			continue
 		}
 		policies[gatewayID] = policy

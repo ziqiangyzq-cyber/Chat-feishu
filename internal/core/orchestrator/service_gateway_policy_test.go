@@ -435,6 +435,18 @@ func TestGatewayPolicyVSCodeEmptyOverrideClampedToMax(t *testing.T) {
 	}
 }
 
+func TestSurfaceWorkspaceWriteNetworkAccess(t *testing.T) {
+	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.SetGatewaySurfacePolicies(map[string]GatewaySurfacePolicy{
+		"app-site": {WorkspaceWriteNetworkAccess: true},
+	})
+	svc.MaterializeSurface("surface-site", "app-site", "chat-1", "user-1")
+	if !surfaceWorkspaceWriteNetworkAccess(svc, svc.root.Surfaces["surface-site"]) {
+		t.Fatal("expected configured surface to allow workspace-write network access")
+	}
+}
+
 func TestFindGatewayUserSurfaceNeverFallsBackToChatSurface(t *testing.T) {
 	now := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

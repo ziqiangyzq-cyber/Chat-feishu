@@ -137,6 +137,9 @@ type FeishuAppConfig struct {
 	// MaxAccessMode 非空时：该 app 的 surface 生效权限不得超过此级别
 	// （权限强弱：full_access > accept_edits > confirm）。
 	MaxAccessMode string `json:"maxAccessMode,omitempty"`
+	// WorkspaceWriteNetworkAccess 仅在 workspace-write 沙箱下开放网络访问；
+	// 文件系统权限仍受工作区边界限制。
+	WorkspaceWriteNetworkAccess bool `json:"workspaceWriteNetworkAccess,omitempty"`
 	// ApproverOpenID 非空时：该 app 上的越权审批只允许此 open_id 的用户处理，
 	// 其他用户的越权请求会被自动拒绝并通知审批人。
 	ApproverOpenID string `json:"approverOpenID,omitempty"`

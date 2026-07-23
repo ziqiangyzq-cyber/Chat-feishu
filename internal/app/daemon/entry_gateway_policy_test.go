@@ -23,6 +23,16 @@ func TestGatewaySurfacePoliciesInvalidMaxAccessModeFailsClosed(t *testing.T) {
 	}
 }
 
+func TestGatewaySurfacePoliciesCarryWorkspaceWriteNetworkAccess(t *testing.T) {
+	policies := gatewaySurfacePoliciesFromFeishuApps([]config.FeishuAppConfig{{
+		ID:                          "app-site",
+		WorkspaceWriteNetworkAccess: true,
+	}})
+	if !policies["app-site"].WorkspaceWriteNetworkAccess {
+		t.Fatalf("expected workspace-write network access policy, got %#v", policies["app-site"])
+	}
+}
+
 func TestGatewaySurfacePoliciesInvalidRootsFailClosed(t *testing.T) {
 	policies := gatewaySurfacePoliciesFromFeishuApps([]config.FeishuAppConfig{
 		{ID: "app-empty-roots", WorkspaceRoots: []string{"", "   ", "."}},

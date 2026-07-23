@@ -187,6 +187,33 @@ func TestTranslatePromptSendConfirmAccessModeOverridesPolicies(t *testing.T) {
 	}
 }
 
+func TestTranslatePromptSendWorkspaceWriteNetworkAccess(t *testing.T) {
+	tr := NewTranslator("inst-1")
+	_, err := tr.TranslateCommand(agentproto.Command{
+		Kind:      agentproto.CommandPromptSend,
+		Origin:    agentproto.Origin{ChatID: "surface-1"},
+		Target:    agentproto.Target{CWD: "/tmp/project"},
+		Prompt:    agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+		Overrides: agentproto.PromptOverrides{AccessMode: agentproto.AccessModeAcceptEdits, WorkspaceWriteNetworkAccess: true},
+	})
+	if err != nil {
+		t.Fatalf("translate command: %v", err)
+	}
+	result, err := tr.ObserveServer([]byte(`{"id":"relay-thread-start-0","result":{"thread":{"id":"thread-created"}}}`))
+	if err != nil {
+		t.Fatalf("observe server response: %v", err)
+	}
+	var turnStart map[string]any
+	if err := json.Unmarshal(result.OutboundToCodex[0], &turnStart); err != nil {
+		t.Fatalf("unmarshal followup turn/start: %v", err)
+	}
+	turnParams, _ := turnStart["params"].(map[string]any)
+	want := map[string]any{"type": "workspaceWrite", "networkAccess": true}
+	if !reflect.DeepEqual(turnParams["sandboxPolicy"], want) {
+		t.Fatalf("expected workspace-write network access, got %#v", turnParams["sandboxPolicy"])
+	}
+}
+
 func TestTranslatePromptSendEmptyAccessPreservesObservedPolicies(t *testing.T) {
 	tr := NewTranslator("inst-1")
 	if _, err := tr.ObserveClient([]byte(`{"method":"turn/start","params":{"threadId":"thread-1","cwd":"/tmp/project","approvalPolicy":"on-request","sandboxPolicy":{"type":"workspaceWrite"}}}`)); err != nil {

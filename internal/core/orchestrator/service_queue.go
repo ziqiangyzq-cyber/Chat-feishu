@@ -308,12 +308,18 @@ func (s *Service) promptSendCommandFromQueueItem(surface *state.SurfaceConsoleRe
 			Inputs: item.Inputs,
 		},
 		Overrides: agentproto.PromptOverrides{
-			Model:           item.FrozenOverride.Model,
-			ReasoningEffort: item.FrozenOverride.ReasoningEffort,
-			AccessMode:      item.FrozenOverride.AccessMode,
-			PlanMode:        frozenPlanModeOverrideValue(item.FrozenPlanMode),
+			Model:                       item.FrozenOverride.Model,
+			ReasoningEffort:             item.FrozenOverride.ReasoningEffort,
+			AccessMode:                  item.FrozenOverride.AccessMode,
+			PlanMode:                    frozenPlanModeOverrideValue(item.FrozenPlanMode),
+			WorkspaceWriteNetworkAccess: surfaceWorkspaceWriteNetworkAccess(s, surface),
 		},
 	}
+}
+
+func surfaceWorkspaceWriteNetworkAccess(s *Service, surface *state.SurfaceConsoleRecord) bool {
+	policy, ok := s.surfaceGatewayPolicy(surface)
+	return ok && policy.WorkspaceWriteNetworkAccess
 }
 
 func frozenPlanModeOverrideValue(value state.PlanModeSetting) string {
