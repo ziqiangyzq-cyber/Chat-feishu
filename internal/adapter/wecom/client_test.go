@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,6 +243,35 @@ func frameStreamMeta(t *testing.T, m map[string]any) map[string]any {
 		t.Fatalf("frame missing stream meta: %#v", m)
 	}
 	return stream
+}
+
+func TestNewReqIDIsUniqueUnderConcurrency(t *testing.T) {
+	const (
+		workers      = 32
+		idsPerWorker = 1000
+	)
+
+	ids := make(chan string, workers*idsPerWorker)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range idsPerWorker {
+				ids <- newReqID("test")
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, workers*idsPerWorker)
+	for id := range ids {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("duplicate request ID: %q", id)
+		}
+		seen[id] = struct{}{}
+	}
 }
 
 // A rejected stream update (e.g. errcode 846605 once the server-side stream

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -38,6 +39,8 @@ const writeTimeout = 10 * time.Second
 // ackWait bounds how long writeEnvelopeAndWait blocks for the server's reply to
 // a request frame before giving up, so a missing ack cannot wedge the caller.
 const ackWait = 30 * time.Second
+
+var reqIDSequence atomic.Uint64
 
 // Frame type discriminators exchanged over the aibot long connection.
 const (
@@ -705,7 +708,7 @@ func fillRespondMsgBody(wire *respondMsgFrame, frame Frame) {
 }
 
 func newReqID(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), reqIDSequence.Add(1))
 }
 
 // pingLoop sends a WebSocket ping every pingInterval to keep the long

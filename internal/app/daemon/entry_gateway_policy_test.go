@@ -7,6 +7,7 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/config"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
 
 func TestGatewaySurfacePoliciesInvalidMaxAccessModeFailsClosed(t *testing.T) {
@@ -46,13 +47,19 @@ func TestGatewaySurfacePoliciesResolveSymlinkRoots(t *testing.T) {
 		{ID: "app-link", WorkspaceRoots: []string{linkDir}},
 	})
 	roots := policies["app-link"].WorkspaceRoots
+	original := state.NormalizeWorkspaceKey(linkDir)
+	resolved, err := filepath.EvalSymlinks(linkDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved = state.NormalizeWorkspaceKey(resolved)
 	foundOriginal := false
 	foundResolved := false
 	for _, root := range roots {
-		if root == linkDir {
+		if root == original {
 			foundOriginal = true
 		}
-		if resolved, err := filepath.EvalSymlinks(linkDir); err == nil && root == resolved {
+		if root == resolved {
 			foundResolved = true
 		}
 	}
@@ -65,7 +72,7 @@ func TestGatewaySurfacePoliciesResolveSymlinkRoots(t *testing.T) {
 		{ID: "app-missing", WorkspaceRoots: []string{missing}},
 	})
 	roots = policies["app-missing"].WorkspaceRoots
-	if len(roots) != 1 || roots[0] != missing {
+	if len(roots) != 1 || roots[0] != state.NormalizeWorkspaceKey(missing) {
 		t.Fatalf("expected unresolvable root kept as-is, got %#v", roots)
 	}
 }
@@ -80,7 +87,7 @@ func TestGatewaySurfacePoliciesDefaultWorkspaceAndConcurrentSurfaces(t *testing.
 	}})
 
 	policy := policies["app-default"]
-	if policy.DefaultWorkspaceRoot != root {
+	if policy.DefaultWorkspaceRoot != state.NormalizeWorkspaceKey(root) {
 		t.Fatalf("expected default workspace %q, got %#v", root, policy)
 	}
 	if !policy.AllowConcurrentWorkspaceSurfaces {
