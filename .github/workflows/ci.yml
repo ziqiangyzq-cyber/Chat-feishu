@@ -72,6 +72,9 @@ jobs:
       - name: Check release readiness script
         run: bash scripts/check/release-readiness-selftest.sh
 
+      - name: Check release tag pinning
+        run: bash scripts/check/release-tag-pin-selftest.sh
+
       - name: Check build provenance
         run: bash scripts/check/build-provenance-selftest.sh
 

@@ -92,6 +92,11 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Prepare fixture release tags
+        run: |
+          git tag v0.0.0
+          git tag v0.1.0-beta.1
+
       - name: Build production fixture
         env:
           CODEX_REMOTE_BUILD_FLAVOR: shipping
