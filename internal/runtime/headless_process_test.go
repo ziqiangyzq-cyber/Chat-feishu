@@ -55,15 +55,16 @@ func TestBuildHeadlessWrapperArgsUsesExplicitLaunchMode(t *testing.T) {
 }
 
 func TestWithWorkingDirectoryEnvReplacesPWD(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "中文工作区")
 	env := withWorkingDirectoryEnv([]string{
 		"PATH=/usr/bin",
 		"PWD=/old/path",
 		"HOME=/tmp/home",
-	}, "/tmp/中文工作区")
+	}, workDir)
 	want := []string{
 		"PATH=/usr/bin",
 		"HOME=/tmp/home",
-		"PWD=/tmp/中文工作区",
+		"PWD=" + filepath.Clean(workDir),
 	}
 	if strings.Join(env, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("working directory env = %#v, want %#v", env, want)
