@@ -1354,7 +1354,7 @@ func TestDaemonFallsBackToActorRouteForColdStartMenuActions(t *testing.T) {
 	}
 }
 
-func TestDaemonNotifiesAttachedSurfaceWhenInstanceDisconnects(t *testing.T) {
+func TestDaemonSilencesIdleAttachedSurfaceWhenInstanceDisconnects(t *testing.T) {
 	gateway := &recordingGateway{}
 	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
 
@@ -1380,15 +1380,58 @@ func TestDaemonNotifiesAttachedSurfaceWhenInstanceDisconnects(t *testing.T) {
 	before := len(gateway.operations)
 	app.onDisconnect(context.Background(), "inst-1")
 
-	var hasOfflineNotice bool
+	if got := gateway.operations[before:]; len(got) != 0 {
+		t.Fatalf("expected idle disconnect to stay silent, got %#v", got)
+	}
+}
+
+func TestDaemonNotifiesAttachedSurfaceWhenActiveTaskDisconnects(t *testing.T) {
+	gateway := &recordingGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+
+	app.onHello(context.Background(), agentproto.Hello{
+		Instance: agentproto.InstanceHello{
+			InstanceID:    "inst-1",
+			DisplayName:   "droid",
+			WorkspaceRoot: "/data/dl/droid",
+			WorkspaceKey:  "/data/dl/droid",
+			ShortName:     "droid",
+		},
+	})
+
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "feishu:app-1:chat:1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		InstanceID:       "inst-1",
+	})
+	app.service.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "feishu:app-1:chat:1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		MessageID:        "msg-1",
+		Text:             "执行任务",
+	})
+	app.service.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:      agentproto.EventTurnStarted,
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorRemoteSurface, SurfaceSessionID: "feishu:app-1:chat:1"},
+	})
+
+	before := len(gateway.operations)
+	app.onDisconnect(context.Background(), "inst-1")
+
+	offlineNoticeCount := 0
 	for _, operation := range gateway.operations[before:] {
-		switch {
-		case operation.Kind == feishu.OperationSendCard && operation.CardTitle == "系统提示" && operation.CardBody == "当前接管的工作区已离线：/data/dl/droid":
-			hasOfflineNotice = true
+		if operation.Kind == feishu.OperationSendCard && operation.CardTitle == "系统提示" && operation.CardBody == "当前接管的工作区已离线：/data/dl/droid" {
+			offlineNoticeCount++
 		}
 	}
-	if !hasOfflineNotice {
-		t.Fatalf("expected offline notice, got %#v", gateway.operations[before:])
+	if offlineNoticeCount != 1 {
+		t.Fatalf("expected exactly one active-task offline notice, got %#v", gateway.operations[before:])
 	}
 }
 

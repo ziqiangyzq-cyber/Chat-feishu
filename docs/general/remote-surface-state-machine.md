@@ -1616,7 +1616,8 @@ transport degraded retained attachment
   -- /detach --> 立即 finalize 到 R0 Detached
   -- reconnect(ApplyInstanceConnected) --> 继续当前 route state，但不会抢先 dispatch queued work
   -- preserved turn.completed --> 再继续 dispatchNext / reevaluateFollow
-  -- hard disconnect(ApplyInstanceDisconnected / RemoveInstance) --> R0 Detached
+  -- ApplyInstanceDisconnected --> R0 Detached；idle 静默，有未完成远端工作时只发一条 offline notice
+  -- RemoveInstance --> R0 Detached；内部移除路径不产生 UI event
 ```
 
 补充说明：
@@ -1638,22 +1639,26 @@ transport degraded retained attachment
    2. `/stop` 只返回 `stop_instance_offline` 提示，不伪造已发送 interrupt
 6. reconnect 只恢复实例在线和 follow 评估，不会因为 queued item 还在就抢先重派；必须等 preserved turn 自己 `completed/failed` 后，后续 queued work 才会继续出队。
 7. 如果该 surface 的 `surface resume state` 仍保留 `ResumeHeadless=true` 的 concrete thread-restore 目标，hard disconnect 回到 `R0 Detached` 后会重新进入同一条 headless recovery 主链里的 exact-thread continuation 判定。
-8. daemon graceful shutdown 也不是 `transport_degraded`。**2026-07-22 起 daemon 关闭不再向任何 surface 广播通知**（见 4.21）：`Shutdown()` 只置位 `shuttingDown` 标记，不再构造或投递 `daemon_shutting_down` notice。
-9. 这几类提示当前统一归类为 `global runtime` 独立车道，而不是 `owner-flow` 或 `turn-owned`：
+8. `ApplyInstanceDisconnected` 始终执行完整 cleanup 并 detach，但 `attached_instance_offline` 的可见性按断线前的 surface 工作态决定：
+   1. idle attached surface 静默 detach，不发离线提示。
+   2. active / queued / pending steer / auto-continue / compact / running review 等仍有未完成远端工作的 surface 发一条离线提示。
+   3. active queue item 的失败收口已经携带这条提示时，不再追加第二条，确保同一次断线最多只提醒一次。
+9. daemon graceful shutdown 也不是 `transport_degraded`。**2026-07-22 起 daemon 关闭不再向任何 surface 广播通知**（见 4.21）：`Shutdown()` 只置位 `shuttingDown` 标记，不再构造或投递 `daemon_shutting_down` notice。
+10. 这几类提示当前统一归类为 `global runtime` 独立车道，而不是 `owner-flow` 或 `turn-owned`：
    1. 真正脱离当前 owner-card 上下文的 surface resume / VS Code resume failure
    2. 真正脱离当前 owner-card 上下文的 `open VS Code` prompt
    3. `attached_instance_transport_degraded`
    4. `gateway_apply_failed`
    5. （`daemon_shutting_down` family 与限流基础设施仍保留，但 2026-07-22 起没有代码路径再产生这个 notice，见 4.21）
-10. `global runtime` 提示当前统一保持顶层 append-only：
+11. `global runtime` 提示当前统一保持顶层 append-only：
    1. 不 reply 到 turn 源消息
    2. 不 patch 当前 owner-card / target picker / request prompt；当前唯一例外是 stamped `/mode vscode` 会在 fallback 到这条车道前，先尝试把首张可投影兼容提示卡承接到当前卡
    3. 不借用 turn-owned reply-chain 或 final-card anchor
-11. 当前的重复触发策略已经按 family 收口到同一 helper，而不再散在各入口各写一份：
+12. 当前的重复触发策略已经按 family 收口到同一 helper，而不再散在各入口各写一份：
    1. resume failure / VS Code open prompt 仍以 source 侧恢复 backoff 为主，helper 只额外做短窗去重，避免同批次重复弹出
    2. `attached_instance_transport_degraded` 当前按 `surface + family + code` 做短窗节流，避免离线抖动时连续刷同一张系统提示
    3. `gateway_apply_failed` 当前会先排入 daemon 的 pending runtime notice 队列，待下一次正常 gateway apply 成功前置冲刷；同 surface 同 family 的重复错误会按 dedupe key 收敛
-12. 因此，后续若新增真正属于 runtime 层的提示，默认应进入这条独立车道，而不是继续直接手写普通 `UIEventNotice`。
+13. 因此，后续若新增真正属于 runtime 层的提示，默认应进入这条独立车道，而不是继续直接手写普通 `UIEventNotice`。
 
 ## 6. 命令矩阵
 
@@ -1847,6 +1852,7 @@ retained-offline overlay 额外规则：
 42. **默认工作区 bootstrap 启动超时或实例断连后，只清掉 `PendingHeadless`，却遗留 workspace claim 与首条 queued/staged 输入**：已修复。launcher failure、timeout、disconnect 与用户取消统一终止 bootstrap：discard 本 surface 的首条输入、释放 claim，并回到可重试的 `R0 Detached`。
 43. **新建/恢复 thread 已成功，但 plan/default follow-up 因缺失 model 构造失败后只冒泡成 `stdout_parse_failed`，queue 永久等不到 turn 终态**：已修复。wrapper 现在用 app-server 的 `config/read` 与线程成功响应解析具体 model；仍无法解析时会消费内部 response、发出带 durable thread ID 的 `turn_start_rejected` completion，并保留尚未归属的 local turn marker。surface 会正常结束当前 queue item，新建 thread 已成立时继续保持 pinned，可直接重试。
 44. **thread A 的全局最近模板或 child restart 前旧模板覆盖 thread B / 新一代 resume 响应的实际 model，导致请求发往错误模型**：已修复。wrapper 现在把 server 成功响应与同 thread 后续本地模板观察统一写入按事件顺序更新的 thread model 记录；目标 thread 记录优先于全局/旧代模板，跨 thread 模板只在目标 thread 尚无 model 事实时兜底。
+45. **idle attached workspace 在服务重启或实例正常下线时仍反复发送“当前接管的工作区已离线”噪音**：已修复。`ApplyInstanceDisconnected` 仍会完整清理并 detach，但只在 surface 断线前仍有 active、queued、steer、auto-continue、compact 或 running review 等未完成远端工作时发送一条离线提示；空闲接管静默收口，active item 自带失败提示时也不会重复追加。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 

@@ -65,6 +65,88 @@ func TestApplyInstanceConnectedDoesNotResumeDetachedSurfaceQueue(t *testing.T) {
 	}
 }
 
+func TestApplyInstanceDisconnectedSilencesIdleAttachedSurface(t *testing.T) {
+	now := time.Date(2026, 7, 23, 11, 30, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "空闲会话", CWD: "/data/dl/droid"},
+		},
+	})
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		InstanceID:       "inst-1",
+	})
+
+	events := svc.ApplyInstanceDisconnected("inst-1")
+	for _, event := range events {
+		if event.Notice != nil && event.Notice.Code == "attached_instance_offline" {
+			t.Fatalf("expected idle disconnect to stay silent, got %#v", events)
+		}
+	}
+	surface := svc.root.Surfaces["surface-1"]
+	if surface.AttachedInstanceID != "" || surface.SelectedThreadID != "" {
+		t.Fatalf("expected idle surface to detach despite silent notification, got %#v", surface)
+	}
+	if svc.root.Instances["inst-1"].Online {
+		t.Fatalf("expected disconnected instance to be offline")
+	}
+}
+
+func TestApplyInstanceDisconnectedNotifiesQueuedAttachedSurface(t *testing.T) {
+	now := time.Date(2026, 7, 23, 11, 35, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "排队会话", CWD: "/data/dl/droid"},
+		},
+	})
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		InstanceID:       "inst-1",
+	})
+	svc.PauseSurfaceDispatch("surface-1")
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		MessageID:        "msg-1",
+		Text:             "排队任务",
+	})
+
+	events := svc.ApplyInstanceDisconnected("inst-1")
+	offlineNoticeCount := 0
+	for _, event := range events {
+		if event.Notice != nil && event.Notice.Code == "attached_instance_offline" {
+			offlineNoticeCount++
+		}
+	}
+	if offlineNoticeCount != 1 {
+		t.Fatalf("expected exactly one queued-task offline notice, got %#v", events)
+	}
+}
+
 func TestApplyAgentSystemErrorTargetsAttachedSurface(t *testing.T) {
 	now := time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

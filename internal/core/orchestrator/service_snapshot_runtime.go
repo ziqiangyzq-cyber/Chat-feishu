@@ -614,6 +614,8 @@ func (s *Service) ApplyInstanceDisconnected(instanceID string) []eventcontract.E
 	}
 
 	for _, surface := range surfaces {
+		notifyOffline := s.surfaceHasLiveRemoteWork(surface)
+		offlineNoticeEmitted := false
 		s.persistCurrentClaudeWorkspaceProfileSnapshot(surface)
 		surface.PromptOverride = state.ModelConfigRecord{}
 		s.resetSurfaceExecutionGates(surface)
@@ -625,20 +627,23 @@ func (s *Service) ApplyInstanceDisconnected(instanceID string) []eventcontract.E
 					Code: "attached_instance_offline",
 					Text: s.attachmentOfflineText(surface, inst),
 				}, false)...)
+				offlineNoticeEmitted = true
 			} else {
 				s.clearSurfaceActiveQueueItem(surface, "")
 			}
 		}
 
 		events = append(events, s.finalizeDetachedSurface(surface)...)
-		events = append(events, eventcontract.Event{
-			Kind:             eventcontract.KindNotice,
-			SurfaceSessionID: surface.SurfaceSessionID,
-			Notice: &control.Notice{
-				Code: "attached_instance_offline",
-				Text: s.attachmentOfflineText(surface, inst),
-			},
-		})
+		if notifyOffline && !offlineNoticeEmitted {
+			events = append(events, eventcontract.Event{
+				Kind:             eventcontract.KindNotice,
+				SurfaceSessionID: surface.SurfaceSessionID,
+				Notice: &control.Notice{
+					Code: "attached_instance_offline",
+					Text: s.attachmentOfflineText(surface, inst),
+				},
+			})
+		}
 	}
 	delete(s.instanceClaims, instanceID)
 	s.clearInstanceRemoteTurnOwnership(instanceID)

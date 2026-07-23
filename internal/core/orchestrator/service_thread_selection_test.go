@@ -1853,17 +1853,18 @@ func TestApplyInstanceDisconnectedFailsActiveRemoteItem(t *testing.T) {
 	if queued == nil || queued.Status != state.QueueItemQueued {
 		t.Fatalf("expected queued item to remain queued on disconnect, got %#v", queued)
 	}
-	var sawTypingOff, sawNotice bool
+	var sawTypingOff bool
+	offlineNoticeCount := 0
 	for _, event := range events {
 		if event.PendingInput != nil && event.PendingInput.QueueItemID == "queue-1" && event.PendingInput.TypingOff {
 			sawTypingOff = true
 		}
 		if event.Notice != nil && event.Notice.Code == "attached_instance_offline" {
-			sawNotice = true
+			offlineNoticeCount++
 		}
 	}
-	if !sawTypingOff || !sawNotice {
-		t.Fatalf("expected typing-off and offline notice, got %#v", events)
+	if !sawTypingOff || offlineNoticeCount != 1 {
+		t.Fatalf("expected typing-off and exactly one offline notice, got %#v", events)
 	}
 }
 
