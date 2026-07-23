@@ -184,7 +184,7 @@ surface 不是单一枚举，而是五层正交状态叠加。
 8. `PlanMode` 当前也是 surface 级偏好，但 headless 与 `vscode` 的下发语义不同：
    1. `/plan on|off` 直接改当前 surface，只影响后续新 turn；`/plan clear` 会清掉显式 plan 覆盖并把 surface 投影恢复成 `off`。
    2. 当前 running turn、已入队消息、当前 turn 的 `/steer` 与 reply auto-steer 都不受新设置追溯改写。
-   3. headless 主链的 queue item 会在入队时冻结 `PlanMode`，dispatch `turn/start` 时再把它落到 `PromptOverrides.PlanMode -> collaborationMode.mode=plan/default`；只要下发 `collaborationMode`，wrapper 就必须同时携带完整 `settings(model / reasoning_effort / developer_instructions)`，未显式覆盖的值用 native 空值交还 Codex 当前线程配置与内置模式指令处理。
+   3. headless 主链的 queue item 会在入队时冻结 `PlanMode`，dispatch `turn/start` 时再把它落到 `PromptOverrides.PlanMode -> collaborationMode.mode=plan/default`；只要下发 `collaborationMode`，wrapper 就必须同时携带完整 `settings(model / reasoning_effort / developer_instructions)`，未显式覆盖的值用 native `null`（而不是空字符串）交还 Codex 当前线程配置与内置模式指令处理。
    4. `vscode` 主链属于 shared-authority：只有用户显式 `/plan on|off` 后才会冻结 `PlanMode`；若未设置或已 `/plan clear`，queue item 的 `FrozenPlanMode` 保持 empty，dispatch 时不下发 plan override，让 VS Code/backend 保持当前状态。
    5. `/detach`、`/new`、`/use`、`/mode normal|codex|claude|vscode` 不会顺手清掉当前内存里的 `PlanMode`；daemon 重启后，latent surface 不再从 `surface resume state` 恢复 `PlanMode`，旧持久化 entry 里的 `planMode` 会被忽略并在下一次保存时清理。
    6. 在 `claude` 模式下，`PlanMode` 也不进入 `workspace+profile` 快照：

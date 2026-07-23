@@ -98,7 +98,7 @@ func applyPromptOverridesToTurnStart(template map[string]any, overrides agentpro
 			settings["reasoning_effort"] = overrides.ReasoningEffort
 		}
 		// App-server requires a complete Settings object whenever collaborationMode is non-null.
-		setDefault(settings, "model", lookupStringFromAny(template["model"]))
+		setDefault(settings, "model", template["model"])
 		setDefault(settings, "reasoning_effort", template["effort"])
 		setDefault(settings, "developer_instructions", nil)
 		collaborationMode["settings"] = settings

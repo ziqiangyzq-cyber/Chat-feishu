@@ -309,8 +309,8 @@ func assertCompleteCollaborationModeSettings(t *testing.T, collaborationMode map
 	if !ok {
 		t.Fatalf("expected collaborationMode settings object, got %#v", collaborationMode)
 	}
-	if model, ok := settings["model"]; !ok || model != "" {
-		t.Fatalf("expected empty model fallback in collaborationMode settings, got %#v", settings)
+	if model, ok := settings["model"]; !ok || model != nil {
+		t.Fatalf("expected null model fallback in collaborationMode settings, got %#v", settings)
 	}
 	if effort, ok := settings["reasoning_effort"]; !ok || effort != nil {
 		t.Fatalf("expected null reasoning effort fallback in collaborationMode settings, got %#v", settings)
