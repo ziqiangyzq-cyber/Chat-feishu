@@ -143,7 +143,7 @@ func TestHandleActionReplaysDegradedPendingRequestWithoutChangingActionResult(t 
 	}
 	surface.PendingRequestOrder = []string{"req-1"}
 
-	result := app.handleAction(context.Background(), control.Action{
+	result := app.HandleGatewayAction(context.Background(), control.Action{
 		Kind:             control.ActionFollowLocal,
 		SurfaceSessionID: "surface-1",
 		GatewayID:        "app-1",

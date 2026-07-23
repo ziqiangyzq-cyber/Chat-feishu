@@ -14,6 +14,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/config"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
+	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
@@ -1143,6 +1144,60 @@ func TestDaemonRestartRecoversPreparedWorkspaceResumeState(t *testing.T) {
 	}
 }
 
+func TestPrioritizeRecoveryDaemonCommandsKeepsControlPlaneAheadOfNotices(t *testing.T) {
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{})
+	app.service.MaterializeSurface("wecom:bot:chat:user-1", "wecom:bot", "user-1", "user-1")
+	events := []eventcontract.Event{
+		{
+			Kind:             eventcontract.KindNotice,
+			SurfaceSessionID: "wecom:bot:chat:user-1",
+			Notice: &control.Notice{
+				Code: "workspace_create_starting",
+			},
+		},
+		{
+			Kind:             eventcontract.KindDaemonCommand,
+			SurfaceSessionID: "wecom:bot:chat:user-1",
+			DaemonCommand: &control.DaemonCommand{
+				Kind:       control.DaemonCommandKillHeadless,
+				InstanceID: "inst-old",
+			},
+		},
+		{
+			Kind:             eventcontract.KindDaemonCommand,
+			SurfaceSessionID: "wecom:bot:chat:user-1",
+			DaemonCommand: &control.DaemonCommand{
+				Kind:       control.DaemonCommandStartHeadless,
+				InstanceID: "inst-new",
+			},
+		},
+		{
+			Kind:             eventcontract.KindNotice,
+			SurfaceSessionID: "wecom:bot:chat:user-1",
+			Notice: &control.Notice{
+				Code: "headless_restore_started",
+			},
+		},
+	}
+
+	got := app.prioritizeRecoveryDaemonCommands(events)
+	if len(got) != 4 {
+		t.Fatalf("prioritized events = %#v", got)
+	}
+	if got[0].DaemonCommand == nil || got[0].DaemonCommand.Kind != control.DaemonCommandKillHeadless {
+		t.Fatalf("expected kill command first, got %#v", got)
+	}
+	if got[1].DaemonCommand == nil || got[1].DaemonCommand.Kind != control.DaemonCommandStartHeadless {
+		t.Fatalf("expected start command second, got %#v", got)
+	}
+	if got[2].Notice == nil || got[2].Notice.Code != "workspace_create_starting" {
+		t.Fatalf("expected notices to retain relative order, got %#v", got)
+	}
+	if got[3].Notice == nil || got[3].Notice.Code != "headless_restore_started" {
+		t.Fatalf("expected notices to retain relative order, got %#v", got)
+	}
+}
+
 func TestDaemonNormalResumePrefersVisibleThreadOverHeadlessFallback(t *testing.T) {
 	t.Parallel()
 
@@ -1415,6 +1470,9 @@ func TestDaemonNormalResumeFailureEmitsNoticeAfterFirstRefresh(t *testing.T) {
 		BinaryPath: "codex",
 	})
 	app.sendAgentCommand = func(string, agentproto.Command) error { return nil }
+	app.startHeadless = func(relayruntime.HeadlessLaunchOptions) (int, error) {
+		return 0, os.ErrNotExist
+	}
 
 	app.onHello(context.Background(), agentproto.Hello{
 		Instance: agentproto.InstanceHello{

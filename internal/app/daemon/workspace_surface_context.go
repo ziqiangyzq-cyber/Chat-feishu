@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/gitmeta"
@@ -22,6 +23,138 @@ type workspaceSurfaceContextPayload struct {
 	ActorUserID      string    `json:"actor_user_id,omitempty"`
 	WorkspaceKey     string    `json:"workspace_key,omitempty"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type workspaceSurfaceContextWriteRequest struct {
+	desired     map[string]workspaceSurfaceContextPayload
+	removeRoots map[string]struct{}
+	sequence    uint64
+}
+
+type workspaceSurfaceContextWriter struct {
+	mu                sync.Mutex
+	pending           *workspaceSurfaceContextWriteRequest
+	wake              chan struct{}
+	progress          chan struct{}
+	nextSequence      uint64
+	completedSequence uint64
+	apply             func(workspaceSurfaceContextWriteRequest)
+}
+
+func newWorkspaceSurfaceContextWriter() *workspaceSurfaceContextWriter {
+	writer := &workspaceSurfaceContextWriter{
+		wake:     make(chan struct{}, 1),
+		progress: make(chan struct{}),
+	}
+	writer.apply = applyWorkspaceSurfaceContextWrite
+	go writer.run()
+	return writer
+}
+
+// enqueue replaces queued work with the latest desired snapshot. It never waits
+// for filesystem I/O: a blocked workspace filesystem must not block App.mu,
+// ingress handling, or the daemon heartbeat.
+func (w *workspaceSurfaceContextWriter) enqueue(request workspaceSurfaceContextWriteRequest) {
+	if w == nil {
+		return
+	}
+	request = cloneWorkspaceSurfaceContextWriteRequest(request)
+
+	w.mu.Lock()
+	w.nextSequence++
+	request.sequence = w.nextSequence
+	if w.pending != nil {
+		for workspaceRoot := range w.pending.removeRoots {
+			request.removeRoots[workspaceRoot] = struct{}{}
+		}
+	}
+	for workspaceRoot := range request.desired {
+		delete(request.removeRoots, workspaceRoot)
+	}
+	w.pending = &request
+	w.mu.Unlock()
+
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// flush waits outside App.mu for writes already queued at the time of the call.
+// Its timeout keeps a wedged filesystem isolated from request processing.
+func (w *workspaceSurfaceContextWriter) flush(timeout time.Duration) {
+	if w == nil || timeout <= 0 {
+		return
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	w.mu.Lock()
+	target := w.nextSequence
+	for w.completedSequence < target {
+		progress := w.progress
+		w.mu.Unlock()
+		select {
+		case <-progress:
+		case <-deadline.C:
+			return
+		}
+		w.mu.Lock()
+	}
+	w.mu.Unlock()
+}
+
+func (w *workspaceSurfaceContextWriter) run() {
+	for range w.wake {
+		for {
+			w.mu.Lock()
+			request := w.pending
+			w.pending = nil
+			w.mu.Unlock()
+			if request == nil {
+				break
+			}
+			w.apply(*request)
+			w.mu.Lock()
+			if request.sequence > w.completedSequence {
+				w.completedSequence = request.sequence
+			}
+			close(w.progress)
+			w.progress = make(chan struct{})
+			w.mu.Unlock()
+		}
+	}
+}
+
+func cloneWorkspaceSurfaceContextWriteRequest(request workspaceSurfaceContextWriteRequest) workspaceSurfaceContextWriteRequest {
+	cloned := workspaceSurfaceContextWriteRequest{
+		desired:     make(map[string]workspaceSurfaceContextPayload, len(request.desired)),
+		removeRoots: make(map[string]struct{}, len(request.removeRoots)),
+	}
+	for workspaceRoot, payload := range request.desired {
+		cloned.desired[workspaceRoot] = payload
+	}
+	for workspaceRoot := range request.removeRoots {
+		cloned.removeRoots[workspaceRoot] = struct{}{}
+	}
+	return cloned
+}
+
+func applyWorkspaceSurfaceContextWrite(request workspaceSurfaceContextWriteRequest) {
+	for workspaceRoot, payload := range request.desired {
+		if err := writeWorkspaceSurfaceContext(workspaceRoot, payload); err != nil {
+			log.Printf("write workspace surface context failed: workspace=%s err=%v", workspaceRoot, err)
+			continue
+		}
+		if err := ensureWorkspaceContextGitExclude(workspaceRoot); err != nil {
+			log.Printf("ensure workspace context git exclude failed: workspace=%s err=%v", workspaceRoot, err)
+		}
+	}
+	for workspaceRoot := range request.removeRoots {
+		if err := removeWorkspaceSurfaceContext(workspaceRoot); err != nil {
+			log.Printf("remove workspace surface context failed: workspace=%s err=%v", workspaceRoot, err)
+		}
+	}
 }
 
 func (a *App) syncWorkspaceSurfaceContextFilesLocked() {
@@ -52,38 +185,34 @@ func (a *App) syncWorkspaceSurfaceContextFilesLocked() {
 		}
 	}
 
-	for workspaceRoot, payload := range desired {
-		if err := writeWorkspaceSurfaceContext(workspaceRoot, payload); err != nil {
-			log.Printf("write workspace surface context failed: workspace=%s err=%v", workspaceRoot, err)
-			continue
-		}
-		if err := ensureWorkspaceContextGitExclude(workspaceRoot); err != nil {
-			log.Printf("ensure workspace context git exclude failed: workspace=%s err=%v", workspaceRoot, err)
-		}
-	}
-
+	removeRoots := map[string]struct{}{}
 	for workspaceRoot := range a.surfaceResumeRuntime.workspaceContextRoots {
 		if _, ok := desired[workspaceRoot]; ok {
 			continue
 		}
-		if err := removeWorkspaceSurfaceContext(workspaceRoot); err != nil {
-			log.Printf("remove workspace surface context failed: workspace=%s err=%v", workspaceRoot, err)
-		}
+		removeRoots[workspaceRoot] = struct{}{}
 	}
 
 	a.surfaceResumeRuntime.workspaceContextRoots = map[string]string{}
 	for workspaceRoot, payload := range desired {
 		a.surfaceResumeRuntime.workspaceContextRoots[workspaceRoot] = payload.SurfaceSessionID
 	}
+	a.workspaceContextWriter.enqueue(workspaceSurfaceContextWriteRequest{
+		desired:     desired,
+		removeRoots: removeRoots,
+	})
 }
 
 func (a *App) clearWorkspaceSurfaceContextFilesLocked() {
+	removeRoots := make(map[string]struct{}, len(a.surfaceResumeRuntime.workspaceContextRoots))
 	for workspaceRoot := range a.surfaceResumeRuntime.workspaceContextRoots {
-		if err := removeWorkspaceSurfaceContext(workspaceRoot); err != nil {
-			log.Printf("remove workspace surface context during shutdown failed: workspace=%s err=%v", workspaceRoot, err)
-		}
+		removeRoots[workspaceRoot] = struct{}{}
 	}
 	a.surfaceResumeRuntime.workspaceContextRoots = map[string]string{}
+	a.workspaceContextWriter.enqueue(workspaceSurfaceContextWriteRequest{
+		desired:     map[string]workspaceSurfaceContextPayload{},
+		removeRoots: removeRoots,
+	})
 }
 
 func workspaceSurfaceContextPath(workspaceRoot string) string {

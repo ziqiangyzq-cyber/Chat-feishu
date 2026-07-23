@@ -497,3 +497,20 @@ func wecomDurationEnv(key string, def time.Duration) time.Duration {
 	}
 	return d
 }
+
+func remoteTurnStartWait() time.Duration {
+	return positiveDurationEnv(config.RemoteTurnStartTimeoutEnv, 60*time.Second)
+}
+
+func positiveDurationEnv(key string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("config: ignore invalid %s=%q, using default %s", key, raw, def)
+		return def
+	}
+	return d
+}

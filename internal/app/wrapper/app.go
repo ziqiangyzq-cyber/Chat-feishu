@@ -51,6 +51,7 @@ type Config struct {
 	InstanceID            string
 	DisplayName           string
 	WorkspaceRoot         string
+	ProcessWorkDir        string
 	WorkspaceKey          string
 	ShortName             string
 	Backend               agentproto.Backend
@@ -88,13 +89,20 @@ func LoadConfig(args []string, version, branch string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	workspaceRoot, err := os.Getwd()
+	processWorkDir, err := os.Getwd()
 	if err != nil {
 		return Config{}, err
 	}
-	workspaceRoot, err = state.ResolveWorkspaceRootOnHost(workspaceRoot)
+	processWorkDir, err = state.ResolveWorkspaceRootOnHost(processWorkDir)
 	if err != nil {
 		return Config{}, err
+	}
+	workspaceRoot := processWorkDir
+	if override := strings.TrimSpace(os.Getenv(config.ManagedWorkspaceRootEnv)); override != "" {
+		workspaceRoot, err = state.ResolveWorkspaceRootOnHost(override)
+		if err != nil {
+			return Config{}, err
+		}
 	}
 	instanceID := strings.TrimSpace(os.Getenv("CODEX_REMOTE_INSTANCE_ID"))
 	if instanceID == "" {
@@ -143,6 +151,7 @@ func LoadConfig(args []string, version, branch string) (Config, error) {
 		InstanceID:            instanceID,
 		DisplayName:           displayName,
 		WorkspaceRoot:         workspaceRoot,
+		ProcessWorkDir:        processWorkDir,
 		WorkspaceKey:          state.ResolveWorkspaceKey(workspaceRoot),
 		ShortName:             shortName,
 		Backend:               agentproto.NormalizeBackend(agentproto.Backend(os.Getenv("CODEX_REMOTE_INSTANCE_BACKEND"))),

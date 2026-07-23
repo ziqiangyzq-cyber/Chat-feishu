@@ -110,10 +110,10 @@ func TestNewSendMsgFrameUsesOfficialEnvelope(t *testing.T) {
 	}
 }
 
-func TestNewRespondMsgFrameUsesCallbackReqID(t *testing.T) {
+func TestNewRespondMsgFrameUsesCallbackReqIDAndFinishedStream(t *testing.T) {
 	frame := newRespondMsgFrame("req-1", Frame{
-		MsgType: "text",
-		Text:    &textBody{Content: "hello"},
+		MsgType:  "markdown",
+		Markdown: &markdownBody{Content: "**hello**"},
 	})
 	raw, err := json.Marshal(frame)
 	if err != nil {
@@ -138,8 +138,34 @@ func TestNewRespondMsgFrameUsesCallbackReqID(t *testing.T) {
 	if _, ok := body["chatid"]; ok {
 		t.Fatalf("callback response frame must not include chatid: %s", raw)
 	}
-	if body["msgtype"] != "text" {
-		t.Fatalf("msgtype = %v, want text", body["msgtype"])
+	if body["msgtype"] != "stream" {
+		t.Fatalf("msgtype = %v, want stream", body["msgtype"])
+	}
+	if _, ok := body["markdown"]; ok {
+		t.Fatalf("callback response must not use proactive markdown body: %s", raw)
+	}
+	stream, ok := body["stream"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream body missing or wrong shape: %#v", body["stream"])
+	}
+	if stream["finish"] != true || stream["content"] != "**hello**" {
+		t.Fatalf("unexpected finished stream: %#v", stream)
+	}
+	if stream["id"] == "" {
+		t.Fatalf("stream id missing: %#v", stream)
+	}
+}
+
+func TestNewRespondMsgFrameConvertsTextToFinishedStream(t *testing.T) {
+	frame := newRespondMsgFrame("req-1", Frame{
+		MsgType: "text",
+		Text:    &textBody{Content: "hello"},
+	})
+	if frame.Body.MsgType != "stream" || frame.Body.Stream == nil {
+		t.Fatalf("text callback reply was not converted to a stream: %#v", frame.Body)
+	}
+	if !frame.Body.Stream.Finish || frame.Body.Stream.Content != "hello" {
+		t.Fatalf("unexpected finished stream: %#v", frame.Body.Stream)
 	}
 }
 

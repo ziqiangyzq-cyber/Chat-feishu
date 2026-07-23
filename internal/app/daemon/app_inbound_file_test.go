@@ -35,7 +35,7 @@ func TestHandleFileActionMaterializesIntoWorkspaceAndUpdatesGitExclude(t *testin
 	})
 	app.service.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
 
-	app.handleAction(context.Background(), control.Action{
+	app.HandleAction(context.Background(), control.Action{
 		Kind:             control.ActionFileMessage,
 		GatewayID:        "app-1",
 		SurfaceSessionID: "surface-1",
@@ -99,7 +99,7 @@ func TestHandleTextActionWithQuotedFileMaterializesIntoWorkspaceInput(t *testing
 	})
 	app.service.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
 
-	app.handleAction(context.Background(), control.Action{
+	app.HandleAction(context.Background(), control.Action{
 		Kind:             control.ActionTextMessage,
 		GatewayID:        "app-1",
 		SurfaceSessionID: "surface-1",
@@ -152,7 +152,7 @@ func TestHandleFileActionWithoutAttachmentCleansTempFile(t *testing.T) {
 	}
 
 	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{StartedAt: serverIdentityForTest().StartedAt})
-	app.handleAction(context.Background(), control.Action{
+	app.HandleAction(context.Background(), control.Action{
 		Kind:             control.ActionFileMessage,
 		GatewayID:        "app-1",
 		SurfaceSessionID: "surface-1",

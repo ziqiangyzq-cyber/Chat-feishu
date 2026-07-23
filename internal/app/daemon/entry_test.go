@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/config"
 	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
@@ -186,6 +187,20 @@ func TestResolveDesktopSessionInstanceIDUsesRuntimeEnv(t *testing.T) {
 	t.Setenv("CODEX_REMOTE_INSTANCE_ID", "beta")
 	if got := resolveDesktopSessionInstanceID(); got != "beta" {
 		t.Fatalf("resolveDesktopSessionInstanceID() = %q, want beta", got)
+	}
+}
+
+func TestRemoteTurnStartWaitUsesConfiguredPositiveDuration(t *testing.T) {
+	t.Setenv(config.RemoteTurnStartTimeoutEnv, "90s")
+	if got := remoteTurnStartWait(); got != 90*time.Second {
+		t.Fatalf("remoteTurnStartWait() = %s, want 90s", got)
+	}
+}
+
+func TestRemoteTurnStartWaitRejectsNonPositiveDuration(t *testing.T) {
+	t.Setenv(config.RemoteTurnStartTimeoutEnv, "0s")
+	if got := remoteTurnStartWait(); got != 60*time.Second {
+		t.Fatalf("remoteTurnStartWait() = %s, want 60s", got)
 	}
 }
 

@@ -58,8 +58,11 @@ func TestDaemonStartsPreselectedHeadlessForGlobalThreadUse(t *testing.T) {
 	if snapshot == nil || snapshot.PendingHeadless.ThreadID != "thread-1" || snapshot.PendingHeadless.ThreadCWD != "/data/dl/droid" {
 		t.Fatalf("expected pending preselected headless snapshot, got %#v", snapshot)
 	}
-	if captured.WorkDir != "/data/dl/droid" || captured.InstanceID != snapshot.PendingHeadless.InstanceID {
+	if captured.WorkDir != stateDir || captured.InstanceID != snapshot.PendingHeadless.InstanceID {
 		t.Fatalf("unexpected preselected headless launch opts: %#v", captured)
+	}
+	if !containsEnvEntry(captured.Env, "CODEX_REMOTE_MANAGED_WORKSPACE_ROOT=/data/dl/droid") {
+		t.Fatalf("expected managed Codex workspace override, got %#v", captured.Env)
 	}
 	if !containsEnvEntry(captured.Env, "CODEX_REMOTE_LIFETIME=daemon-owned") {
 		t.Fatalf("expected explicit daemon-owned lifetime for managed headless launch, got %#v", captured.Env)

@@ -15,6 +15,7 @@ import (
 type Config struct {
 	TurnHandoffWait       time.Duration
 	HeadlessLaunchWait    time.Duration
+	RemoteTurnStartWait   time.Duration
 	LocalPauseMaxWait     time.Duration
 	DetachAbandonWait     time.Duration
 	GitAvailable          bool
@@ -86,6 +87,7 @@ type remoteTurnBinding struct {
 	DurableThreadReady    bool
 	TurnID                string
 	Status                string
+	DispatchedAt          time.Time
 	StartedAt             time.Time
 	InterruptRequested    bool
 	InterruptRequestedAt  time.Time
@@ -193,6 +195,9 @@ func NewService(now func() time.Time, cfg Config, planner *renderer.Planner) *Se
 	}
 	if cfg.HeadlessLaunchWait <= 0 {
 		cfg.HeadlessLaunchWait = 45 * time.Second
+	}
+	if cfg.RemoteTurnStartWait <= 0 {
+		cfg.RemoteTurnStartWait = 60 * time.Second
 	}
 	if cfg.LocalPauseMaxWait <= 0 {
 		cfg.LocalPauseMaxWait = 15 * time.Second
@@ -856,7 +861,7 @@ func (s *Service) Tick(now time.Time) []eventcontract.Event {
 	if now.IsZero() {
 		now = s.now()
 	}
-	var events []eventcontract.Event
+	events := s.expirePendingRemoteTurnStarts(now)
 	for surfaceID, until := range s.handoffUntil {
 		if now.Before(until) {
 			continue

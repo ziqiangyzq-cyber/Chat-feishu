@@ -75,17 +75,25 @@ func BuildCodexChildEnv(currentEnv, proxyEnv, args []string) []string {
 }
 
 func SupplementDetachedPATH(env []string) []string {
+	current := normalizePathListBySeparator(lookupEnvValueOrEmpty(env, "PATH"), string(os.PathListSeparator))
+	if managedRuntimeEnv(env) && len(current) != 0 {
+		return upsertEnvValue(env, "PATH", strings.Join(current, string(os.PathListSeparator)))
+	}
 	if shellPath, err := lookupUserShellEnvValue(env, "PATH"); err == nil {
 		merged := mergePATHValue(lookupEnvValueOrEmpty(env, "PATH"), shellPath)
 		if strings.TrimSpace(merged) != "" {
 			return upsertEnvValue(env, "PATH", merged)
 		}
 	}
-	current := normalizePathListBySeparator(lookupEnvValueOrEmpty(env, "PATH"), string(os.PathListSeparator))
 	if len(current) == 0 {
 		return env
 	}
 	return upsertEnvValue(env, "PATH", strings.Join(current, string(os.PathListSeparator)))
+}
+
+func managedRuntimeEnv(env []string) bool {
+	value := strings.ToLower(strings.TrimSpace(lookupEnvValueOrEmpty(env, "CODEX_REMOTE_INSTANCE_MANAGED")))
+	return value == "1" || value == "true" || value == "yes"
 }
 
 func ResolveCodexProviderEnv(args []string, env []string) (CodexProviderEnvInfo, error) {
@@ -332,6 +340,7 @@ func lookupUserShellEnvValueReal(env []string, key string) (string, error) {
 	defer cancel()
 	cmd := execlaunch.CommandContext(ctx, shellPath, shellLookupArgs(shellType, key)...)
 	cmd.Env = ensureHomeEnv(append([]string{}, env...))
+	cmd.WaitDelay = time.Second
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", fmt.Errorf("lookup codex env %q: shell lookup timed out", key)

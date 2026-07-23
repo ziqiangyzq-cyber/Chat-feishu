@@ -22,7 +22,11 @@ generated_go="${PACKAGE_DIR}/upgrade_shim_${GOOS_VALUE}_${GOARCH_VALUE}_embed.go
 generated_go_tmp="${generated_go}.tmp.$$"
 compressed_path="${ASSET_DIR}/${asset_name}.zst"
 
-mapfile -t dependency_files < <(
+dependency_files=()
+while IFS= read -r dependency_file; do
+  [[ -n "${dependency_file}" ]] || continue
+  dependency_files+=("${dependency_file}")
+done < <(
   CGO_ENABLED=0 GOOS="${GOOS_VALUE}" GOARCH="${GOARCH_VALUE}" \
     go list -buildvcs=false -tags codex_remote_upgrade_shim -deps \
       -f '{{if .Module}}{{if eq .Module.Path "github.com/kxn/codex-remote-feishu"}}{{range .GoFiles}}{{$.Dir}}/{{.}}{{"\n"}}{{end}}{{range .CgoFiles}}{{$.Dir}}/{{.}}{{"\n"}}{{end}}{{range .SFiles}}{{$.Dir}}/{{.}}{{"\n"}}{{end}}{{range .SysoFiles}}{{$.Dir}}/{{.}}{{"\n"}}{{end}}{{range .EmbedFiles}}{{$.Dir}}/{{.}}{{"\n"}}{{end}}{{end}}{{end}}' \
