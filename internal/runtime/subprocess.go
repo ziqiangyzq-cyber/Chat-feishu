@@ -46,7 +46,8 @@ func StartDetachedCommand(opts DetachedCommandOptions) (int, error) {
 	cmd.Stderr = stderr
 	cmd.Env = append([]string{}, opts.Env...)
 	if opts.WorkDir != "" {
-		cmd.Dir = opts.WorkDir
+		cmd.Dir = filepath.Clean(opts.WorkDir)
+		cmd.Env = withWorkingDirectoryEnv(cmd.Env, cmd.Dir)
 	}
 	prepareDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
@@ -57,6 +58,21 @@ func StartDetachedCommand(opts DetachedCommandOptions) (int, error) {
 		_ = cmd.Wait()
 	}()
 	return cmd.Process.Pid, nil
+}
+
+func withWorkingDirectoryEnv(env []string, workDir string) []string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" || !filepath.IsAbs(workDir) {
+		return env
+	}
+	updated := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PWD=") {
+			continue
+		}
+		updated = append(updated, entry)
+	}
+	return append(updated, "PWD="+filepath.Clean(workDir))
 }
 
 func detachedCommandOutputs(stdoutPath, stderrPath string) (*os.File, *os.File, error) {

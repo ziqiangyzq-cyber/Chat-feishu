@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
@@ -66,6 +67,14 @@ type RemoteTurnStatus struct {
 	ThreadID         string `json:"threadId,omitempty"`
 	TurnID           string `json:"turnId,omitempty"`
 	Status           string `json:"status"`
+	DispatchedAt     string `json:"dispatchedAt,omitempty"`
+}
+
+func remoteTurnStatusTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func (s *Service) PendingRemoteTurns() []RemoteTurnStatus {
@@ -83,6 +92,7 @@ func (s *Service) PendingRemoteTurns() []RemoteTurnStatus {
 			ThreadID:         binding.ThreadID,
 			TurnID:           binding.TurnID,
 			Status:           binding.Status,
+			DispatchedAt:     remoteTurnStatusTime(binding.DispatchedAt),
 		})
 	}
 	sort.Slice(values, func(i, j int) bool {
@@ -109,6 +119,7 @@ func (s *Service) ActiveRemoteTurns() []RemoteTurnStatus {
 			ThreadID:         binding.ThreadID,
 			TurnID:           binding.TurnID,
 			Status:           binding.Status,
+			DispatchedAt:     remoteTurnStatusTime(binding.DispatchedAt),
 		})
 	}
 	sort.Slice(values, func(i, j int) bool {

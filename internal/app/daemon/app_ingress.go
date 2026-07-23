@@ -180,10 +180,13 @@ func (a *App) handleIngressOverload(instanceID string, connectionID uint64) {
 
 func (a *App) HandleAction(ctx context.Context, action control.Action) {
 	_ = a.handleAction(ctx, action)
+	a.workspaceContextWriter.flush(100 * time.Millisecond)
 }
 
 func (a *App) HandleGatewayAction(ctx context.Context, action control.Action) *feishu.ActionResult {
-	return a.handleAction(ctx, action)
+	result := a.handleAction(ctx, action)
+	a.workspaceContextWriter.flush(100 * time.Millisecond)
+	return result
 }
 
 func (a *App) handleAction(ctx context.Context, action control.Action) *feishu.ActionResult {

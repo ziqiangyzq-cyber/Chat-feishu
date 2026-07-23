@@ -520,7 +520,32 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 	}
 	a.syncSurfaceResumeStateForSurfacesLocked(updatedSurfaceIDs, clearResumeTargets)
 	a.syncClaudeWorkspaceProfileStateLocked()
-	return events
+	return a.prioritizeRecoveryDaemonCommands(events)
+}
+
+func (a *App) prioritizeRecoveryDaemonCommands(events []eventcontract.Event) []eventcontract.Event {
+	if len(events) < 2 {
+		return events
+	}
+	isWeComDaemonCommand := func(event eventcontract.Event) bool {
+		if event.DaemonCommand == nil || a == nil || a.service == nil {
+			return false
+		}
+		surface := a.service.Surface(event.SurfaceSessionID)
+		return surface != nil && strings.EqualFold(strings.TrimSpace(surface.Platform), "wecom")
+	}
+	prioritized := make([]eventcontract.Event, 0, len(events))
+	for _, event := range events {
+		if isWeComDaemonCommand(event) {
+			prioritized = append(prioritized, event)
+		}
+	}
+	for _, event := range events {
+		if !isWeComDaemonCommand(event) {
+			prioritized = append(prioritized, event)
+		}
+	}
+	return prioritized
 }
 
 func (a *App) maybeRecoverVSCodeSurfacesLocked(now time.Time) []eventcontract.Event {

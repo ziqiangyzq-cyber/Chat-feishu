@@ -165,9 +165,18 @@ func (a *App) startManagedHeadless(command control.DaemonCommand) []eventcontrac
 		env = append(env, "CODEX_REMOTE_INSTANCE_DISPLAY_NAME=headless")
 	}
 
-	workDir := strings.TrimSpace(firstNonEmpty(command.WorkspaceKey, command.ThreadCWD))
-	if workDir == "" {
-		workDir = strings.TrimSpace(cfg.Paths.StateDir)
+	workspaceRoot := strings.TrimSpace(firstNonEmpty(command.WorkspaceKey, command.ThreadCWD))
+	if workspaceRoot == "" {
+		workspaceRoot = strings.TrimSpace(cfg.Paths.StateDir)
+	}
+	processWorkDir := workspaceRoot
+	if backend == agentproto.BackendCodex {
+		// Codex app-server calls getcwd() during initialization. On macOS this can
+		// block indefinitely for some non-ASCII working-directory paths. Keep the
+		// native process in the relay state directory while sending the real
+		// workspace explicitly in config/read and thread start/resume requests.
+		processWorkDir = strings.TrimSpace(firstNonEmpty(cfg.Paths.StateDir, workspaceRoot))
+		env = config.UpsertEnvValue(env, config.ManagedWorkspaceRootEnv, workspaceRoot)
 	}
 
 	pid, err := a.startHeadless(relayruntime.HeadlessLaunchOptions{
@@ -175,7 +184,7 @@ func (a *App) startManagedHeadless(command control.DaemonCommand) []eventcontrac
 		ConfigPath: cfg.ConfigPath,
 		Env:        env,
 		Paths:      cfg.Paths,
-		WorkDir:    workDir,
+		WorkDir:    processWorkDir,
 		InstanceID: command.InstanceID,
 		LaunchMode: headlessLaunchModeForBackend(backend),
 		Args:       launchArgs,
@@ -198,8 +207,8 @@ func (a *App) startManagedHeadless(command control.DaemonCommand) []eventcontrac
 		RequestedAt:   now,
 		StartedAt:     now,
 		ThreadID:      command.ThreadID,
-		ThreadCWD:     workDir,
-		WorkspaceRoot: workDir,
+		ThreadCWD:     workspaceRoot,
+		WorkspaceRoot: workspaceRoot,
 		DisplayName:   "headless",
 		Status:        headlessruntime.StatusStarting,
 	}
@@ -209,7 +218,7 @@ func (a *App) startManagedHeadless(command control.DaemonCommand) []eventcontrac
 		command.InstanceID,
 		pid,
 		command.ThreadID,
-		workDir,
+		workspaceRoot,
 	)
 	return a.service.HandleHeadlessLaunchStarted(command.SurfaceSessionID, command.InstanceID, pid)
 }

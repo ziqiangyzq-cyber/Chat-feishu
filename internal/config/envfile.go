@@ -41,6 +41,8 @@ const (
 	DebugRelayFlowEnv             = "CODEX_REMOTE_DEBUG_RELAY_FLOW"
 	DebugRelayRawEnv              = "CODEX_REMOTE_DEBUG_RELAY_RAW"
 	ResumeThreadIDEnv             = "CODEX_REMOTE_RESUME_THREAD_ID"
+	ManagedWorkspaceRootEnv       = "CODEX_REMOTE_MANAGED_WORKSPACE_ROOT"
+	RemoteTurnStartTimeoutEnv     = "CODEX_REMOTE_TURN_START_TIMEOUT"
 	ExternalAccessHostEnv         = "EXTERNAL_ACCESS_HOST"
 	ExternalAccessPortEnv         = "EXTERNAL_ACCESS_PORT"
 	ExternalAccessProviderEnv     = "CODEX_REMOTE_EXTERNAL_ACCESS_PROVIDER"

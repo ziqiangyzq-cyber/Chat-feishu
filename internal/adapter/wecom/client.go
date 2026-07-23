@@ -464,7 +464,10 @@ func (c *Client) sendFrame(ctx context.Context, chatID string, frame Frame) erro
 
 func (c *Client) respondFrame(ctx context.Context, reqID string, frame Frame) error {
 	wire := newRespondMsgFrame(reqID, frame)
-	_, err := c.writeEnvelopeAndWait(ctx, wire.Headers.ReqID, wire.Cmd, wire)
+	reply, err := c.writeEnvelopeAndWait(ctx, wire.Headers.ReqID, wire.Cmd, wire)
+	if err == nil {
+		log.Printf("wecom: respond ack req=%s errcode=%d", wire.Headers.ReqID, reply.ErrCode)
+	}
 	return err
 }
 
@@ -493,8 +496,33 @@ func newRespondMsgFrame(reqID string, frame Frame) respondMsgFrame {
 		Cmd:     frameCmdRespondMsg,
 		Headers: frameHeaders{ReqID: reqID},
 	}
+	// The callback reply API does not accept the proactive-send "markdown"
+	// body shape. WeCom's official long-connection SDK replies to ordinary
+	// text/markdown with msgtype=stream, including when the whole answer is
+	// delivered in a single finished frame. A markdown-shaped reply can receive
+	// an errcode=0 acknowledgement yet never render in the client.
+	if content, ok := callbackStreamContent(frame); ok {
+		wire.Body.MsgType = "stream"
+		wire.Body.Stream = &streamMeta{
+			ID:      newReqID("stream"),
+			Finish:  true,
+			Content: content,
+		}
+		return wire
+	}
 	fillRespondMsgBody(&wire, frame)
 	return wire
+}
+
+func callbackStreamContent(frame Frame) (string, bool) {
+	switch {
+	case frame.MsgType == "markdown" && frame.Markdown != nil:
+		return frame.Markdown.Content, true
+	case frame.MsgType == "text" && frame.Text != nil:
+		return frame.Text.Content, true
+	default:
+		return "", false
+	}
 }
 
 func fillRespondMsgBody(wire *respondMsgFrame, frame Frame) {

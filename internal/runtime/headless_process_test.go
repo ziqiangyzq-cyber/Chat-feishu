@@ -54,6 +54,22 @@ func TestBuildHeadlessWrapperArgsUsesExplicitLaunchMode(t *testing.T) {
 	}
 }
 
+func TestWithWorkingDirectoryEnvReplacesPWD(t *testing.T) {
+	env := withWorkingDirectoryEnv([]string{
+		"PATH=/usr/bin",
+		"PWD=/old/path",
+		"HOME=/tmp/home",
+	}, "/tmp/中文工作区")
+	want := []string{
+		"PATH=/usr/bin",
+		"HOME=/tmp/home",
+		"PWD=/tmp/中文工作区",
+	}
+	if strings.Join(env, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("working directory env = %#v, want %#v", env, want)
+	}
+}
+
 func TestSanitizeFilenameAndTerminateProcessWrapper(t *testing.T) {
 	if got := sanitizeFilename(""); got != "unknown" {
 		t.Fatalf("sanitizeFilename empty = %q", got)

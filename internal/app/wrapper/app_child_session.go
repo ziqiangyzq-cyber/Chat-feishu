@@ -35,7 +35,7 @@ func (a *App) launchCodexChildSession(ctx context.Context, rawLogger *debuglog.R
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.Dir = a.config.WorkspaceRoot
+	cmd.Dir = firstNonEmpty(a.config.ProcessWorkDir, a.config.WorkspaceRoot)
 	cmd.Env = childEnv
 
 	childStdin, childStdout, childStderr, err := startChild(cmd)
@@ -43,7 +43,7 @@ func (a *App) launchCodexChildSession(ctx context.Context, rawLogger *debuglog.R
 		childCancel()
 		return nil, err
 	}
-	a.debugf("child started: binary=%s pid=%d cwd=%s", a.config.CodexRealBinary, cmd.Process.Pid, a.config.WorkspaceRoot)
+	a.debugf("child started: binary=%s pid=%d process_cwd=%s workspace=%s", a.config.CodexRealBinary, cmd.Process.Pid, cmd.Dir, a.config.WorkspaceRoot)
 
 	bootstrappedStdout, err := a.bootstrapHeadlessCodex(childStdin, childStdout, rawLogger, reportProblem)
 	if err != nil {

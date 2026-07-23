@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,17 +38,21 @@ func TestWorkspaceSurfaceContextWrittenAndRemovedForNormalMode(t *testing.T) {
 	})
 
 	contextPath := workspaceSurfaceContextPath(workspaceRoot)
-	payload, err := readWorkspaceSurfaceContext(contextPath)
-	if err != nil {
-		t.Fatalf("readWorkspaceSurfaceContext() error = %v", err)
-	}
+	var payload workspaceSurfaceContextPayload
+	eventually(t, time.Second, func() bool {
+		var err error
+		payload, err = readWorkspaceSurfaceContext(contextPath)
+		return err == nil
+	})
 	if payload.SurfaceSessionID != "surface-1" {
 		t.Fatalf("unexpected surface context payload: %#v", payload)
 	}
-	excludeRaw, err := os.ReadFile(filepath.Join(workspaceRoot, ".git", "info", "exclude"))
-	if err != nil {
-		t.Fatalf("read exclude: %v", err)
-	}
+	var excludeRaw []byte
+	eventually(t, time.Second, func() bool {
+		var err error
+		excludeRaw, err = os.ReadFile(filepath.Join(workspaceRoot, ".git", "info", "exclude"))
+		return err == nil
+	})
 	if !strings.Contains(string(excludeRaw), "/.codex-remote/") {
 		t.Fatalf("expected local git exclude entry, got %q", string(excludeRaw))
 	}
@@ -58,9 +63,10 @@ func TestWorkspaceSurfaceContextWrittenAndRemovedForNormalMode(t *testing.T) {
 		ChatID:           "chat-1",
 		ActorUserID:      "user-1",
 	})
-	if _, err := os.Stat(contextPath); !os.IsNotExist(err) {
-		t.Fatalf("expected context file removed after detach, stat err=%v", err)
-	}
+	eventually(t, time.Second, func() bool {
+		_, err := os.Stat(contextPath)
+		return os.IsNotExist(err)
+	})
 }
 
 func TestWorkspaceSurfaceContextNotWrittenForVSCodeMode(t *testing.T) {
@@ -92,5 +98,66 @@ func TestWorkspaceSurfaceContextNotWrittenForVSCodeMode(t *testing.T) {
 
 	if _, err := os.Stat(workspaceSurfaceContextPath(workspaceRoot)); !os.IsNotExist(err) {
 		t.Fatalf("expected no workspace context file in vscode mode, stat err=%v", err)
+	}
+}
+
+func TestBlockedWorkspaceSurfaceContextWriteDoesNotBlockApp(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	app := New("127.0.0.1:0", "127.0.0.1:0", nil, agentproto.ServerIdentity{StartedAt: time.Now().UTC()})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		WorkspaceRoot: workspaceRoot,
+		WorkspaceKey:  workspaceRoot,
+		Source:        "vscode",
+		Online:        true,
+		Threads:       map[string]*state.ThreadRecord{},
+	})
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	app.workspaceContextWriter.apply = func(workspaceSurfaceContextWriteRequest) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+	}
+	t.Cleanup(func() { close(release) })
+
+	app.HandleAction(context.Background(), control.Action{
+		Kind:             control.ActionAttachInstance,
+		SurfaceSessionID: "surface-1",
+		ChatID:           "chat-1",
+		ActorUserID:      "user-1",
+		InstanceID:       "inst-1",
+	})
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("workspace context writer did not start")
+	}
+
+	statusDone := make(chan struct{})
+	go func() {
+		_ = app.runtimeStatusPayload()
+		close(statusDone)
+	}()
+	select {
+	case <-statusDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("runtime status blocked behind workspace context filesystem I/O")
+	}
+}
+
+func eventually(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !condition() {
+		t.Fatal("condition did not become true before timeout")
 	}
 }

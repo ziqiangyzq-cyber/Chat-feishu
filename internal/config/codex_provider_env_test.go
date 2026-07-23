@@ -253,6 +253,28 @@ func TestSupplementDetachedPATHFallsBackToNormalizedCurrentPATH(t *testing.T) {
 	}
 }
 
+func TestSupplementDetachedPATHSkipsShellLookupForManagedRuntime(t *testing.T) {
+	originalLookup := lookupUserShellEnvValue
+	defer func() { lookupUserShellEnvValue = originalLookup }()
+	lookupUserShellEnvValue = func(env []string, key string) (string, error) {
+		t.Fatalf("managed runtime should not invoke login shell for %q", key)
+		return "", nil
+	}
+
+	got := SupplementDetachedPATH([]string{
+		"CODEX_REMOTE_INSTANCE_MANAGED=1",
+		"PATH=" + strings.Join([]string{"/opt/homebrew/bin", "", "/usr/bin", "/opt/homebrew/bin"}, string(os.PathListSeparator)),
+	})
+	value, ok := lookupEnvValue(got, "PATH")
+	if !ok {
+		t.Fatal("PATH missing after supplement")
+	}
+	want := strings.Join([]string{"/opt/homebrew/bin", "/usr/bin"}, string(os.PathListSeparator))
+	if value != want {
+		t.Fatalf("PATH = %q, want %q", value, want)
+	}
+}
+
 func TestBuildCodexChildEnvSupplementsDetachedPATHBeforeCodexLookup(t *testing.T) {
 	homeDir := t.TempDir()
 	writeCodexConfigForTest(t, filepath.Join(homeDir, ".codex"), `

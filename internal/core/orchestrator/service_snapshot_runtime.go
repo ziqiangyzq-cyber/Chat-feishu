@@ -153,6 +153,9 @@ func (s *Service) BindPendingRemoteCommand(surfaceID, commandID string) {
 				return
 			}
 			binding.CommandID = commandID
+			if binding.DispatchedAt.IsZero() {
+				binding.DispatchedAt = s.now().UTC()
+			}
 			return
 		}
 	}

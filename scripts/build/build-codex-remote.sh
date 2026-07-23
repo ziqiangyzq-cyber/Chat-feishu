@@ -81,6 +81,10 @@ sha256_file() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
@@ -146,7 +150,7 @@ fi
 
 head_commit="$("${GIT_BIN}" rev-parse --verify HEAD^{commit})"
 [[ "${head_commit}" =~ ^[0-9a-fA-F]{40,64}$ ]] || die "HEAD did not resolve to a full commit id"
-head_commit="${head_commit,,}"
+head_commit="$(lowercase "${head_commit}")"
 
 if [[ -n "${expected_ref}" ]]; then
   exact_ref=0
@@ -157,7 +161,7 @@ if [[ -n "${expected_ref}" ]]; then
   fi
   [[ "${exact_ref}" == "1" ]] || die "--expected-ref must be a full commit id or exact tag, not a branch: ${expected_ref}"
   expected_commit="$("${GIT_BIN}" rev-parse --verify "${expected_ref}^{commit}")"
-  expected_commit="${expected_commit,,}"
+  expected_commit="$(lowercase "${expected_commit}")"
   [[ "${expected_commit}" == "${head_commit}" ]] || die "HEAD ${head_commit} does not match ${expected_ref} (${expected_commit})"
   if "${GIT_BIN}" show-ref --verify --quiet "refs/tags/${expected_ref}" && [[ -n "${version}" && "${version}" != "${expected_ref}" ]]; then
     die "version ${version} does not match exact source tag ${expected_ref}"
@@ -170,7 +174,11 @@ if [[ "${require_clean}" == "1" && -n "${worktree_status}" ]]; then
 fi
 
 if [[ -z "${version}" ]]; then
-  mapfile -t exact_tags < <("${GIT_BIN}" tag --points-at "${head_commit}" | sed '/^[[:space:]]*$/d' | sort)
+  exact_tags=()
+  while IFS= read -r exact_tag; do
+    [[ -n "${exact_tag}" ]] || continue
+    exact_tags+=("${exact_tag}")
+  done < <("${GIT_BIN}" tag --points-at "${head_commit}" | sed '/^[[:space:]]*$/d' | sort)
   if [[ "${#exact_tags[@]}" -eq 1 ]]; then
     version="${exact_tags[0]}"
   elif [[ "${#exact_tags[@]}" -gt 1 ]]; then
@@ -204,7 +212,7 @@ fi
 if [[ "${flavor}" != "dev" && "${CODEX_REMOTE_ALLOW_UNTAGGED_FIXTURE:-0}" != "1" ]]; then
   "${GIT_BIN}" show-ref --verify --quiet "refs/tags/${version}" || die "${flavor} build version must already exist as an exact tag: ${version}"
   version_tag_commit="$("${GIT_BIN}" rev-parse --verify "refs/tags/${version}^{commit}")"
-  version_tag_commit="${version_tag_commit,,}"
+  version_tag_commit="$(lowercase "${version_tag_commit}")"
   [[ "${version_tag_commit}" == "${head_commit}" ]] || die "version tag ${version} points to ${version_tag_commit}, not HEAD ${head_commit}"
 fi
 [[ "${build_time_utc}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "--build-time must be RFC3339 UTC (YYYY-MM-DDTHH:MM:SSZ)"

@@ -156,6 +156,7 @@ type App struct {
 	desktopSession             desktopSessionRuntimeState
 	webPreviewGrants           map[string]*previewGrantRecord
 	surfaceResumeRuntime       surfaceResumeRuntimeState
+	workspaceContextWriter     *workspaceSurfaceContextWriter
 	codexUpgradeRuntime        codexupgraderuntime.State
 	upgradeRuntime             upgraderuntime.State
 	turnPatchRuntime           turnpatchruntime.State
@@ -188,7 +189,11 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 		panic(err)
 	}
 	app := &App{
-		service:                     orchestrator.NewService(time.Now, orchestrator.Config{TurnHandoffWait: 800 * time.Millisecond, GitAvailable: gitExecutableAvailable()}, renderer.NewPlanner()),
+		service: orchestrator.NewService(time.Now, orchestrator.Config{
+			TurnHandoffWait:     800 * time.Millisecond,
+			RemoteTurnStartWait: remoteTurnStartWait(),
+			GitAvailable:        gitExecutableAvailable(),
+		}, renderer.NewPlanner()),
 		projector:                   feishu.NewProjector(),
 		gateway:                     gateway,
 		serverIdentity:              serverIdentity,
@@ -231,6 +236,7 @@ func New(relayAddr, apiAddr string, gateway feishu.Gateway, serverIdentity agent
 	// existing feishu-typed projector/gateway fields continue to serve the
 	// Feishu-specific delivery, sync-replacement, attention, and patch paths.
 	app.channel = feishu.NewSurfaceChannel(app.gateway, app.projector)
+	app.workspaceContextWriter = newWorkspaceSurfaceContextWriter()
 	app.codexUpgradeRuntime.Inspect = func(ctx context.Context, opts codexupgrade.InspectOptions) (codexupgrade.Installation, error) {
 		return codexupgrade.Inspect(ctx, opts), nil
 	}
