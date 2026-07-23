@@ -186,6 +186,10 @@ jobs:
             echo "build_flavor=shipping" >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Prepare manual CI release tag
+        if: ${{ github.event_name != 'push' }}
+        run: git tag "${{ steps.artifact_meta.outputs.version }}"
+
       - name: Build release artifacts
         env:
           CODEX_REMOTE_BUILD_FLAVOR: ${{ steps.artifact_meta.outputs.build_flavor }}
