@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
@@ -75,7 +76,7 @@ func applyPromptOverridesToThreadStart(params map[string]any, overrides agentpro
 	}
 }
 
-func applyPromptOverridesToTurnStart(template map[string]any, overrides agentproto.PromptOverrides) {
+func applyPromptOverridesToTurnStart(template map[string]any, overrides agentproto.PromptOverrides, targetThreadModel, fallbackModel string) error {
 	if overrides.Model != "" {
 		template["model"] = overrides.Model
 	}
@@ -91,14 +92,22 @@ func applyPromptOverridesToTurnStart(template map[string]any, overrides agentpro
 		collaborationMode["mode"] = planMode
 	}
 	if len(collaborationMode) != 0 {
-		if overrides.Model != "" {
-			settings["model"] = overrides.Model
+		model := firstNonEmptyString(
+			overrides.Model,
+			targetThreadModel,
+			lookupStringFromAny(settings["model"]),
+			lookupStringFromAny(template["model"]),
+			fallbackModel,
+		)
+		if model == "" {
+			return fmt.Errorf("turn/start collaborationMode requires a model, but no explicit, observed, or configured default model is available")
 		}
+		template["model"] = model
+		settings["model"] = model
 		if overrides.ReasoningEffort != "" {
 			settings["reasoning_effort"] = overrides.ReasoningEffort
 		}
 		// App-server requires a complete Settings object whenever collaborationMode is non-null.
-		setDefault(settings, "model", template["model"])
 		setDefault(settings, "reasoning_effort", template["effort"])
 		setDefault(settings, "developer_instructions", nil)
 		collaborationMode["settings"] = settings
@@ -110,6 +119,16 @@ func applyPromptOverridesToTurnStart(template map[string]any, overrides agentpro
 		template["approvalPolicy"] = agentproto.ApprovalPolicyForAccessMode(overrides.AccessMode)
 		template["sandboxPolicy"] = agentproto.TurnSandboxPolicyForAccessMode(overrides.AccessMode)
 	}
+	return nil
+}
+
+func observedTurnTemplateModel(template map[string]any) string {
+	collaborationMode := lookupMapFromAny(template["collaborationMode"])
+	settings := lookupMapFromAny(collaborationMode["settings"])
+	return firstNonEmptyString(
+		lookupStringFromAny(settings["model"]),
+		lookupStringFromAny(template["model"]),
+	)
 }
 
 func normalizeObservedPlanMode(value string) string {

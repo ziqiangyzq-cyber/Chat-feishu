@@ -85,6 +85,7 @@ func (t *Translator) ObserveClient(raw []byte) (Result, error) {
 		t.latestTurnStartTemplate = template
 		if threadID != "" {
 			t.turnStartByThread[threadID] = template
+			t.rememberThreadModel(threadID, observedTurnTemplateModel(template))
 			t.pendingLocalTurnByThread[threadID] = true
 		} else {
 			t.pendingLocalNewThreadTurn = true

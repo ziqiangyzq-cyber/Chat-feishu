@@ -1,13 +1,19 @@
 package codex
 
-import "github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+import (
+	"strings"
+
+	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
+)
 
 type Translator struct {
 	instanceID                 string
+	defaultModel               string
 	nextID                     int
 	debugLog                   func(string, ...any)
 	currentThreadID            string
 	knownThreadCWD             map[string]string
+	knownThreadModel           map[string]string
 	pendingRemoteTurnByThread  map[string]string
 	pendingLocalTurnByThread   map[string]bool
 	pendingLocalNewThreadTurn  bool
@@ -90,6 +96,7 @@ func NewTranslator(instanceID string) *Translator {
 	return &Translator{
 		instanceID:                 instanceID,
 		knownThreadCWD:             map[string]string{},
+		knownThreadModel:           map[string]string{},
 		pendingRemoteTurnByThread:  map[string]string{},
 		pendingLocalTurnByThread:   map[string]bool{},
 		pendingTurnProblems:        map[string]agentproto.ErrorInfo{},
@@ -111,6 +118,19 @@ func NewTranslator(instanceID string) *Translator {
 		pendingSuppressedResponse:  map[string]suppressedResponseContext{},
 		pendingRequestTypes:        map[string]agentproto.RequestType{},
 	}
+}
+
+func (t *Translator) SetDefaultModel(model string) {
+	t.defaultModel = strings.TrimSpace(model)
+}
+
+func (t *Translator) rememberThreadModel(threadID, model string) {
+	threadID = strings.TrimSpace(threadID)
+	model = strings.TrimSpace(model)
+	if threadID == "" || model == "" {
+		return
+	}
+	t.knownThreadModel[threadID] = model
 }
 
 func (t *Translator) SetDebugLogger(debugLog func(string, ...any)) {

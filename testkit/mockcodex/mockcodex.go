@@ -24,6 +24,7 @@ type MockCodex struct {
 	ExitAfterOutputCode    int
 	ExitAfterInterruptCode int
 	LastTurnStart          map[string]any
+	DefaultModel           string
 	Responder              func(turn TurnStart) string
 
 	scheduledExit     bool
@@ -31,9 +32,10 @@ type MockCodex struct {
 }
 
 type Thread struct {
-	ID   string
-	CWD  string
-	Name string
+	ID    string
+	CWD   string
+	Name  string
+	Model string
 }
 
 type Turn struct {
@@ -52,6 +54,7 @@ func New() *MockCodex {
 		Threads:        map[string]*Thread{},
 		AutoComplete:   true,
 		EmitItemDeltas: true,
+		DefaultModel:   "mock-codex-model",
 		Responder: func(turn TurnStart) string {
 			for _, input := range turn.Inputs {
 				if text, _ := input["text"].(string); text != "" {
@@ -64,7 +67,7 @@ func New() *MockCodex {
 }
 
 func (m *MockCodex) SeedThread(id, cwd, name string) {
-	m.Threads[id] = &Thread{ID: id, CWD: cwd, Name: name}
+	m.Threads[id] = &Thread{ID: id, CWD: cwd, Name: name, Model: m.DefaultModel}
 	m.FocusedThreadID = id
 }
 
@@ -102,6 +105,16 @@ func (m *MockCodex) HandleRemoteCommand(raw []byte) ([][]byte, error) {
 		}
 		m.Initialized = true
 		return nil, nil
+	case "config/read":
+		if outputs := m.requireInitialized(id); outputs != nil {
+			return outputs, nil
+		}
+		return [][]byte{
+			mustJSON(map[string]any{"id": id, "result": map[string]any{
+				"config":  map[string]any{"model": m.DefaultModel},
+				"origins": map[string]any{},
+			}}),
+		}, nil
 	case "thread/start":
 		if outputs := m.requireInitialized(id); outputs != nil {
 			return outputs, nil
@@ -109,10 +122,11 @@ func (m *MockCodex) HandleRemoteCommand(raw []byte) ([][]byte, error) {
 		m.nextThreadID++
 		threadID := fmt.Sprintf("thread-%d", m.nextThreadID)
 		cwd, _ := params["cwd"].(string)
-		m.Threads[threadID] = &Thread{ID: threadID, CWD: cwd, Name: "新会话"}
+		model := choose(stringValue(params["model"]), m.DefaultModel)
+		m.Threads[threadID] = &Thread{ID: threadID, CWD: cwd, Name: "新会话", Model: model}
 		m.FocusedThreadID = threadID
 		return [][]byte{
-			mustJSON(map[string]any{"id": id, "result": map[string]any{"thread": map[string]any{"id": threadID}}}),
+			mustJSON(map[string]any{"id": id, "result": map[string]any{"thread": map[string]any{"id": threadID}, "model": model}}),
 			mustJSON(map[string]any{"method": "thread/started", "params": map[string]any{"thread": map[string]any{"id": threadID, "cwd": cwd, "name": "新会话"}}}),
 		}, nil
 	case "thread/resume":
@@ -122,15 +136,18 @@ func (m *MockCodex) HandleRemoteCommand(raw []byte) ([][]byte, error) {
 		threadID, _ := params["threadId"].(string)
 		thread := m.Threads[threadID]
 		if thread == nil {
-			thread = &Thread{ID: threadID}
+			thread = &Thread{ID: threadID, Model: m.DefaultModel}
 			m.Threads[threadID] = thread
+		}
+		if thread.Model == "" {
+			thread.Model = m.DefaultModel
 		}
 		if cwd, _ := params["cwd"].(string); cwd != "" {
 			thread.CWD = cwd
 		}
 		m.FocusedThreadID = threadID
 		return [][]byte{
-			mustJSON(map[string]any{"id": id, "result": map[string]any{}}),
+			mustJSON(map[string]any{"id": id, "result": map[string]any{"thread": map[string]any{"id": thread.ID}, "model": thread.Model}}),
 			mustJSON(map[string]any{"method": "thread/started", "params": map[string]any{"thread": map[string]any{"id": thread.ID, "cwd": thread.CWD, "name": thread.Name}}}),
 		}, nil
 	case "thread/loaded/list":
@@ -452,6 +469,11 @@ func choose(primary, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func (m *MockCodex) resolveRemoteThread(requested string) string {

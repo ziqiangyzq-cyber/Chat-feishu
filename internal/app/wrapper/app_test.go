@@ -759,6 +759,9 @@ func TestWrapperRestartsChildWithoutExitingAndRestoresFocusedThread(t *testing.T
 	if count := countRawFramesByMethod(t, rawPath, "codex.stdin", "initialize"); count != 2 {
 		t.Fatalf("expected two initialize frames after child restart, got %d", count)
 	}
+	if count := countRawFramesByMethod(t, rawPath, "codex.stdin", "config/read"); count != 2 {
+		t.Fatalf("expected two config/read frames after child restart, got %d", count)
+	}
 	if count := countRawFramesByMethod(t, rawPath, "codex.stdin", "thread/resume"); count != 2 {
 		t.Fatalf("expected original + restore thread/resume frames on codex.stdin, got %d", count)
 	}

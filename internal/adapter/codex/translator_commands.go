@@ -251,7 +251,6 @@ func (t *Translator) translatePromptSendResumeOrDirect(command agentproto.Comman
 	if strings.TrimSpace(command.Target.ThreadID) == "" {
 		return t.translatePromptSendThreadStart(command, false)
 	}
-	delete(t.pendingLocalTurnByThread, command.Target.ThreadID)
 	if t.currentThreadID == "" || command.Target.ThreadID != t.currentThreadID {
 		requestID := t.nextRequest("thread-resume")
 		t.pendingThreadResume[requestID] = pendingThreadResume{
@@ -359,8 +358,6 @@ func (t *Translator) buildThreadStartParams(cwd string, overrides agentproto.Pro
 }
 
 func (t *Translator) directTurnStart(threadID string, command agentproto.Command, newThread bool) ([]byte, string, error) {
-	delete(t.pendingLocalTurnByThread, threadID)
-	t.pendingRemoteTurnByThread[threadID] = choose(command.Origin.Surface, command.Origin.ChatID)
 	template := t.selectTurnTemplate(threadID, newThread)
 	template["threadId"] = threadID
 	template["input"] = t.buildInputs(command.Prompt.Inputs)
@@ -373,21 +370,31 @@ func (t *Translator) directTurnStart(threadID string, command agentproto.Command
 	setDefault(template, "personality", nil)
 	setDefault(template, "collaborationMode", nil)
 	setDefault(template, "attachments", []any{})
-	applyPromptOverridesToTurnStart(template, command.Overrides)
+	targetThreadModel := t.knownThreadModel[threadID]
+	fallbackModel := firstNonEmptyString(
+		lookupStringFromAny(t.latestThreadStartParams["model"]),
+		t.defaultModel,
+	)
+	if err := applyPromptOverridesToTurnStart(template, command.Overrides, targetThreadModel, fallbackModel); err != nil {
+		return nil, "", err
+	}
 	requestID := t.nextRequest("turn-start")
 	payload := map[string]any{
 		"id":     requestID,
 		"method": "turn/start",
 		"params": template,
 	}
-	t.pendingSuppressedResponse[lookupStringFromAny(payload["id"])] = suppressedResponseContext{
-		Action:           "turn/start",
-		ThreadID:         threadID,
-		SurfaceSessionID: choose(command.Origin.Surface, command.Origin.ChatID),
-	}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "", err
+	}
+	surfaceID := choose(command.Origin.Surface, command.Origin.ChatID)
+	delete(t.pendingLocalTurnByThread, threadID)
+	t.pendingRemoteTurnByThread[threadID] = surfaceID
+	t.pendingSuppressedResponse[lookupStringFromAny(payload["id"])] = suppressedResponseContext{
+		Action:           "turn/start",
+		ThreadID:         threadID,
+		SurfaceSessionID: surfaceID,
 	}
 	return append(bytes, '\n'), requestID, nil
 }

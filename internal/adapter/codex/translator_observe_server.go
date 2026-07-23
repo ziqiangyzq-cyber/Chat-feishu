@@ -83,6 +83,7 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 				}, nil
 			}
 			t.currentThreadID = pending.ThreadID
+			t.rememberThreadModel(pending.ThreadID, lookupString(message, "result", "model"))
 			if pending.CWD != "" {
 				t.knownThreadCWD[pending.ThreadID] = pending.CWD
 			}
@@ -158,12 +159,14 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 				}
 			}
 			t.currentThreadID = threadID
+			t.rememberThreadModel(threadID, lookupString(message, "result", "model"))
 			if pending.Command.Target.CWD != "" {
 				t.knownThreadCWD[threadID] = pending.Command.Target.CWD
 			}
 			followup, followupID, err := t.directTurnStart(threadID, pending.Command, true)
 			if err != nil {
-				return Result{}, err
+				t.debugf("observe server thread/start followup rejected: request=%s thread=%s error=%s", requestID, threadID, err)
+				return failedFollowupTurnStartResult(threadID, err), nil
 			}
 			action := choose(strings.TrimSpace(pending.Action), "thread/start")
 			t.debugf("observe server %s result: request=%s thread=%s followup=%s", action, requestID, threadID, followupID)
@@ -208,6 +211,7 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 				}}}, nil
 			}
 			t.currentThreadID = pending.ThreadID
+			t.rememberThreadModel(pending.ThreadID, lookupString(message, "result", "model"))
 			if pending.Command.Target.CWD != "" {
 				t.knownThreadCWD[pending.ThreadID] = pending.Command.Target.CWD
 			}
@@ -225,7 +229,8 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 			default:
 				followup, followupID, err := t.directTurnStart(pending.ThreadID, pending.Command, false)
 				if err != nil {
-					return Result{}, err
+					t.debugf("observe server thread/resume followup rejected: request=%s thread=%s error=%s", requestID, pending.ThreadID, err)
+					return failedFollowupTurnStartResult(pending.ThreadID, err), nil
 				}
 				t.debugf("observe server thread/resume result: request=%s thread=%s followup=%s", requestID, pending.ThreadID, followupID)
 				return Result{
@@ -825,6 +830,19 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 		}}}, nil
 	default:
 		return Result{}, nil
+	}
+}
+
+func failedFollowupTurnStartResult(threadID string, err error) Result {
+	return Result{
+		Suppress: true,
+		Events: []agentproto.Event{{
+			Kind:                 agentproto.EventTurnCompleted,
+			ThreadID:             threadID,
+			Status:               "failed",
+			ErrorMessage:         err.Error(),
+			TurnCompletionOrigin: agentproto.TurnCompletionOriginTurnStartRejected,
+		}},
 	}
 }
 

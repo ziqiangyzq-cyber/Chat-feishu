@@ -68,6 +68,10 @@ type runtimeDebugLogger interface {
 	SetDebugLogger(func(string, ...any))
 }
 
+type runtimeDefaultModelSetter interface {
+	SetDefaultModel(string)
+}
+
 func newBackendRuntime(cfg Config) backendRuntime {
 	switch agentproto.NormalizeBackend(cfg.Backend) {
 	case agentproto.BackendClaude:
@@ -174,6 +178,12 @@ func (r *codexBackendRuntime) SetDebugLogger(debugLog func(string, ...any)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.translator.SetDebugLogger(debugLog)
+}
+
+func (r *codexBackendRuntime) SetDefaultModel(model string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.translator.SetDefaultModel(model)
 }
 
 type claudeBackendRuntime struct {
