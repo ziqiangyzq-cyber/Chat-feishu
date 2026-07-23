@@ -13,6 +13,14 @@ import (
 )
 
 var launchctlUserRunner = runLaunchctl
+var launchdUserSleep = time.Sleep
+
+const (
+	launchdBootstrapAttempts = 5
+	launchdBootstrapBackoff  = 200 * time.Millisecond
+	launchdRestartTimeout    = 5 * time.Second
+	launchdRestartPoll       = 100 * time.Millisecond
+)
 
 func runLaunchctl(ctx context.Context, args ...string) (string, error) {
 	cmd := execlaunch.CommandContext(ctx, "launchctl", args...)
@@ -179,11 +187,38 @@ func launchdUserBootstrap(ctx context.Context, state InstallState) error {
 	if err != nil {
 		return err
 	}
-	_, err = launchctlUserRunner(ctx, "bootstrap", launchdUserGUITarget(), state.ServiceUnitPath)
-	if isLaunchdAlreadyLoadedErr(err) {
+	var lastErr error
+	for attempt := 1; attempt <= launchdBootstrapAttempts; attempt++ {
+		_, lastErr = launchctlUserRunner(ctx, "bootstrap", launchdUserGUITarget(), state.ServiceUnitPath)
+		if lastErr == nil || isLaunchdAlreadyLoadedErr(lastErr) {
+			return nil
+		}
+		if attempt == launchdBootstrapAttempts {
+			break
+		}
+		delay := time.Duration(attempt) * launchdBootstrapBackoff
+		if err := launchdSleepContext(ctx, delay); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("bootstrap launchd service %s after %d attempts: %w", launchdLabelForInstance(state.InstanceID), launchdBootstrapAttempts, lastErr)
+}
+
+func launchdSleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
 		return nil
 	}
-	return err
+	done := make(chan struct{})
+	go func() {
+		launchdUserSleep(delay)
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
 }
 
 func launchdUserBootout(ctx context.Context, state InstallState) error {
@@ -289,11 +324,11 @@ func launchdUserStopAndWait(ctx context.Context, state InstallState, timeout, po
 	deadline := time.Now().Add(timeout)
 	label := launchdLabelForInstance(state.InstanceID)
 	for {
-		running, err := launchdUserIsRunning(ctx, state)
+		loaded, err := launchdUserIsLoaded(ctx, state)
 		if err != nil {
 			return fmt.Errorf("confirm launchd stop for %s: %w", label, err)
 		}
-		if !running {
+		if !loaded {
 			return nil
 		}
 		if timeout <= 0 || time.Now().After(deadline) {
@@ -312,7 +347,7 @@ func launchdUserRestart(ctx context.Context, state InstallState) error {
 	if err != nil {
 		return err
 	}
-	if err := launchdUserBootout(ctx, state); err != nil {
+	if err := launchdUserStopAndWait(ctx, state, launchdRestartTimeout, launchdRestartPoll); err != nil {
 		return err
 	}
 	return launchdUserBootstrap(ctx, state)
@@ -345,4 +380,19 @@ func launchdUserIsRunning(ctx context.Context, state InstallState) (bool, error)
 		}
 	}
 	return false, nil
+}
+
+func launchdUserIsLoaded(ctx context.Context, state InstallState) (bool, error) {
+	state, err := launchdUserServiceState(state)
+	if err != nil {
+		return false, err
+	}
+	_, err = launchctlUserRunner(ctx, "print", launchdUserServiceTarget(state))
+	if err == nil {
+		return true, nil
+	}
+	if isLaunchdMissingErr(err) {
+		return false, nil
+	}
+	return false, err
 }

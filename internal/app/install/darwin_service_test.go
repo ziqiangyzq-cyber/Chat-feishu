@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func withDarwinGOOS(t *testing.T) func() {
@@ -413,6 +414,9 @@ func TestLaunchdUserRestartCallsKickstartWithK(t *testing.T) {
 	var calls []string
 	defer withMockLaunchctl(t, func(_ context.Context, args ...string) (string, error) {
 		calls = append(calls, strings.Join(args, " "))
+		if len(args) > 0 && args[0] == "print" {
+			return "", fmt.Errorf("Could not find service")
+		}
 		return "", nil
 	})()
 
@@ -423,6 +427,77 @@ func TestLaunchdUserRestartCallsKickstartWithK(t *testing.T) {
 	joined := strings.Join(calls, "; ")
 	if !strings.Contains(joined, "bootout") || !strings.Contains(joined, "bootstrap") {
 		t.Fatalf("expected bootout + bootstrap restart call, got: %v", calls)
+	}
+}
+
+func TestLaunchdUserBootstrapRetriesTransientFailure(t *testing.T) {
+	defer withDarwinGOOS(t)()
+	baseDir := t.TempDir()
+	stubServiceUserHome(t, baseDir)
+	state := InstallState{InstanceID: "stable", BaseDir: baseDir}
+	ApplyStateMetadata(&state, StateMetadataOptions{
+		InstanceID:     state.InstanceID,
+		BaseDir:        state.BaseDir,
+		ServiceManager: ServiceManagerLaunchdUser,
+	})
+
+	originalSleep := launchdUserSleep
+	launchdUserSleep = func(time.Duration) {}
+	defer func() { launchdUserSleep = originalSleep }()
+
+	attempts := 0
+	defer withMockLaunchctl(t, func(_ context.Context, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "bootstrap" {
+			attempts++
+			if attempts == 1 {
+				return "", fmt.Errorf("exit status 5: Bootstrap failed: 5: Input/output error")
+			}
+		}
+		return "", nil
+	})()
+
+	if err := launchdUserBootstrap(context.Background(), state); err != nil {
+		t.Fatalf("launchdUserBootstrap: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("bootstrap attempts = %d, want 2", attempts)
+	}
+}
+
+func TestLaunchdUserRestartWaitsUntilServiceIsUnloaded(t *testing.T) {
+	defer withDarwinGOOS(t)()
+	baseDir := t.TempDir()
+	stubServiceUserHome(t, baseDir)
+	state := InstallState{InstanceID: "stable", BaseDir: baseDir}
+	ApplyStateMetadata(&state, StateMetadataOptions{
+		InstanceID:     state.InstanceID,
+		BaseDir:        state.BaseDir,
+		ServiceManager: ServiceManagerLaunchdUser,
+	})
+
+	prints := 0
+	var calls []string
+	defer withMockLaunchctl(t, func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if len(args) > 0 && args[0] == "print" {
+			prints++
+			if prints == 1 {
+				return "state = waiting", nil
+			}
+			return "", fmt.Errorf("Could not find service")
+		}
+		return "", nil
+	})()
+
+	if err := launchdUserRestart(context.Background(), state); err != nil {
+		t.Fatalf("launchdUserRestart: %v", err)
+	}
+	if prints != 2 {
+		t.Fatalf("print calls = %d, want 2", prints)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Index(joined, "bootstrap ") < strings.LastIndex(joined, "print ") {
+		t.Fatalf("bootstrap ran before launchd fully unloaded:\n%s", joined)
 	}
 }
 
