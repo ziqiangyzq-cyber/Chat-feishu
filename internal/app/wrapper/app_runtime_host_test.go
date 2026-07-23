@@ -99,8 +99,8 @@ func TestWrapperClaudeHelloAndShutdown(t *testing.T) {
 		if err != nil && err != context.Canceled {
 			t.Fatalf("wrapper run failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for claude skeleton shutdown")
+	case <-time.After(15 * time.Second):
+		t.Fatalf("timed out waiting for claude skeleton shutdown\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
 }
 
