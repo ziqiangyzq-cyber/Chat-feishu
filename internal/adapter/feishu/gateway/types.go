@@ -37,6 +37,11 @@ type InboundEnv struct {
 	// HandleTabCommand executes a gateway-local /tab command. The action is
 	// consumed by the gateway and never forwarded to the daemon core.
 	HandleTabCommand func(ctx context.Context, req TabCommandRequest)
+	// BotOpenID is the open_id of this app's bot. When set, group-chat inbound
+	// messages that neither @mention the bot nor carry a command are ignored,
+	// so the bot only reacts when it is explicitly called. Empty disables the
+	// gate (fail open to the legacy "reply to everything" behavior).
+	BotOpenID string
 }
 
 type ActionDispatcher func(context.Context, control.Action) error

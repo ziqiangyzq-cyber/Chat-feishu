@@ -24,6 +24,10 @@ func (g *LiveGateway) Start(ctx context.Context, handler ActionHandler) error {
 	g.mu.Lock()
 	g.actionHandler = handler
 	g.mu.Unlock()
+	// Resolve the bot open_id up front so group-chat inbound routing can tell
+	// whether a message @mentions the bot. Failure is non-fatal: the mention
+	// gate falls back to the legacy "reply to everything" behavior.
+	g.ensureBotOpenID(ctx)
 	inboundLane := gatewaypkg.NewSurfaceInboundLane(ctx, g.inboundEnv(), gatewayDispatcher(handler))
 	dispatch := dispatcher.NewEventDispatcher("", "")
 	dispatch.OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
