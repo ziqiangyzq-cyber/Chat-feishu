@@ -31,6 +31,7 @@ func (g *LiveGateway) routingEnv() gatewaypkg.RoutingEnv {
 func (g *LiveGateway) inboundEnv() gatewaypkg.InboundEnv {
 	return gatewaypkg.InboundEnv{
 		GatewayID:                     g.config.GatewayID,
+		BotOpenID:                     g.currentBotOpenID(),
 		LookupSurfaceMessage:          g.lookupSurfaceMessage,
 		ParseTextActionWithoutCatalog: control.ParseFeishuTextActionWithoutCatalog,
 		QuotedInputs:                  g.quotedInputs,

@@ -202,6 +202,25 @@ func feishuMentionKeys(mentions []*larkim.MentionEvent) []string {
 	return keys
 }
 
+// feishuMentionsIncludeBot reports whether any mention in the message targets
+// the bot identified by botOpenID. Used to decide, in group chats, whether an
+// inbound message is actually addressed to the bot.
+func feishuMentionsIncludeBot(mentions []*larkim.MentionEvent, botOpenID string) bool {
+	botOpenID = strings.TrimSpace(botOpenID)
+	if botOpenID == "" {
+		return false
+	}
+	for _, mention := range mentions {
+		if mention == nil || mention.Id == nil {
+			continue
+		}
+		if strings.TrimSpace(stringPtr(mention.Id.OpenId)) == botOpenID {
+			return true
+		}
+	}
+	return false
+}
+
 func feishuMentionReplacements(mentions []*larkim.MentionEvent) []feishuMentionReplacement {
 	replacements := make([]feishuMentionReplacement, 0, len(mentions))
 	seen := map[string]struct{}{}

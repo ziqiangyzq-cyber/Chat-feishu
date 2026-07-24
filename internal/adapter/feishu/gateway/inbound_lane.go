@@ -478,6 +478,17 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 		baseAction.TargetMessageID = replyTargetMessageID
 	}
 
+	// In group chats the bot only reacts when it is explicitly called: either
+	// @mentioned, or addressed through a command. Ordinary chatter, shared
+	// images/files and forwards are ignored so the bot stays quiet among many
+	// people. The gate stays off in p2p chats (every message is for the bot)
+	// and whenever the bot open_id is unknown (fail open to legacy behavior).
+	// Commands are handled in the "text" case below, so this flag only
+	// suppresses non-command content.
+	ignoreUnaddressedGroupMessage := strings.EqualFold(chatType, "group") &&
+		strings.TrimSpace(env.BotOpenID) != "" &&
+		!feishuMentionsIncludeBot(message.Mentions, env.BotOpenID)
+
 	switch messageType {
 	case "text":
 		text, commandText, err := parseFeishuEventText(content, message.Mentions)
@@ -506,6 +517,10 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 			commandAction.Inbound = cloneInboundMeta(inbound)
 			return PlannedInboundMessage{Action: &commandAction}, true, nil
 		}
+		if ignoreUnaddressedGroupMessage {
+			logInboundMessageIgnored(gatewayID, surfaceSessionID, inbound, message, "group_message_not_addressed_to_bot")
+			return PlannedInboundMessage{}, false, nil
+		}
 		env.RecordSurfaceMessage(messageID, surfaceSessionID)
 		return PlannedInboundMessage{
 			Queue: &QueuedMessageWork{
@@ -523,6 +538,10 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 			},
 		}, true, nil
 	case "post":
+		if ignoreUnaddressedGroupMessage {
+			logInboundMessageIgnored(gatewayID, surfaceSessionID, inbound, message, "group_message_not_addressed_to_bot")
+			return PlannedInboundMessage{}, false, nil
+		}
 		var contentPreview feishuPostContent
 		if err := json.Unmarshal([]byte(content), &contentPreview); err != nil {
 			logInboundMessageParseFailed(gatewayID, surfaceSessionID, inbound, message, "parse_post_content", err)
@@ -544,6 +563,10 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 			},
 		}, true, nil
 	case "image":
+		if ignoreUnaddressedGroupMessage {
+			logInboundMessageIgnored(gatewayID, surfaceSessionID, inbound, message, "group_message_not_addressed_to_bot")
+			return PlannedInboundMessage{}, false, nil
+		}
 		imageKey, err := ParseImageKey(content)
 		if err != nil {
 			logInboundMessageParseFailed(gatewayID, surfaceSessionID, inbound, message, "parse_image_content", err)
@@ -566,6 +589,10 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 			},
 		}, true, nil
 	case "file":
+		if ignoreUnaddressedGroupMessage {
+			logInboundMessageIgnored(gatewayID, surfaceSessionID, inbound, message, "group_message_not_addressed_to_bot")
+			return PlannedInboundMessage{}, false, nil
+		}
 		fileKey, fileName, err := ParseFileContent(content)
 		if err != nil {
 			logInboundMessageParseFailed(gatewayID, surfaceSessionID, inbound, message, "parse_file_content", err)
@@ -589,6 +616,10 @@ func PlanInboundMessageEvent(env InboundEnv, event *larkim.P2MessageReceiveV1) (
 			},
 		}, true, nil
 	case "merge_forward":
+		if ignoreUnaddressedGroupMessage {
+			logInboundMessageIgnored(gatewayID, surfaceSessionID, inbound, message, "group_message_not_addressed_to_bot")
+			return PlannedInboundMessage{}, false, nil
+		}
 		env.RecordSurfaceMessage(messageID, surfaceSessionID)
 		return PlannedInboundMessage{
 			Queue: &QueuedMessageWork{
