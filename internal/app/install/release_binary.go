@@ -245,6 +245,19 @@ func extractReleaseArchive(archivePath, targetDir, goos string) error {
 	return extractTarGz(archivePath, targetDir)
 }
 
+func archiveEntryPath(targetDir, entryName string) (string, error) {
+	if !filepath.IsLocal(entryName) {
+		return "", fmt.Errorf("archive entry escaped target dir: %s", entryName)
+	}
+	cleanTargetDir := filepath.Clean(targetDir)
+	path := filepath.Join(cleanTargetDir, filepath.Clean(entryName))
+	relativePath, err := filepath.Rel(cleanTargetDir, path)
+	if err != nil || !filepath.IsLocal(relativePath) {
+		return "", fmt.Errorf("archive entry escaped target dir: %s", entryName)
+	}
+	return path, nil
+}
+
 func extractTarGz(archivePath, targetDir string) error {
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -271,9 +284,9 @@ func extractTarGz(archivePath, targetDir string) error {
 		if name == "." {
 			continue
 		}
-		path := filepath.Join(targetDir, name)
-		if !strings.HasPrefix(path, filepath.Clean(targetDir)+string(filepath.Separator)) && path != filepath.Clean(targetDir) {
-			return fmt.Errorf("archive entry escaped target dir: %s", header.Name)
+		path, err := archiveEntryPath(targetDir, name)
+		if err != nil {
+			return err
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -312,9 +325,9 @@ func extractZip(archivePath, targetDir string) error {
 		if name == "." {
 			continue
 		}
-		path := filepath.Join(cleanTargetDir, name)
-		if !strings.HasPrefix(path, cleanTargetDir+string(filepath.Separator)) && path != cleanTargetDir {
-			return fmt.Errorf("archive entry escaped target dir: %s", file.Name)
+		path, err := archiveEntryPath(cleanTargetDir, name)
+		if err != nil {
+			return err
 		}
 		mode := file.Mode()
 		if file.FileInfo().IsDir() {

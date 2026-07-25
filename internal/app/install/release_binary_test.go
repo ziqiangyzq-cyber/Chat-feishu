@@ -188,6 +188,61 @@ func TestExtractReleaseArchiveSupportsZipForWindows(t *testing.T) {
 	}
 }
 
+func TestArchiveEntryPathRejectsEscapes(t *testing.T) {
+	targetDir := t.TempDir()
+	tests := []struct {
+		name      string
+		entryName string
+		wantErr   bool
+	}{
+		{name: "nested file", entryName: filepath.Join("package", "binary"), wantErr: false},
+		{name: "parent traversal", entryName: filepath.Join("..", "outside"), wantErr: true},
+		{name: "nested parent traversal", entryName: filepath.Join("package", "..", "..", "outside"), wantErr: true},
+		{name: "absolute path", entryName: filepath.Join(string(filepath.Separator), "outside"), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path, err := archiveEntryPath(targetDir, test.entryName)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("archiveEntryPath(%q) = %q, want error", test.entryName, path)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("archiveEntryPath(%q): %v", test.entryName, err)
+			}
+			expected := filepath.Join(targetDir, test.entryName)
+			if path != expected {
+				t.Fatalf("archiveEntryPath(%q) = %q, want %q", test.entryName, path, expected)
+			}
+		})
+	}
+}
+
+func TestExtractReleaseArchiveRejectsParentTraversal(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			parentDir := t.TempDir()
+			targetDir := filepath.Join(parentDir, "target")
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
+				t.Fatalf("MkdirAll target: %v", err)
+			}
+			archivePath := filepath.Join(t.TempDir(), "malicious")
+			writePlatformReleaseArchive(t, archivePath, "..", "outside", "malicious", goos)
+
+			err := extractReleaseArchive(archivePath, targetDir, goos)
+			if err == nil || !strings.Contains(err.Error(), "escaped target dir") {
+				t.Fatalf("extractReleaseArchive() error = %v, want target escape rejection", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(parentDir, "outside")); !os.IsNotExist(statErr) {
+				t.Fatalf("outside file exists or stat failed unexpectedly: %v", statErr)
+			}
+		})
+	}
+}
+
 func writeReleaseArchive(t *testing.T, archivePath, packageDir, binaryName, content string) {
 	t.Helper()
 
