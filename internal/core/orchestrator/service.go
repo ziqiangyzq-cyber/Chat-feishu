@@ -13,13 +13,17 @@ import (
 )
 
 type Config struct {
-	TurnHandoffWait       time.Duration
-	HeadlessLaunchWait    time.Duration
-	RemoteTurnStartWait   time.Duration
-	LocalPauseMaxWait     time.Duration
-	DetachAbandonWait     time.Duration
-	GitAvailable          bool
-	WorkspaceDisplayNames map[string]string
+	TurnHandoffWait     time.Duration
+	HeadlessLaunchWait  time.Duration
+	RemoteTurnStartWait time.Duration
+	LocalPauseMaxWait   time.Duration
+	DetachAbandonWait   time.Duration
+	// RequestUserInputAutoCancelWait is how long an unanswered AskUserQuestion /
+	// request_user_input card may sit before the Tick sweep auto-cancels it (and stops
+	// the waiting turn). Zero falls back to the default below.
+	RequestUserInputAutoCancelWait time.Duration
+	GitAvailable                   bool
+	WorkspaceDisplayNames          map[string]string
 }
 
 type Service struct {
@@ -204,6 +208,9 @@ func NewService(now func() time.Time, cfg Config, planner *renderer.Planner) *Se
 	}
 	if cfg.DetachAbandonWait <= 0 {
 		cfg.DetachAbandonWait = 20 * time.Second
+	}
+	if cfg.RequestUserInputAutoCancelWait <= 0 {
+		cfg.RequestUserInputAutoCancelWait = 10 * time.Minute
 	}
 	if planner == nil {
 		planner = renderer.NewPlanner()
@@ -942,6 +949,7 @@ func (s *Service) Tick(now time.Time) []eventcontract.Event {
 				},
 			})
 		}
+		events = append(events, s.expireStaleRequestUserInputPrompts(surface, now)...)
 		events = append(events, s.maybeDispatchPendingAutoWhip(surface, now)...)
 		events = append(events, s.maybeDispatchPendingAutoContinue(surface, now)...)
 		events = append(events, s.tickExecCommandProgressReasoning(surface, now)...)

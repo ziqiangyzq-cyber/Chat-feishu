@@ -744,17 +744,26 @@ func (s *Service) advanceRequestStructuredForm(surface *state.SurfaceConsoleReco
 }
 
 func (s *Service) cancelRequestUserInputTurn(surface *state.SurfaceConsoleRecord, request *state.RequestPromptRecord, action control.Action) []eventcontract.Event {
+	return s.cancelRequestUserInputTurnWithReason(surface, request, action,
+		"已放弃答题，并向当前 turn 发送停止请求。",
+		"已放弃答题。当前 turn 已不在可中断状态。")
+}
+
+// cancelRequestUserInputTurnWithReason performs the same cancel/interrupt flow as a
+// manual "取消" tap but lets the caller supply the inline phase texts, so the timed
+// auto-cancel sweep can explain that the card expired rather than that the user quit.
+func (s *Service) cancelRequestUserInputTurnWithReason(surface *state.SurfaceConsoleRecord, request *state.RequestPromptRecord, action control.Action, interruptText, noTurnText string) []eventcontract.Event {
 	if surface == nil || request == nil {
 		return nil
 	}
 	markRequestAborted(request, frontstagecontract.PhaseCancelled)
-	events := []eventcontract.Event{s.requestPromptInlinePhaseEvent(surface, request, "", frontstagecontract.PhaseCancelled, "已放弃答题，并向当前 turn 发送停止请求。")}
+	events := []eventcontract.Event{s.requestPromptInlinePhaseEvent(surface, request, "", frontstagecontract.PhaseCancelled, interruptText)}
 	if strings.TrimSpace(request.RequestID) != "" && surface.PendingRequests != nil {
 		removePendingRequest(surface, request.RequestID)
 	}
 	clearSurfaceRequestCaptureByRequestID(surface, request.RequestID)
 	if request.ThreadID == "" && request.TurnID == "" {
-		events[0] = s.requestPromptInlinePhaseEvent(surface, request, "", frontstagecontract.PhaseCancelled, "已放弃答题。当前 turn 已不在可中断状态。")
+		events[0] = s.requestPromptInlinePhaseEvent(surface, request, "", frontstagecontract.PhaseCancelled, noTurnText)
 		return events
 	}
 	events = append(events, eventcontract.Event{
