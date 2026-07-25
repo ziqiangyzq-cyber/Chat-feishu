@@ -279,7 +279,7 @@ jobs:
 
       - name: Upload base release dist
         if: ${{ steps.version.outputs.run_packaging == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-base-dist
           path: dist
@@ -288,7 +288,7 @@ jobs:
 
       - name: Upload macOS packaging input
         if: ${{ steps.version.outputs.run_packaging == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-input-dist
           path: |
@@ -309,7 +309,7 @@ jobs:
           ref: ${{ needs.build-release-assets.outputs.source_ref }}
 
       - name: Download macOS packaging input
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-macos-input-dist
           path: ${{ runner.temp }}/release-macos-dist
@@ -322,7 +322,7 @@ jobs:
             --dist-dir "${RUNNER_TEMP}/release-macos-dist"
 
       - name: Upload macOS packaged installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-packaged-installer
           path: ${{ runner.temp }}/release-macos-dist/codex-remote-feishu_*_darwin_universal_installer.dmg
@@ -348,13 +348,13 @@ jobs:
         run: git fetch --force --tags origin
 
       - name: Download base release dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-base-dist
           path: dist
 
       - name: Download macOS packaged installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-macos-packaged-installer
           path: dist
