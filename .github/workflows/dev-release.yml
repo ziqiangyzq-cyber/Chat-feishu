@@ -25,7 +25,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: dev-release
@@ -180,6 +180,8 @@ jobs:
       - build-dev-assets
       - build-dev-macos-packaged-installer
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout

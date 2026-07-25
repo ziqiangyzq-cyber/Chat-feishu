@@ -63,7 +63,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
@@ -335,6 +335,8 @@ jobs:
       - build-macos-packaged-installer
     if: ${{ needs.build-release-assets.outputs.upload_assets == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
