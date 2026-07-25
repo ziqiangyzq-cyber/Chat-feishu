@@ -579,6 +579,9 @@ func (s *Service) handlePlanCommand(surface *state.SurfaceConsoleRecord, action 
 }
 
 func (s *Service) handleModelCommand(surface *state.SurfaceConsoleRecord, action control.Action) []eventcontract.Event {
+	if s.surfaceBackend(surface) == agentproto.BackendClaude {
+		return s.handleClaudeProfileCommand(surface, action)
+	}
 	parts := strings.Fields(strings.TrimSpace(action.Text))
 	if len(parts) <= 1 {
 		return s.openConfigCommandPageForAction(surface, action)

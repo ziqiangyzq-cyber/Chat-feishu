@@ -35,6 +35,7 @@ type claudeProfileResponse struct {
 
 type claudeProfileWriteRequest struct {
 	Name            *string `json:"name"`
+	AuthMode        *string `json:"authMode"`
 	BaseURL         *string `json:"baseURL"`
 	AuthToken       *string `json:"authToken"`
 	Model           *string `json:"model"`
@@ -99,10 +100,14 @@ func (a *App) handleClaudeProfileCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	authMode := config.ClaudeAuthModeAuthToken
+	if req.AuthMode != nil {
+		authMode = config.NormalizeClaudeAuthMode(*req.AuthMode)
+	}
 	profile := config.ClaudeProfileConfig{
 		ID:              profileID,
 		Name:            name,
-		AuthMode:        config.ClaudeAuthModeAuthToken,
+		AuthMode:        authMode,
 		BaseURL:         optionalStringValue(req.BaseURL),
 		AuthToken:       optionalStringValue(req.AuthToken),
 		Model:           optionalStringValue(req.Model),
@@ -220,7 +225,9 @@ func (a *App) handleClaudeProfileUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 		current.Name = name
 	}
-	current.AuthMode = config.ClaudeAuthModeAuthToken
+	if req.AuthMode != nil {
+		current.AuthMode = config.NormalizeClaudeAuthMode(*req.AuthMode)
+	}
 	if req.BaseURL != nil {
 		current.BaseURL = optionalStringValue(req.BaseURL)
 	}

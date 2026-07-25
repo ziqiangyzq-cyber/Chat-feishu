@@ -224,39 +224,53 @@ func TestClaudeReasoningAndAccessSnapshotPersistIndependently(t *testing.T) {
 	}
 }
 
-func TestClaudeModelCommandIsRejectedBecauseModelLivesInProfile(t *testing.T) {
+func TestClaudeModelCommandSwitchesProfile(t *testing.T) {
 	now := time.Date(2026, 5, 3, 9, 5, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)
-	workspaceKey := "/data/dl/repo"
-	svc.UpsertInstance(&state.InstanceRecord{
-		InstanceID:      "inst-claude-1",
-		WorkspaceRoot:   workspaceKey,
-		WorkspaceKey:    workspaceKey,
-		Backend:         agentproto.BackendClaude,
-		ClaudeProfileID: "devseek",
-		Online:          true,
-		Threads:         map[string]*state.ThreadRecord{},
+	svc.MaterializeSurfaceResume("surface-1", "", "chat-1", "user-1", state.ProductModeNormal, agentproto.BackendClaude, "devseek", "", "")
+	svc.MaterializeClaudeProfiles([]state.ClaudeProfileRecord{
+		{ID: "devseek", Name: "DevSeek"},
+		{ID: "claude-sonnet", Name: "Claude Sonnet"},
 	})
-	svc.MaterializeSurface("surface-1", "app-1", "chat-1", "user-1")
 	surface := svc.root.Surfaces["surface-1"]
-	surface.ProductMode = state.ProductModeNormal
-	surface.Backend = agentproto.BackendClaude
-	surface.ClaudeProfileID = "devseek"
-	surface.AttachedInstanceID = "inst-claude-1"
 
 	events := svc.ApplySurfaceAction(control.Action{
 		Kind:             control.ActionModelCommand,
 		SurfaceSessionID: "surface-1",
 		Text:             "/model claude-sonnet",
 	})
-	if len(events) != 1 || events[0].Notice == nil {
-		t.Fatalf("expected model command rejection notice, got %#v", events)
+	if surface.ClaudeProfileID != "claude-sonnet" {
+		t.Fatalf("expected /model to switch Claude profile, got %#v", surface)
 	}
-	if !strings.Contains(events[0].Notice.Text, "Claude 配置") {
-		t.Fatalf("expected profile guidance, got %#v", events[0].Notice)
+	if len(events) != 1 || events[0].Notice == nil || events[0].Notice.Code != "claude_profile_switched" {
+		t.Fatalf("expected profile switched notice, got %#v", events)
 	}
 	if surface.PromptOverride.Model != "" {
-		t.Fatalf("expected rejected model command not to mutate override, got %#v", surface.PromptOverride)
+		t.Fatalf("expected Claude /model not to set a prompt override, got %#v", surface.PromptOverride)
+	}
+}
+
+func TestCodexModelCommandStillUpdatesPromptOverride(t *testing.T) {
+	now := time.Date(2026, 5, 3, 9, 6, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.MaterializeSurface("surface-1", "app-1", "chat-1", "user-1")
+	surface := svc.root.Surfaces["surface-1"]
+	surface.AttachedInstanceID = "inst-codex-1"
+	svc.root.Instances["inst-codex-1"] = &state.InstanceRecord{
+		InstanceID: "inst-codex-1",
+		Backend:    agentproto.BackendCodex,
+	}
+
+	events := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionModelCommand,
+		SurfaceSessionID: "surface-1",
+		Text:             "/model gpt-5.4 high",
+	})
+	if surface.PromptOverride.Model != "gpt-5.4" || surface.PromptOverride.ReasoningEffort != "high" {
+		t.Fatalf("expected Codex /model to keep updating prompt override, got %#v", surface.PromptOverride)
+	}
+	if len(events) != 1 || events[0].Notice == nil || events[0].Notice.Code != "surface_override_updated" {
+		t.Fatalf("expected Codex override updated notice, got %#v", events)
 	}
 }
 

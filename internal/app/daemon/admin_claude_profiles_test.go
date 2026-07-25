@@ -183,3 +183,47 @@ func TestAdminClaudeProfileNameRequired(t *testing.T) {
 		t.Fatalf("update empty name status = %d, want 400 body=%s", emptyUpdateRec.Code, emptyUpdateRec.Body.String())
 	}
 }
+
+func TestAdminClaudeProfileAuthModeInherit(t *testing.T) {
+	app, configPath := newFeishuAdminTestApp(t, config.DefaultAppConfig(), defaultFeishuServices(), &fakeAdminGatewayController{}, false, "")
+
+	createRec := performAdminRequest(t, app, http.MethodPost, "/api/admin/claude/profiles", `{
+  "name":"Opus",
+  "authMode":"inherit",
+  "model":"claude-opus"
+}`)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201 body=%s", createRec.Code, createRec.Body.String())
+	}
+	var createResp claudeProfileResponse
+	if err := json.NewDecoder(createRec.Body).Decode(&createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createResp.Profile.ID != "opus" || createResp.Profile.AuthMode != config.ClaudeAuthModeInherit {
+		t.Fatalf("unexpected inherit create response: %#v", createResp.Profile)
+	}
+
+	// Omitting authMode on update must preserve the profile's current mode. Otherwise
+	// an ordinary model/name edit would silently convert an inherit profile to auth_token.
+	updateRec := performAdminRequest(t, app, http.MethodPut, "/api/admin/claude/profiles/opus", `{
+  "model":"claude-opus-4"
+}`)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200 body=%s", updateRec.Code, updateRec.Body.String())
+	}
+	var updateResp claudeProfileResponse
+	if err := json.NewDecoder(updateRec.Body).Decode(&updateResp); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updateResp.Profile.AuthMode != config.ClaudeAuthModeInherit || updateResp.Profile.Model != "claude-opus-4" {
+		t.Fatalf("unexpected inherit update response: %#v", updateResp.Profile)
+	}
+
+	loaded, err := config.LoadAppConfigAtPath(configPath)
+	if err != nil {
+		t.Fatalf("LoadAppConfigAtPath: %v", err)
+	}
+	if len(loaded.Config.Claude.Profiles) != 1 || loaded.Config.Claude.Profiles[0].AuthMode != config.ClaudeAuthModeInherit {
+		t.Fatalf("expected inherit auth mode to persist, got %#v", loaded.Config.Claude.Profiles)
+	}
+}
