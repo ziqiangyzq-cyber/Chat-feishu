@@ -538,26 +538,29 @@ func (c *Channel) maintenanceLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.reapIdleState(ctx)
+			c.reapIdleState()
 		}
 	}
 }
 
-func (c *Channel) reapIdleState(ctx context.Context) {
+func (c *Channel) reapIdleState() {
 	now := c.now()
 	idle := c.config.SessionIdle
 	maxTurn := c.config.MaxTurn
 
-	// A product MaxTurn may be stricter, but no response stream may cross the
-	// protocol's five-minute req_id safety line. streamMarkdown detects the
-	// expired state and sends this terminal notice via aibot_send_msg.
+	// A product MaxTurn may create shorter segments, but no response stream may
+	// cross the protocol's five-minute req_id safety line. Forgetting the
+	// expired transport segment lets the next renderer update open a fresh
+	// proactive stream; it does not stop or otherwise mutate the running turn.
+	// If the next update is the final block, normal one-shot delivery sends it
+	// as a standalone message.
 	streamLimit := streamReqIDSafetyTTL
 	if maxTurn > 0 && maxTurn < streamLimit {
 		streamLimit = maxTurn
 	}
 	for _, chatID := range c.client.activeStreamChats(now, streamLimit) {
-		log.Printf("wecom: stream time limit exceeded chat=%s; finishing with standalone fallback", chatID)
-		_ = c.client.streamMarkdown(ctx, chatID, "⚠️ 本轮执行超过时间上限，已停止流式更新。可用 `/status` 查看状态，或重新发送指令继续。", true)
+		log.Printf("wecom: rotating expired stream segment chat=%s", chatID)
+		c.client.dropStream(chatID)
 	}
 
 	if idle <= 0 {

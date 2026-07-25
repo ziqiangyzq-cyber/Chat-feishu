@@ -19,10 +19,9 @@ type Config struct {
 	// (callback req_id bindings, open stream ids) is dropped. Zero disables
 	// idle reaping. Default applied by NewChannel is 30 minutes.
 	SessionIdle time.Duration
-	// MaxTurn is a soft wall-clock budget for a single streaming turn. When
-	// exceeded, the channel finalizes the open stream with a timeout notice
-	// so the user is not left staring at a half-finished reply. Zero disables
-	// this product-level budget; the WeCom req_id five-minute safety limit still
-	// applies.
+	// MaxTurn is a soft wall-clock budget for one streaming transport segment.
+	// When exceeded, the next renderer update starts a fresh segment without
+	// stopping the underlying turn. Zero disables this product-level budget;
+	// the WeCom req_id five-minute safety limit still applies.
 	MaxTurn time.Duration
 }

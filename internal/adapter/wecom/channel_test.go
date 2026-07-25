@@ -311,6 +311,72 @@ func TestConsumeStreamResponseReqUsesCallbackOnlyWhenOpening(t *testing.T) {
 	}
 }
 
+func TestReapIdleStateRotatesExpiredStreamWithoutStoppingTurn(t *testing.T) {
+	srv, frames, _ := wsTestServer(t)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Dial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	recvFrame(t, frames) // subscribe
+
+	now := time.Date(2026, 7, 25, 14, 0, 0, 0, time.UTC)
+	ch := NewChannel(Config{})
+	ch.client = client
+	ch.now = func() time.Time { return now }
+	ch.client.streams["chat-1"] = &chatStream{
+		ID:        "stream-1",
+		ReqID:     "callback-req-1",
+		Reply:     true,
+		Started:   true,
+		StartedAt: now.Add(-streamReqIDSafetyTTL),
+		LastText:  "still working",
+	}
+
+	ch.reapIdleState()
+
+	if _, open := ch.client.streamAge("chat-1", now); open {
+		t.Fatal("expired transport segment must be dropped so the next update can open a fresh stream")
+	}
+
+	if err := ch.RenderStream(ctx, "chat-1", "continued output", false); err != nil {
+		t.Fatal(err)
+	}
+	continued := recvFrame(t, frames)
+	if continued["cmd"] != frameCmdSendMsg {
+		t.Fatalf("continued segment cmd = %v, want %q", continued["cmd"], frameCmdSendMsg)
+	}
+	if got := frameReqID(t, continued); got == "callback-req-1" {
+		t.Fatalf("continued segment reused expired callback req_id %q", got)
+	}
+	if meta := frameStreamMeta(t, continued); meta["content"] != "continued output" {
+		t.Fatalf("continued segment lost renderer output: %#v", meta)
+	}
+}
+
+func TestReapIdleStateHonorsShorterConfiguredStreamSegment(t *testing.T) {
+	now := time.Date(2026, 7, 25, 14, 0, 0, 0, time.UTC)
+	ch := NewChannel(Config{MaxTurn: 2 * time.Minute})
+	ch.now = func() time.Time { return now }
+	ch.client.streams["chat-1"] = &chatStream{
+		ID:        "stream-1",
+		ReqID:     "callback-req-1",
+		Reply:     true,
+		Started:   true,
+		StartedAt: now.Add(-2 * time.Minute),
+		LastText:  "still working",
+	}
+
+	ch.reapIdleState()
+
+	if _, open := ch.client.streamAge("chat-1", now); open {
+		t.Fatal("configured segment budget must rotate the stream without stopping the turn")
+	}
+}
+
 func TestDispatchCardEventDoesNotRememberCallbackReqID(t *testing.T) {
 	ch := NewChannel(Config{})
 	done := make(chan control.Action, 1)
