@@ -260,7 +260,7 @@ func (m *Manager) sign(payload []byte) []byte {
 	return mac.Sum(nil)
 }
 
-func SessionCookie(value string, expiresAt time.Time) *http.Cookie {
+func SessionCookie(value string, expiresAt time.Time, secure bool) *http.Cookie {
 	maxAge := int(time.Until(expiresAt).Seconds())
 	if maxAge < 0 {
 		maxAge = 0
@@ -270,18 +270,20 @@ func SessionCookie(value string, expiresAt time.Time) *http.Cookie {
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expiresAt.UTC(),
 		MaxAge:   maxAge,
 	}
 }
 
-func ExpiredSessionCookie() *http.Cookie {
+func ExpiredSessionCookie(secure bool) *http.Cookie {
 	return &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0).UTC(),

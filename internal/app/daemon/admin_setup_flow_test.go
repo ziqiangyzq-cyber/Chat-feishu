@@ -523,6 +523,39 @@ func exchangeSetupSessionCookie(t *testing.T, app *App, token string) *http.Cook
 	return cookies[0]
 }
 
+func TestSetupSessionCookieUsesSecureAttributeForHTTPS(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		forwardedProtocol string
+		wantSecure        bool
+	}{
+		{name: "local HTTP", wantSecure: false},
+		{name: "forwarded HTTPS", forwardedProtocol: "https", wantSecure: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, token := newRemoteSetupTestApp(t, t.TempDir())
+			req := httptest.NewRequest(http.MethodGet, "/setup?token="+url.QueryEscape(token), nil)
+			req.RemoteAddr = "198.51.100.20:23456"
+			if test.forwardedProtocol != "" {
+				req.Header.Set("X-Forwarded-Proto", test.forwardedProtocol)
+			}
+			rec := httptest.NewRecorder()
+			app.apiServer.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("setup exchange status = %d, want 303 body=%s", rec.Code, rec.Body.String())
+			}
+			cookies := rec.Result().Cookies()
+			if len(cookies) == 0 {
+				t.Fatal("expected setup session cookie")
+			}
+			if cookies[0].Secure != test.wantSecure {
+				t.Fatalf("cookie Secure = %v, want %v", cookies[0].Secure, test.wantSecure)
+			}
+		})
+	}
+}
+
 func performSetupRequestWithCookie(method, path, body string, cookie *http.Cookie) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.RemoteAddr = "198.51.100.20:23456"

@@ -482,13 +482,14 @@ func (a *App) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleSetupPage(w http.ResponseWriter, r *http.Request) {
 	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
+		secureCookie := requestUsesHTTPS(r)
 		value, expiresAt, err := a.adminAuth.ExchangeSetupToken(token)
 		if err != nil {
-			http.SetCookie(w, adminauth.ExpiredSessionCookie())
+			http.SetCookie(w, adminauth.ExpiredSessionCookie(secureCookie))
 			writePageError(w, http.StatusUnauthorized, "exchange setup token", err)
 			return
 		}
-		http.SetCookie(w, adminauth.SessionCookie(value, expiresAt))
+		http.SetCookie(w, adminauth.SessionCookie(value, expiresAt, secureCookie))
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
@@ -546,7 +547,7 @@ func (a *App) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.DisableSetupAccess()
-	http.SetCookie(w, adminauth.ExpiredSessionCookie())
+	http.SetCookie(w, adminauth.ExpiredSessionCookie(requestUsesHTTPS(r)))
 
 	message := "setup access disabled; continue in the local admin page"
 	if state.SSHSession {
@@ -557,6 +558,13 @@ func (a *App) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		AdminURL:      state.Admin.URL,
 		Message:       message,
 	})
+}
+
+func requestUsesHTTPS(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	return r != nil && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 func (a *App) handleRuntimeStatus(w http.ResponseWriter, _ *http.Request) {
