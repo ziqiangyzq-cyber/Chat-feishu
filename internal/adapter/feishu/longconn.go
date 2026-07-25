@@ -521,6 +521,9 @@ func serviceIDFromURL(rawURL string) int32 {
 	if err != nil {
 		return 0
 	}
-	value, _ := strconv.Atoi(parsed.Query().Get(larkws.ServiceID))
+	value, err := strconv.ParseInt(parsed.Query().Get(larkws.ServiceID), 10, 32)
+	if err != nil {
+		return 0
+	}
 	return int32(value)
 }

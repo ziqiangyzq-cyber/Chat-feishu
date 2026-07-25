@@ -492,7 +492,7 @@ func lookupEnvValue(env []string, key string) (string, bool) {
 }
 
 func UpsertEnvValue(env []string, key, value string) []string {
-	updated := make([]string, 0, len(env)+1)
+	updated := make([]string, 0, len(env))
 	replaced := false
 	for _, entry := range env {
 		currentKey, _, ok := strings.Cut(entry, "=")

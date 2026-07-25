@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,29 @@ import (
 
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 )
+
+func TestServiceIDFromURLRejectsInvalidAndOutOfRangeValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		expected int32
+	}{
+		{name: "valid", value: "2147483647", expected: 2147483647},
+		{name: "negative", value: "-1", expected: -1},
+		{name: "overflow", value: "2147483648", expected: 0},
+		{name: "underflow", value: "-2147483649", expected: 0},
+		{name: "invalid", value: "not-a-number", expected: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rawURL := fmt.Sprintf("wss://example.test/socket?%s=%s", larkws.ServiceID, test.value)
+			if got := serviceIDFromURL(rawURL); got != test.expected {
+				t.Fatalf("serviceIDFromURL() = %d, want %d", got, test.expected)
+			}
+		})
+	}
+}
 
 func TestVerifyGatewayConnectionSuccess(t *testing.T) {
 	server := newGatewayWSTestServer(t, gatewayWSTestServerConfig{})
