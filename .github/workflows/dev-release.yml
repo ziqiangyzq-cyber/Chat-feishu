@@ -52,7 +52,7 @@ jobs:
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ steps.source.outputs.ref }}
@@ -64,7 +64,7 @@ jobs:
 
       - name: Setup Node.js
         if: ${{ inputs.artifact_name == '' }}
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: lts/*
           cache: npm
@@ -72,7 +72,7 @@ jobs:
 
       - name: Setup Go
         if: ${{ inputs.artifact_name == '' }}
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ steps.go_version.outputs.version }}
 
@@ -100,7 +100,7 @@ jobs:
 
       - name: Download prebuilt artifacts
         if: ${{ inputs.artifact_name != '' }}
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.artifact_name }}
           path: dist
@@ -126,7 +126,7 @@ jobs:
             --dist-dir dist
 
       - name: Upload base dev dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dev-release-base-dist
           path: dist
@@ -134,7 +134,7 @@ jobs:
           compression-level: 0
 
       - name: Upload macOS packaging input
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dev-release-macos-input-dist
           path: |
@@ -149,12 +149,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
 
       - name: Download macOS packaging input
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dev-release-macos-input-dist
           path: ${{ runner.temp }}/dev-release-macos-dist
@@ -168,7 +168,7 @@ jobs:
             --dist-dir "${RUNNER_TEMP}/dev-release-macos-dist"
 
       - name: Upload macOS packaged installer
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dev-release-macos-packaged-installer
           path: ${{ runner.temp }}/dev-release-macos-dist/codex-remote-feishu_dev_darwin_universal_installer.dmg
@@ -183,19 +183,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
 
       - name: Download base dev dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dev-release-base-dist
           path: dist
 
       - name: Download macOS packaged installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dev-release-macos-packaged-installer
           path: dist

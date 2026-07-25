@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve Go version spec
         id: go_version
@@ -34,14 +34,14 @@ jobs:
         run: echo "version=$(bash scripts/ci/go-version-spec.sh)" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ steps.go_version.outputs.version }}
 
@@ -120,7 +120,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve Go version spec
         id: go_version
@@ -128,7 +128,7 @@ jobs:
         run: echo "version=$(bash scripts/ci/go-version-spec.sh)" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ steps.go_version.outputs.version }}
 
@@ -144,7 +144,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve Go version spec
         id: go_version
@@ -152,14 +152,14 @@ jobs:
         run: echo "version=$(bash scripts/ci/go-version-spec.sh)" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ steps.go_version.outputs.version }}
 
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload dev release artifacts
         if: ${{ github.event_name == 'push' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dev-release-dist
           path: dist/ci/*
