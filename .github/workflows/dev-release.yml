@@ -44,10 +44,16 @@ jobs:
     steps:
       - name: Resolve source ref
         id: source
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
-          ref='${{ inputs.ref }}'
+          ref="${INPUT_REF}"
           if [[ -z "${ref}" ]]; then
             ref='master'
+          fi
+          if [[ "${ref}" == *$'\n'* || "${ref}" == *$'\r'* ]]; then
+            echo "Source ref must be a single line." >&2
+            exit 1
           fi
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
 

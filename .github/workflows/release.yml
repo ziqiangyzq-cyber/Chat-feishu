@@ -86,14 +86,23 @@ jobs:
     steps:
       - name: Resolve source ref
         id: source_ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_REF: ${{ inputs.ref }}
+          DEFAULT_REF: ${{ github.ref_name }}
         run: |
-          if [[ '${{ github.event_name }}' == 'release' ]]; then
-            ref='${{ github.event.release.tag_name }}'
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            ref="${RELEASE_TAG}"
           else
-            ref='${{ inputs.ref }}'
+            ref="${INPUT_REF}"
             if [[ -z "${ref}" ]]; then
-              ref='${{ github.ref_name }}'
+              ref="${DEFAULT_REF}"
             fi
+          fi
+          if [[ "${ref}" == *$'\n'* || "${ref}" == *$'\r'* ]]; then
+            echo "Source ref must be a single line." >&2
+            exit 1
           fi
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
 
@@ -124,15 +133,19 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TRACK: ${{ inputs.track }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
         run: |
-          event_name='${{ github.event_name }}'
           create_release=false
           upload_assets=false
           run_packaging=false
           latest_tag=''
 
-          if [[ "${event_name}" == "release" ]]; then
-            version='${{ github.event.release.tag_name }}'
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            version="${RELEASE_TAG}"
             if [[ ! "${version}" =~ ^v[0-9] ]]; then
               echo "Release tag ${version} is invalid." >&2
               exit 1
@@ -161,15 +174,15 @@ jobs:
               run_packaging=true
             fi
           else
-            track='${{ inputs.track }}'
-            if [[ -n '${{ inputs.version }}' ]]; then
-              version='${{ inputs.version }}'
+            track="${INPUT_TRACK}"
+            if [[ -n "${INPUT_VERSION}" ]]; then
+              version="${INPUT_VERSION}"
             else
               if [[ "${track}" == "production" ]]; then
                 echo "Production releases require an explicit version input." >&2
                 exit 1
               fi
-              version="$(RELEASE_TRACK="${track}" BUMP_OVERRIDE='${{ inputs.bump }}' bash scripts/release/next-version.sh)"
+              version="$(RELEASE_TRACK="${track}" BUMP_OVERRIDE="${INPUT_BUMP}" bash scripts/release/next-version.sh)"
             fi
             if [[ ! "${version}" =~ ^v[0-9] ]]; then
               version="v${version}"
