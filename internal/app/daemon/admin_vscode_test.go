@@ -274,6 +274,59 @@ func TestVSCodeApplyAllAliasRejected(t *testing.T) {
 	}
 }
 
+func TestVSCodeAdminRejectsUnrecognizedFilesystemTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("VSCODE_SERVER_EXTENSIONS_DIR", filepath.Join(home, ".vscode-server", "extensions"))
+	binaryPath := filepath.Join(home, "bin", "codex-remote")
+	writeExecutableFile(t, binaryPath, "wrapper-binary")
+
+	detectedEntrypoint := testVSCodeBundleEntrypoint(home, ".vscode-server", "1")
+	writeExecutableFile(t, detectedEntrypoint, "detected-entrypoint")
+	arbitraryPath := filepath.Join(home, "unrelated", "sensitive-file")
+	writeExecutableFile(t, arbitraryPath, "do-not-modify")
+
+	app, _, _ := newVSCodeAdminTestApp(t, home, binaryPath, false)
+	tests := []struct {
+		name    string
+		request vscodeApplyRequest
+	}{
+		{
+			name: "settings path",
+			request: vscodeApplyRequest{
+				Mode:         string(install.IntegrationManagedShim),
+				SettingsPath: arbitraryPath,
+			},
+		},
+		{
+			name: "bundle entrypoint",
+			request: vscodeApplyRequest{
+				Mode:             string(install.IntegrationManagedShim),
+				BundleEntrypoint: arbitraryPath,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := json.Marshal(test.request)
+			if err != nil {
+				t.Fatalf("Marshal request: %v", err)
+			}
+			rec := performAdminRequest(t, app, http.MethodPost, "/api/admin/vscode/apply", string(raw))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("apply status = %d, want 400 body=%s", rec.Code, rec.Body.String())
+			}
+			if got := readFileString(t, arbitraryPath); got != "do-not-modify" {
+				t.Fatalf("arbitrary target contents = %q, want unchanged", got)
+			}
+			if _, statErr := os.Stat(editor.ManagedShimRealBinaryPath(arbitraryPath)); !os.IsNotExist(statErr) {
+				t.Fatalf("arbitrary target backup exists or stat failed unexpectedly: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestVSCodeDetectSupportsJSONCSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

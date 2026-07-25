@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -242,10 +243,24 @@ func (a *App) applyVSCodeIntegration(req vscodeApplyRequest) error {
 		InstalledBinary: currentBinary,
 		CurrentVersion:  a.currentBinaryVersion(),
 	})
-	if strings.TrimSpace(state.VSCodeSettingsPath) == "" {
-		state.VSCodeSettingsPath = firstNonEmpty(strings.TrimSpace(req.SettingsPath), defaults.VSCodeSettingsPath)
+	settingsPath, err := canonicalAllowedVSCodePath(
+		req.SettingsPath,
+		"VS Code settings",
+		defaults.VSCodeSettingsPath,
+		state.VSCodeSettingsPath,
+	)
+	if err != nil {
+		return err
 	}
-	bundleEntrypoint := strings.TrimSpace(req.BundleEntrypoint)
+	if strings.TrimSpace(state.VSCodeSettingsPath) == "" {
+		state.VSCodeSettingsPath = firstNonEmpty(settingsPath, defaults.VSCodeSettingsPath)
+	}
+	bundleCandidates := append([]string{}, defaults.CandidateBundleEntrypoints...)
+	bundleCandidates = append(bundleCandidates, state.BundleEntrypoint)
+	bundleEntrypoint, err := canonicalAllowedVSCodePath(req.BundleEntrypoint, "VS Code bundle entrypoint", bundleCandidates...)
+	if err != nil {
+		return err
+	}
 	if bundleEntrypoint == "" && len(defaults.CandidateBundleEntrypoints) > 0 {
 		bundleEntrypoint = defaults.CandidateBundleEntrypoints[0]
 	}
@@ -329,7 +344,12 @@ func (a *App) reinstallVSCodeShim(bundleEntrypoint string) error {
 		InstalledBinary: currentBinary,
 		CurrentVersion:  a.currentBinaryVersion(),
 	})
-	target := strings.TrimSpace(bundleEntrypoint)
+	bundleCandidates := append([]string{}, defaults.CandidateBundleEntrypoints...)
+	bundleCandidates = append(bundleCandidates, state.BundleEntrypoint)
+	target, err := canonicalAllowedVSCodePath(bundleEntrypoint, "VS Code bundle entrypoint", bundleCandidates...)
+	if err != nil {
+		return err
+	}
 	if target == "" && len(defaults.CandidateBundleEntrypoints) > 0 {
 		target = defaults.CandidateBundleEntrypoints[0]
 	}
@@ -475,6 +495,20 @@ func samePlatformPath(left, right string) bool {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
+}
+
+func canonicalAllowedVSCodePath(requested, label string, allowed ...string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", nil
+	}
+	for _, candidate := range allowed {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && samePlatformPath(requested, candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("%s path is not one of the detected or recorded targets", label)
 }
 
 func loadedConfigPath(a *App) string {
