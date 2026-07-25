@@ -110,6 +110,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ steps.source_ref.outputs.ref }}
 
       - name: Resolve Go version spec
@@ -319,6 +320,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.build-release-assets.outputs.source_ref }}
 
       - name: Download macOS packaging input
@@ -356,6 +358,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.build-release-assets.outputs.source_ref }}
 
       - name: Fetch tags

@@ -61,6 +61,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ steps.source.outputs.ref }}
 
       - name: Resolve Go version spec
@@ -157,6 +158,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
 
       - name: Download macOS packaging input
@@ -194,6 +196,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
 
       - name: Download base dev dist
@@ -227,9 +230,23 @@ jobs:
         run: bash scripts/release/dev-release-notes.sh > release-notes.md
 
       - name: Update dev-latest tag
+        env:
+          DEV_COMMIT: ${{ needs.build-dev-assets.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git tag -f dev-latest "${{ needs.build-dev-assets.outputs.commit }}"
-          git push origin refs/tags/dev-latest --force
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/dev-latest" >/dev/null 2>&1; then
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/dev-latest" \
+              -f sha="${DEV_COMMIT}" \
+              -F force=true
+          else
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref='refs/tags/dev-latest' \
+              -f sha="${DEV_COMMIT}"
+          fi
 
       - name: Create or update dev-latest release
         env:
