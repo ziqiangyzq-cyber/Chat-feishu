@@ -55,4 +55,3 @@ jobs:
       version: ${{ needs.plan.outputs.version }}
       bump: auto
       draft: false
-    secrets: inherit

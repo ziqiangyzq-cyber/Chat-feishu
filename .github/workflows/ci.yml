@@ -222,4 +222,3 @@ jobs:
     with:
       ref: ${{ github.sha }}
       artifact_name: dev-release-dist
-    secrets: inherit
