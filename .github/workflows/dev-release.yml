@@ -52,7 +52,7 @@ jobs:
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ steps.source.outputs.ref }}
@@ -64,7 +64,7 @@ jobs:
 
       - name: Setup Node.js
         if: ${{ inputs.artifact_name == '' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -72,7 +72,7 @@ jobs:
 
       - name: Setup Go
         if: ${{ inputs.artifact_name == '' }}
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ steps.go_version.outputs.version }}
 
@@ -149,7 +149,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
 
@@ -183,7 +183,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.build-dev-assets.outputs.source_ref }}
