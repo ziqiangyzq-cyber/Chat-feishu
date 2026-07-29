@@ -193,6 +193,7 @@ func (a *App) deliverUIEventWithContextMode(ctx context.Context, event eventcont
 	if receiveID == "" || receiveIDType == "" {
 		return nil
 	}
+	event = a.applyReplyDisclaimer(event, gatewayID)
 	log.Printf("ui event: surface=%s chat=%s actor=%s kind=%s", event.SurfaceSessionID, chatID, actorUserID, event.Kind)
 	var (
 		previewReq previewpkg.FinalBlockPreviewRequest

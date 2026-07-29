@@ -218,6 +218,11 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 			Message: "surface is not attached to a workspace",
 		}
 	}
+	preparedPath, policyErr := a.prepareOutboundArtifact(ctx, resolved, "file", path)
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	path = preparedPath
 
 	result, err := a.sendSurfaceFile(ctx, resolved, path)
 	if err != nil {
@@ -287,6 +292,11 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 			Message: "surface is not attached to a workspace",
 		}
 	}
+	preparedPath, policyErr := a.prepareOutboundArtifact(ctx, resolved, "image", path)
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	path = preparedPath
 
 	result, err := a.sendSurfaceImage(ctx, resolved, path)
 	if err != nil {

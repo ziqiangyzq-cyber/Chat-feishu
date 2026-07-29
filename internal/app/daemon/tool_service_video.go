@@ -37,6 +37,11 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 			Message: "surface is not attached to a workspace",
 		}
 	}
+	preparedPath, policyErr := a.prepareOutboundArtifact(ctx, resolved, "video", path)
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	path = preparedPath
 
 	result, err := a.sendSurfaceVideo(ctx, resolved, path)
 	if err != nil {

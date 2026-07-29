@@ -143,6 +143,17 @@ type FeishuAppConfig struct {
 	// ApproverOpenID 非空时：该 app 上的越权审批只允许此 open_id 的用户处理，
 	// 其他用户的越权请求会被自动拒绝并通知审批人。
 	ApproverOpenID string `json:"approverOpenID,omitempty"`
+	// OutboundArtifactPolicy 非空时：本 app 的文件、图片和视频发送工具在上传前
+	// 必须通过外部策略命令。命令从 stdin 读取 JSON，并且只在返回
+	// {"path":"...","watermarked":true} 后才允许发送。
+	OutboundArtifactPolicy *OutboundArtifactPolicyConfig `json:"outboundArtifactPolicy,omitempty"`
+	// ReplyDisclaimer 非空时：追加到该 app 每条最终 assistant markdown 回复。
+	ReplyDisclaimer string `json:"replyDisclaimer,omitempty"`
+}
+
+type OutboundArtifactPolicyConfig struct {
+	Command        string `json:"command,omitempty"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
 }
 
 type WeComSettings struct {

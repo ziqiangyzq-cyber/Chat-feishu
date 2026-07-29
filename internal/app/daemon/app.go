@@ -160,6 +160,8 @@ type App struct {
 	codexUpgradeRuntime        codexupgraderuntime.State
 	upgradeRuntime             upgraderuntime.State
 	turnPatchRuntime           turnpatchruntime.State
+	outboundArtifactPolicies   map[string]outboundArtifactPolicy
+	replyDisclaimers           map[string]string
 
 	relayListener          net.Listener
 	apiListener            net.Listener

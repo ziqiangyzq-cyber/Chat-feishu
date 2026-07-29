@@ -112,6 +112,8 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 		identity,
 	)
 	app.SetGatewaySurfacePolicies(gatewaySurfacePoliciesFromFeishuApps(loadedConfig.Config.Feishu.Apps))
+	app.SetOutboundArtifactPolicies(outboundArtifactPoliciesFromFeishuApps(loadedConfig.Config.Feishu.Apps))
+	app.SetReplyDisclaimers(replyDisclaimersFromFeishuApps(loadedConfig.Config.Feishu.Apps))
 	// Optional WeCom sidecar channels. They are constructed only when runtime
 	// credentials are present, so a default install remains Feishu-only while a
 	// configured install can run Feishu and one or more WeCom bots side by side.
