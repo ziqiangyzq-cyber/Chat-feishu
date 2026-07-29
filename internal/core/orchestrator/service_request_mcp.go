@@ -86,7 +86,11 @@ func buildMCPElicitationSections(backend agentproto.Backend, prompt *agentproto.
 			lines = append(lines, "完成外部授权后，再点击“继续”。")
 		}
 	case "form":
-		lines = append(lines, "请依次填写需要返回给 MCP server 的内容，当前题提交后会自动继续。")
+		if mcpElicitationEmptyObjectForm(prompt, metadata) {
+			lines = append(lines, "此请求不需要填写额外内容，请选择继续、拒绝或取消。")
+		} else {
+			lines = append(lines, "请依次填写需要返回给 MCP server 的内容，当前题提交后会自动继续。")
+		}
 	}
 	if len(lines) == 0 {
 		lines = append(lines, requestLocalBackendDisplayName(backend)+" 正在等待 MCP server 返回更多信息。")
@@ -97,6 +101,9 @@ func buildMCPElicitationSections(backend agentproto.Backend, prompt *agentproto.
 
 func buildMCPElicitationQuestions(prompt *agentproto.RequestPrompt, metadata map[string]any) []state.RequestPromptQuestionRecord {
 	if mcpElicitationMode(prompt, metadata) != "form" {
+		return nil
+	}
+	if mcpElicitationEmptyObjectForm(prompt, metadata) {
 		return nil
 	}
 	schema := promptMCPElicitationSchema(prompt, metadata)
@@ -122,7 +129,7 @@ func buildMCPElicitationQuestions(prompt *agentproto.RequestPrompt, metadata map
 }
 
 func buildMCPElicitationOptions(prompt *agentproto.RequestPrompt, metadata map[string]any, questions []state.RequestPromptQuestionRecord) []state.RequestPromptOptionRecord {
-	if mcpElicitationMode(prompt, metadata) == "form" || len(questions) != 0 {
+	if len(questions) != 0 {
 		return []state.RequestPromptOptionRecord{
 			{OptionID: "cancel", Label: "取消", Style: "default"},
 		}
@@ -163,7 +170,11 @@ func (s *Service) buildMCPElicitationResponse(surface *state.SurfaceConsoleRecor
 		optionID = "accept"
 	}
 	if len(request.Questions) == 0 && optionID == "accept" {
-		return buildMCPElicitationPayload("accept", nil, promptMCPElicitationMeta(request.Prompt, nil)), true, nil
+		var content any
+		if mcpElicitationEmptyObjectForm(request.Prompt, nil) {
+			content = map[string]any{}
+		}
+		return buildMCPElicitationPayload("accept", content, promptMCPElicitationMeta(request.Prompt, nil)), true, nil
 	}
 	content, complete, missingLabels, errText := buildMCPElicitationContent(request, requestAnswers)
 	if errText != "" {
@@ -193,6 +204,30 @@ func buildMCPElicitationPayload(action string, content any, meta map[string]any)
 		payload["_meta"] = map[string]any{}
 	}
 	return payload
+}
+
+func mcpElicitationEmptyObjectForm(prompt *agentproto.RequestPrompt, metadata map[string]any) bool {
+	if mcpElicitationMode(prompt, metadata) != "form" {
+		return false
+	}
+	schema := promptMCPElicitationSchema(prompt, metadata)
+	if strings.TrimSpace(lookupStringFromAny(schema["type"])) != "object" {
+		return false
+	}
+	rawProperties, ok := schema["properties"].(map[string]any)
+	if !ok || len(rawProperties) != 0 {
+		return false
+	}
+	switch required := schema["required"].(type) {
+	case []any:
+		return len(required) == 0
+	case []string:
+		return len(required) == 0
+	case nil:
+		return true
+	default:
+		return false
+	}
 }
 
 func buildMCPElicitationContent(request *state.RequestPromptRecord, rawAnswers map[string][]string) (any, bool, []string, string) {

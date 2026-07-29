@@ -158,6 +158,62 @@ func TestRespondMCPElicitationFormBuildsStructuredResponse(t *testing.T) {
 	}
 }
 
+func TestEmptyObjectMCPElicitationFormBecomesConfirmationWithoutJSONQuestion(t *testing.T) {
+	now := time.Date(2026, 7, 29, 9, 13, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	attachMCPRequestTestSurface(svc)
+
+	events := svc.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:      agentproto.EventRequestStarted,
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
+		RequestID: "req-mcp-empty-form-1",
+		RequestPrompt: &agentproto.RequestPrompt{
+			Type:  agentproto.RequestTypeMCPServerElicitation,
+			Title: "需要处理 MCP 请求",
+			MCPElicitation: &agentproto.MCPElicitationPrompt{
+				ServerName: "codex_apps",
+				Mode:       "form",
+				Message:    "连接 GitHub 可帮助确认目标仓库。",
+				RequestedSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+		Metadata: map[string]any{"requestType": "mcp_server_elicitation"},
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("expected one renderable request event, got %#v", events)
+	}
+	prompt := requestPromptFromEvent(t, events[0])
+	if len(prompt.Questions) != 0 {
+		t.Fatalf("expected no JSON question for empty object schema, got %#v", prompt.Questions)
+	}
+	if len(prompt.Options) != 3 || prompt.Options[0].OptionID != "accept" || prompt.Options[1].OptionID != "decline" || prompt.Options[2].OptionID != "cancel" {
+		t.Fatalf("expected confirmation controls for empty object schema, got %#v", prompt.Options)
+	}
+
+	events = svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionRespondRequest,
+		SurfaceSessionID: "surface-1",
+		MessageID:        "om-card-empty-form",
+		Request:          testRequestAction("req-mcp-empty-form-1", "mcp_server_elicitation", "accept", nil, 0),
+	})
+	if len(events) != 2 || events[1].Command == nil {
+		t.Fatalf("expected request response dispatch, got %#v", events)
+	}
+	response := events[1].Command.Request.Response
+	if response["action"] != "accept" {
+		t.Fatalf("expected accept action, got %#v", response)
+	}
+	content, ok := response["content"].(map[string]any)
+	if !ok || len(content) != 0 {
+		t.Fatalf("expected empty object content, got %#v", response["content"])
+	}
+}
+
 func TestRespondMCPElicitationFormPartialSaveRefreshesCurrentStepInline(t *testing.T) {
 	now := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)
