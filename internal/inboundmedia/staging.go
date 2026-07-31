@@ -1,11 +1,65 @@
 package inboundmedia
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
+
+type ImageMetadata struct {
+	Version          int       `json:"version"`
+	GatewayID        string    `json:"gatewayId"`
+	SurfaceSessionID string    `json:"surfaceSessionId"`
+	ActorUserID      string    `json:"actorUserId"`
+	SourceMessageID  string    `json:"sourceMessageId"`
+	OriginalName     string    `json:"originalName,omitempty"`
+	MIMEType         string    `json:"mimeType"`
+	ReceivedAt       time.Time `json:"receivedAt"`
+	Sequence         int64     `json:"sequence"`
+}
+
+// RecordImageMetadata atomically binds transport identity and arrival order to
+// a staged image. Consumers must ignore unmanifested images by default.
+func RecordImageMetadata(imagePath string, metadata ImageMetadata) error {
+	metadata.Version = 1
+	if metadata.ReceivedAt.IsZero() {
+		metadata.ReceivedAt = time.Now().UTC()
+	}
+	if metadata.Sequence == 0 {
+		metadata.Sequence = metadata.ReceivedAt.UnixNano()
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	target := imagePath + ".meta.json"
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".image-meta-*")
+	if err != nil {
+		return err
+	}
+	tempName := temporary.Name()
+	defer os.Remove(tempName)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, target)
+}
 
 // StageImage writes an inbound image to the shared temporary-media area used
 // by chat adapters and returns the detected MIME type.
