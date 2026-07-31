@@ -126,6 +126,7 @@ func TestParseMessageEventCarriesInboundMeta(t *testing.T) {
 			},
 			Message: &larkim.EventMessage{
 				MessageId:   stringRef("om-msg-1"),
+				ChatId:      stringRef("oc_chat"),
 				MessageType: stringRef("text"),
 				Content:     stringRef(`{"text":"你好"}`),
 				ChatType:    stringRef("p2p"),

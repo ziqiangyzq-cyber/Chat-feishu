@@ -341,6 +341,9 @@ func (s *Service) ApplySurfaceAction(action control.Action) []eventcontract.Even
 		return s.filterEventsForSurfaceVisibility(s.applyFeishuUIIntent(surface, action, *intent))
 	}
 	s.applyCommandLauncherDisposition(surface, action)
+	if action.Kind == control.ActionTextMessage && strings.TrimSpace(action.BridgePrompt) != "" {
+		action.Inputs = append([]agentproto.Input{{Type: agentproto.InputText, Text: action.BridgePrompt}}, action.Inputs...)
+	}
 	if events, ok := s.boundDaemonCommandEvents(surface, action); ok {
 		return s.filterEventsForSurfaceVisibility(events)
 	}

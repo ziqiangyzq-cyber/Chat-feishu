@@ -34,6 +34,11 @@ func ParseMessageEvent(ctx context.Context, env InboundEnv, event *larkim.P2Mess
 	chatType := stringPtr(message.ChatType)
 	senderUserID := userIDFromMessage(event.Event.Sender)
 	surfaceSessionID := SurfaceIDForInbound(gatewayID, chatID, chatType, senderUserID)
+	bridgePrompt, err := makeBridgeContext("feishu:"+gatewayID, senderUserID, chatID, stringPtr(message.MessageId), referencedMessageID(message))
+	if err != nil {
+		logInboundMessageParseFailed(gatewayID, surfaceSessionID, InboundMetaFromMessageEvent(event), message, "build_bridge_context", err)
+		return control.Action{}, false, err
+	}
 	action := control.Action{
 		GatewayID:        gatewayID,
 		SurfaceSessionID: surfaceSessionID,
@@ -41,6 +46,7 @@ func ParseMessageEvent(ctx context.Context, env InboundEnv, event *larkim.P2Mess
 		ActorUserID:      senderUserID,
 		MessageID:        stringPtr(message.MessageId),
 		Inbound:          InboundMetaFromMessageEvent(event),
+		BridgePrompt:     bridgePrompt,
 	}
 	replyTargetMessageID := referencedMessageID(message)
 	if replyTargetMessageID != "" {
