@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -91,6 +92,10 @@ func TestOutboundArtifactPolicyConfigMapsPerGateway(t *testing.T) {
 }
 
 func TestSendIMFileToolUsesPreparedArtifactPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture uses unix shell scripts")
+	}
+
 	sender := &fakeToolSender{}
 	app, _ := newToolServiceTestApp(t, sender)
 	if err := app.Bind(); err != nil {
@@ -127,6 +132,10 @@ func TestSendIMFileToolUsesPreparedArtifactPath(t *testing.T) {
 }
 
 func TestSendIMImageToolFailsClosedWhenPolicyRejects(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture uses unix shell scripts")
+	}
+
 	sender := &fakeToolSender{}
 	app, _ := newToolServiceTestApp(t, sender)
 	if err := app.Bind(); err != nil {
@@ -159,6 +168,10 @@ func TestSendIMImageToolFailsClosedWhenPolicyRejects(t *testing.T) {
 }
 
 func TestSendIMVideoToolCannotBypassConfiguredPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture uses unix shell scripts")
+	}
+
 	sender := &fakeToolSender{}
 	app, _ := newToolServiceTestApp(t, sender)
 	if err := app.Bind(); err != nil {
