@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -378,8 +379,8 @@ func TestWeComTextAutoAttachDoesNotCrossBackendToClaudeWorkspace(t *testing.T) {
 	if surface.AttachedInstanceID != "inst-codex-pool" {
 		t.Fatalf("expected Codex instance, got surface=%#v", surface)
 	}
-	if surface.ClaimedWorkspaceKey != codexWorkspace {
-		t.Fatalf("expected Codex workspace %q, got surface=%#v", codexWorkspace, surface)
+	if surface.ClaimedWorkspaceKey != filepath.ToSlash(codexWorkspace) {
+		t.Fatalf("expected Codex workspace %q, got surface=%#v", filepath.ToSlash(codexWorkspace), surface)
 	}
 	if surface.SharedAttach {
 		t.Fatalf("must not shared-attach Codex surface to Claude owner, got %#v", surface)
