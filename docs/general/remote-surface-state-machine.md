@@ -1139,6 +1139,12 @@ review mode 第一版当前不是新的 route state，而是挂在 surface 上�
 5. 若上述来源全部为空，wrapper 不发送无效 `turn/start`。直接 dispatch 会同步 fail-closed；若 `thread/start` / `thread/resume` 已成功、仅 follow-up turn 构造失败，则 wrapper 消费该内部响应并发出 `EventTurnCompleted(status=failed, origin=turn_start_rejected, ThreadID=已创建或已恢复线程)`，让 queue/dispatch 正常进入失败终态，不把错误误报为 `stdout_parse_failed`，也不遗失仍可能到达的 local turn attribution。
 6. `config/read` 的 JSON-RPC error 或缺少 `result` 会使本代 child bootstrap 显式失败；`config.model` 缺失、`null` 或空值只会清空 fallback，不虚构硬编码模型。后续线程响应或显式 override 仍可提供模型，否则按第 5 条终止该 turn，不形成等待无回执的半死态。
 
+### 4.25 企业微信首条文本自动接入的 backend 边界（Updated: 2026-08-02）
+
+企业微信兼容入口仍会在 detached surface 收到首条文本时，从当前在线 headless 工作区中选择默认接入目标；这条旧入口不读取 4.19 的 gateway `defaultWorkspaceRoot` 配置。它必须遵守 surface backend 合同：尚未 materialize 的企业微信 surface 默认目标是 `codex`；已经存在的 surface 则使用其持久化的 `DesiredSurfaceBackend`。
+
+候选工作区选择、查找其它 surface 的共享接入目标，以及最终写入 shared attach 三个阶段都必须过滤到同一目标 backend。外部路径优先、内部 state 目录 fallback 的排序只在同 backend 候选内部生效，不能让路径排序覆盖 backend 约束。共享接入前还要再次核对 owner instance 在线且 `EffectiveInstanceBackend` 匹配；不匹配时回到目标 backend 的普通 workspace attach，禁止把 Codex surface 绑定到 Claude instance（反向同理）。显式保存为 Claude backend 的既有企业微信 surface 仍可选择 Claude 工作区，不强制改写成 Codex。
+
 ## 5. 主要状态迁移
 
 ### 5.1 attach / use / follow / new
@@ -1853,6 +1859,7 @@ retained-offline overlay 额外规则：
 43. **新建/恢复 thread 已成功，但 plan/default follow-up 因缺失 model 构造失败后只冒泡成 `stdout_parse_failed`，queue 永久等不到 turn 终态**：已修复。wrapper 现在用 app-server 的 `config/read` 与线程成功响应解析具体 model；仍无法解析时会消费内部 response、发出带 durable thread ID 的 `turn_start_rejected` completion，并保留尚未归属的 local turn marker。surface 会正常结束当前 queue item，新建 thread 已成立时继续保持 pinned，可直接重试。
 44. **thread A 的全局最近模板或 child restart 前旧模板覆盖 thread B / 新一代 resume 响应的实际 model，导致请求发往错误模型**：已修复。wrapper 现在把 server 成功响应与同 thread 后续本地模板观察统一写入按事件顺序更新的 thread model 记录；目标 thread 记录优先于全局/旧代模板，跨 thread 模板只在目标 thread 尚无 model 事实时兜底。
 45. **idle attached workspace 在服务重启或实例正常下线时仍反复发送“当前接管的工作区已离线”噪音**：已修复。`ApplyInstanceDisconnected` 仍会完整清理并 detach，但只在 surface 断线前仍有 active、queued、steer、auto-continue、compact 或 running review 等未完成远端工作时发送一条离线提示；空闲接管静默收口，active item 自带失败提示时也不会重复追加。
+46. **企业微信 detached 首条文本只按路径优先级挑在线 headless，Codex surface 会跨 backend 共享接入 Claude instance**：已修复。自动工作区选择、owner 查找与 shared attach 最终落点现在都以同一个 desired backend 过滤；新企业微信 surface 默认 Codex，显式保存为 Claude 的既有 surface 仍保持 Claude，不再因 Claude 外部目录排在 Codex 内部 pool 前而误路由并暴露无关 OAuth 错误。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 
@@ -1878,6 +1885,7 @@ retained-offline overlay 额外规则：
 8. watchdog 与恢复路径
 9. 默认工作区 bootstrap 与并发 workspace claim 策略
 10. headless child `config/read` / thread response model 缓存与 follow-up turn 失败终态
+11. 企业微信首条文本自动接入与 shared attach 的 backend 边界
 
 最低复审问题：
 

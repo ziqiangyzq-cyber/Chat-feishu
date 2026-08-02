@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/adapter/feishu"
+	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
 	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
@@ -251,19 +252,21 @@ func (a *App) maybeAttachDefaultWeComWorkspaceLocked(ctx context.Context, action
 	if surfaceID == "" {
 		return
 	}
+	targetBackend := agentproto.BackendCodex
 	if surface := a.service.Surface(surfaceID); surface != nil {
+		targetBackend = state.DesiredSurfaceBackend(surface)
 		if strings.TrimSpace(surface.AttachedInstanceID) != "" ||
 			strings.TrimSpace(surface.ClaimedWorkspaceKey) != "" ||
 			surface.PendingHeadless != nil {
 			return
 		}
 	}
-	workspaceKey := a.defaultWeComWorkspaceKeyLocked()
+	workspaceKey := a.defaultWeComWorkspaceKeyLocked(targetBackend)
 	if workspaceKey == "" {
 		return
 	}
-	if shared := a.sharedWeComAttachSurfaceLocked(workspaceKey); shared != nil {
-		a.attachSharedWeComSurfaceLocked(ctx, action, shared)
+	if shared := a.sharedWeComAttachSurfaceLocked(workspaceKey, targetBackend); shared != nil {
+		a.attachSharedWeComSurfaceLocked(ctx, action, shared, targetBackend)
 		return
 	}
 	events := a.service.ApplySurfaceAction(control.Action{
@@ -277,7 +280,7 @@ func (a *App) maybeAttachDefaultWeComWorkspaceLocked(ctx context.Context, action
 	a.handleUIEventsLocked(ctx, events)
 }
 
-func (a *App) attachSharedWeComSurfaceLocked(ctx context.Context, action control.Action, owner *state.SurfaceConsoleRecord) {
+func (a *App) attachSharedWeComSurfaceLocked(ctx context.Context, action control.Action, owner *state.SurfaceConsoleRecord, targetBackend agentproto.Backend) {
 	if a == nil || a.service == nil || owner == nil {
 		return
 	}
@@ -288,7 +291,7 @@ func (a *App) attachSharedWeComSurfaceLocked(ctx context.Context, action control
 		return
 	}
 	inst := a.service.Instance(instanceID)
-	if inst == nil || !inst.Online {
+	if inst == nil || !inst.Online || state.EffectiveInstanceBackend(inst) != agentproto.NormalizeBackend(targetBackend) {
 		return
 	}
 	a.service.MaterializeSurface(surfaceID, action.GatewayID, action.ChatID, action.ActorUserID)
@@ -324,7 +327,7 @@ func (a *App) attachSharedWeComSurfaceLocked(ctx context.Context, action control
 	}})
 }
 
-func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string) *state.SurfaceConsoleRecord {
+func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string, targetBackend agentproto.Backend) *state.SurfaceConsoleRecord {
 	if a == nil || a.service == nil {
 		return nil
 	}
@@ -332,6 +335,7 @@ func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string) *state.Surface
 	if workspaceKey == "" {
 		return nil
 	}
+	targetBackend = agentproto.NormalizeBackend(targetBackend)
 	for _, surface := range a.service.Surfaces() {
 		if surface == nil || isWeComGateway(surface.GatewayID) {
 			continue
@@ -343,7 +347,7 @@ func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string) *state.Surface
 			continue
 		}
 		inst := a.service.Instance(surface.AttachedInstanceID)
-		if inst == nil || !inst.Online {
+		if inst == nil || !inst.Online || state.EffectiveInstanceBackend(inst) != targetBackend {
 			continue
 		}
 		return surface
@@ -351,15 +355,19 @@ func (a *App) sharedWeComAttachSurfaceLocked(workspaceKey string) *state.Surface
 	return nil
 }
 
-func (a *App) defaultWeComWorkspaceKeyLocked() string {
+func (a *App) defaultWeComWorkspaceKeyLocked(targetBackend agentproto.Backend) string {
 	if a == nil || a.service == nil {
 		return ""
 	}
 	home, _ := os.UserHomeDir()
 	internalPrefix := state.NormalizeWorkspaceKey(home + "/.local/state/codex-remote")
+	targetBackend = agentproto.NormalizeBackend(targetBackend)
 	fallback := ""
 	for _, inst := range a.service.Instances() {
 		if inst == nil || !inst.Online {
+			continue
+		}
+		if state.EffectiveInstanceBackend(inst) != targetBackend {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(inst.Source), "vscode") {

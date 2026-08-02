@@ -317,6 +317,122 @@ func TestWeComTextAutoAttachesSharedWorkspaceWhenFeishuOwnsIt(t *testing.T) {
 	}
 }
 
+func TestWeComTextAutoAttachDoesNotCrossBackendToClaudeWorkspace(t *testing.T) {
+	gateway := &messageIDAssigningGateway{}
+	app := New(":0", ":0", gateway, agentproto.ServerIdentity{})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	codexWorkspace := home + "/.local/state/codex-remote-claude/codex-remote"
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-codex-pool",
+		DisplayName:   "headless",
+		WorkspaceRoot: codexWorkspace,
+		WorkspaceKey:  codexWorkspace,
+		ShortName:     "codex-remote",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+	})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-claude",
+		DisplayName:   "claude-work",
+		WorkspaceRoot: "/data/claude-work",
+		WorkspaceKey:  "/data/claude-work",
+		ShortName:     "claude-work",
+		Backend:       agentproto.BackendClaude,
+		Source:        "headless",
+		Managed:       true,
+		Online:        true,
+	})
+
+	app.service.MaterializeSurfaceResume(
+		"feishu:app-1:user:1",
+		"app-1",
+		"chat-1",
+		"user-1",
+		state.ProductModeNormal,
+		agentproto.BackendClaude,
+		"default",
+		state.SurfaceVerbosityNormal,
+		state.PlanModeSettingOff,
+	)
+	owner := app.service.Surface("feishu:app-1:user:1")
+	owner.AttachedInstanceID = "inst-claude"
+	owner.ClaimedWorkspaceKey = "/data/claude-work"
+
+	action := tagWeComInboundAction(control.Action{
+		Kind:        control.ActionTextMessage,
+		ChatID:      "wcchat-1",
+		ActorUserID: "wecom-user",
+		MessageID:   "msg-1",
+		Text:        "hello",
+	})
+	app.HandleAction(context.Background(), action)
+
+	surface := app.service.Surface(wecomSurfaceID("wcchat-1"))
+	if surface == nil {
+		t.Fatal("expected wecom surface")
+	}
+	if surface.AttachedInstanceID != "inst-codex-pool" {
+		t.Fatalf("expected Codex instance, got surface=%#v", surface)
+	}
+	if surface.ClaimedWorkspaceKey != codexWorkspace {
+		t.Fatalf("expected Codex workspace %q, got surface=%#v", codexWorkspace, surface)
+	}
+	if surface.SharedAttach {
+		t.Fatalf("must not shared-attach Codex surface to Claude owner, got %#v", surface)
+	}
+}
+
+func TestWeComTextAutoAttachPreservesExistingClaudeSurfaceBackend(t *testing.T) {
+	app := New(":0", ":0", &messageIDAssigningGateway{}, agentproto.ServerIdentity{})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-codex",
+		WorkspaceRoot: "/data/codex-work",
+		WorkspaceKey:  "/data/codex-work",
+		Backend:       agentproto.BackendCodex,
+		Source:        "headless",
+		Online:        true,
+	})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-claude",
+		WorkspaceRoot: "/data/claude-work",
+		WorkspaceKey:  "/data/claude-work",
+		Backend:       agentproto.BackendClaude,
+		Source:        "headless",
+		Online:        true,
+	})
+
+	surfaceID := wecomSurfaceID("wcchat-claude")
+	app.service.MaterializeSurfaceResume(
+		surfaceID,
+		wecomGatewayID,
+		"wcchat-claude",
+		"wecom-user",
+		state.ProductModeNormal,
+		agentproto.BackendClaude,
+		"default",
+		state.SurfaceVerbosityNormal,
+		state.PlanModeSettingOff,
+	)
+
+	action := tagWeComInboundAction(control.Action{
+		Kind:        control.ActionTextMessage,
+		ChatID:      "wcchat-claude",
+		ActorUserID: "wecom-user",
+		MessageID:   "msg-claude",
+		Text:        "hello",
+	})
+	app.HandleAction(context.Background(), action)
+
+	surface := app.service.Surface(surfaceID)
+	if surface == nil || surface.AttachedInstanceID != "inst-claude" || surface.ClaimedWorkspaceKey != "/data/claude-work" {
+		t.Fatalf("expected existing Claude surface to remain on Claude backend, got %#v", surface)
+	}
+}
+
 func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
