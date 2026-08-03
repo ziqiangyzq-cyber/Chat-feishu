@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,9 +39,10 @@ type outboundArtifactPolicyRequest struct {
 }
 
 type outboundArtifactPolicyResponse struct {
-	Path          string `json:"path"`
-	Watermarked   bool   `json:"watermarked"`
-	PolicyVersion string `json:"policy_version,omitempty"`
+	Path           string `json:"path"`
+	Watermarked    bool   `json:"watermarked"`
+	PolicyVersion  string `json:"policy_version,omitempty"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
 }
 
 func outboundArtifactPoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[string]outboundArtifactPolicy {
@@ -266,6 +268,12 @@ func (a *App) prepareOutboundArtifact(
 				Code:    "artifact_policy_failed",
 				Message: fmt.Sprintf("outbound artifact policy returned invalid image: %s", apiErr.Message),
 			}
+		}
+	}
+	if strings.TrimSpace(response.ArtifactSHA256) != "" {
+		contents, readErr := os.ReadFile(preparedPath)
+		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(contents)) != strings.ToLower(strings.TrimSpace(response.ArtifactSHA256)) {
+			return "", &toolError{Code: "artifact_policy_failed", Message: "outbound artifact policy returned a changed artifact"}
 		}
 	}
 	return preparedPath, nil
