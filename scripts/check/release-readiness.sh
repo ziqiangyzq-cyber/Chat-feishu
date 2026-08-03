@@ -124,7 +124,7 @@ track="$(
 if [[ -z "${track}" ]]; then
   track="$(derive_track_from_version "${version}")"
 fi
-track="${track,,}"
+track=$(printf '%s' "${track}" | tr '[:upper:]' '[:lower:]')
 
 release_ref="$(
   extract_heading_section "${body}" "发布分支" | first_nonempty_line || true

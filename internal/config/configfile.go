@@ -152,8 +152,9 @@ type FeishuAppConfig struct {
 }
 
 type OutboundArtifactPolicyConfig struct {
-	Command        string `json:"command,omitempty"`
-	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+	Command         string `json:"command,omitempty"`
+	TimeoutSeconds  int    `json:"timeoutSeconds,omitempty"`
+	DeliveryCommand string `json:"deliveryCommand,omitempty"`
 }
 
 type WeComSettings struct {

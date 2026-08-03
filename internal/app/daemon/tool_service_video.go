@@ -45,6 +45,7 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 
 	result, err := a.sendSurfaceVideo(ctx, resolved, path)
 	if err != nil {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "video", path, "send_failed", err)
 		var sendErr *feishu.IMVideoSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -68,6 +69,13 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 			Message:   err.Error(),
 			Retryable: true,
 		}
+	}
+	if strings.TrimSpace(result.MessageID) == "" {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "video", path, "missing_message_id", nil)
+		return nil, &toolError{Code: "send_failed", Message: "视频发送未返回真实 message_id", Retryable: true}
+	}
+	if err := a.recordOutboundDelivery(ctx, resolved, "video", path, result.MessageID); err != nil {
+		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMVideoToolName, resolved.SurfaceSessionID, path, result.MessageID)
 	response := map[string]any{

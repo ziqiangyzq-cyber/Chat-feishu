@@ -226,6 +226,7 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 
 	result, err := a.sendSurfaceFile(ctx, resolved, path)
 	if err != nil {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "file", path, "send_failed", err)
 		var sendErr *feishu.IMFileSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -251,6 +252,13 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 			Message:   err.Error(),
 			Retryable: true,
 		}
+	}
+	if strings.TrimSpace(result.MessageID) == "" {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "file", path, "missing_message_id", nil)
+		return nil, &toolError{Code: "send_failed", Message: "Feishu 文件发送未返回真实 message_id", Retryable: true}
+	}
+	if err := a.recordOutboundDelivery(ctx, resolved, "file", path, result.MessageID); err != nil {
+		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMFileToolName, resolved.SurfaceSessionID, path, result.MessageID)
 	response := map[string]any{
@@ -300,6 +308,7 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 
 	result, err := a.sendSurfaceImage(ctx, resolved, path)
 	if err != nil {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "image", path, "send_failed", err)
 		var sendErr *feishu.IMImageSendError
 		if errors.As(err, &sendErr) {
 			switch sendErr.Code {
@@ -323,6 +332,13 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 			Message:   err.Error(),
 			Retryable: true,
 		}
+	}
+	if strings.TrimSpace(result.MessageID) == "" {
+		a.recordOutboundDeliveryFailure(ctx, resolved, "image", path, "missing_message_id", nil)
+		return nil, &toolError{Code: "send_failed", Message: "Feishu 图片发送未返回真实 message_id", Retryable: true}
+	}
+	if err := a.recordOutboundDelivery(ctx, resolved, "image", path, result.MessageID); err != nil {
+		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}
 	}
 	log.Printf("tool call: tool=%s surface=%s path=%s status=ok message=%s", feishuSendIMImageToolName, resolved.SurfaceSessionID, path, result.MessageID)
 	response := map[string]any{

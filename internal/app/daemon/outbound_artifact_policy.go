@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,8 +24,9 @@ const (
 )
 
 type outboundArtifactPolicy struct {
-	Command string
-	Timeout time.Duration
+	Command         string
+	Timeout         time.Duration
+	DeliveryCommand string
 }
 
 type outboundArtifactPolicyRequest struct {
@@ -57,11 +59,60 @@ func outboundArtifactPoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[s
 			timeout = maxOutboundArtifactPolicyTimeout
 		}
 		policies[gatewayID] = outboundArtifactPolicy{
-			Command: command,
-			Timeout: timeout,
+			Command:         command,
+			Timeout:         timeout,
+			DeliveryCommand: strings.TrimSpace(app.OutboundArtifactPolicy.DeliveryCommand),
 		}
 	}
 	return policies
+}
+
+func (a *App) recordOutboundDelivery(ctx context.Context, resolved resolvedToolSurfaceContext, kind, path, messageID string) error {
+	policy, configured := a.outboundArtifactPolicyForGateway(resolved.GatewayID)
+	if !configured || policy.DeliveryCommand == "" {
+		return nil
+	}
+	deliveryCtx, cancel := context.WithTimeout(context.Background(), policy.Timeout)
+	defer cancel()
+	return a.recordOutboundDeliveryEvent(deliveryCtx, resolved, kind, path, messageID, true, "", "")
+}
+
+func (a *App) recordOutboundDeliveryFailure(ctx context.Context, resolved resolvedToolSurfaceContext, kind, path, code string, sendErr error) {
+	policy, configured := a.outboundArtifactPolicyForGateway(resolved.GatewayID)
+	if !configured || policy.DeliveryCommand == "" {
+		return
+	}
+	message := ""
+	if sendErr != nil {
+		message = sendErr.Error()
+	}
+	deliveryCtx, cancel := context.WithTimeout(context.Background(), policy.Timeout)
+	defer cancel()
+	_ = a.recordOutboundDeliveryEvent(deliveryCtx, resolved, kind, path, "", false, code, message)
+}
+
+func (a *App) recordOutboundDeliveryEvent(ctx context.Context, resolved resolvedToolSurfaceContext, kind, path, messageID string, sent bool, code, message string) error {
+	policy, configured := a.outboundArtifactPolicyForGateway(resolved.GatewayID)
+	if !configured || policy.DeliveryCommand == "" {
+		return nil
+	}
+	request := map[string]any{
+		"schema_version": "1.0", "gateway_id": resolved.GatewayID,
+		"surface_session_id": resolved.SurfaceSessionID, "kind": kind,
+		"path": path, "message_id": messageID, "attempted": true, "sent": sent,
+		"error_code": code, "error_message": message,
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	command := execlaunch.CommandContext(ctx, policy.DeliveryCommand)
+	command.Stdin = bytes.NewReader(append(raw, '\n'))
+	if err := command.Run(); err != nil {
+		log.Printf("outbound delivery audit failed: gateway=%s path=%s err=%v", resolved.GatewayID, path, err)
+		return err
+	}
+	return nil
 }
 
 func (a *App) SetOutboundArtifactPolicies(policies map[string]outboundArtifactPolicy) {

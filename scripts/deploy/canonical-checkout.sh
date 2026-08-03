@@ -104,14 +104,16 @@ fi
 if [[ "${source_ref}" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
   "${GIT_BIN}" -C "${checkout_path}" fetch --no-tags origin "${source_ref}"
   commit="$("${GIT_BIN}" -C "${checkout_path}" rev-parse --verify FETCH_HEAD^{commit})"
-  [[ "${commit,,}" == "${source_ref,,}" ]] || die "fetched commit does not match the requested full commit"
+  fetched_lower=$(printf '%s' "${commit}" | tr '[:upper:]' '[:lower:]')
+  requested_lower=$(printf '%s' "${source_ref}" | tr '[:upper:]' '[:lower:]')
+  [[ "${fetched_lower}" == "${requested_lower}" ]] || die "fetched commit does not match the requested full commit"
 else
   "${GIT_BIN}" -C "${checkout_path}" fetch --no-tags origin "refs/tags/${source_ref}:refs/tags/${source_ref}"
   "${GIT_BIN}" -C "${checkout_path}" show-ref --verify --quiet "refs/tags/${source_ref}" || die "exact tag was not fetched: ${source_ref}"
   commit="$("${GIT_BIN}" -C "${checkout_path}" rev-parse --verify "${source_ref}^{commit}")"
 fi
 
-commit="${commit,,}"
+commit=$(printf '%s' "${commit}" | tr '[:upper:]' '[:lower:]')
 [[ "${commit}" =~ ^[0-9a-f]{40,64}$ ]] || die "ref did not resolve to a full commit"
 "${GIT_BIN}" -C "${checkout_path}" checkout --detach "${commit}"
 [[ "$("${GIT_BIN}" -C "${checkout_path}" rev-parse --verify HEAD^{commit})" == "${commit}" ]] || die "checkout verification failed"
