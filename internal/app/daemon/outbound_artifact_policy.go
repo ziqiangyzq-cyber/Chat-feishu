@@ -70,6 +70,9 @@ func outboundArtifactPoliciesFromFeishuApps(apps []config.FeishuAppConfig) map[s
 func (a *App) recordOutboundDelivery(ctx context.Context, resolved resolvedToolSurfaceContext, kind, path, messageID string) error {
 	policy, configured := a.outboundArtifactPolicyForGateway(resolved.GatewayID)
 	if !configured || policy.DeliveryCommand == "" {
+		if strings.EqualFold(strings.TrimSpace(resolved.GatewayID), "efc-structa") {
+			return errors.New("EFC Structa 未配置 deliveryCommand")
+		}
 		return nil
 	}
 	deliveryCtx, cancel := context.WithTimeout(context.Background(), policy.Timeout)

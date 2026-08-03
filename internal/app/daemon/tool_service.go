@@ -255,7 +255,7 @@ func (a *App) sendIMFileTool(ctx context.Context, arguments map[string]any) (map
 	}
 	if strings.TrimSpace(result.MessageID) == "" {
 		a.recordOutboundDeliveryFailure(ctx, resolved, "file", path, "missing_message_id", nil)
-		return nil, &toolError{Code: "send_failed", Message: "Feishu 文件发送未返回真实 message_id", Retryable: true}
+		return nil, &toolError{Code: "send_failed", Message: "文件发送未返回真实 message_id"}
 	}
 	if err := a.recordOutboundDelivery(ctx, resolved, "file", path, result.MessageID); err != nil {
 		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}
@@ -335,7 +335,7 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 	}
 	if strings.TrimSpace(result.MessageID) == "" {
 		a.recordOutboundDeliveryFailure(ctx, resolved, "image", path, "missing_message_id", nil)
-		return nil, &toolError{Code: "send_failed", Message: "Feishu 图片发送未返回真实 message_id", Retryable: true}
+		return nil, &toolError{Code: "send_failed", Message: "图片发送未返回真实 message_id"}
 	}
 	if err := a.recordOutboundDelivery(ctx, resolved, "image", path, result.MessageID); err != nil {
 		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}

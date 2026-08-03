@@ -72,7 +72,7 @@ func (a *App) sendIMVideoTool(ctx context.Context, arguments map[string]any) (ma
 	}
 	if strings.TrimSpace(result.MessageID) == "" {
 		a.recordOutboundDeliveryFailure(ctx, resolved, "video", path, "missing_message_id", nil)
-		return nil, &toolError{Code: "send_failed", Message: "视频发送未返回真实 message_id", Retryable: true}
+		return nil, &toolError{Code: "send_failed", Message: "视频发送未返回真实 message_id"}
 	}
 	if err := a.recordOutboundDelivery(ctx, resolved, "video", path, result.MessageID); err != nil {
 		return nil, &toolError{Code: "delivery_audit_failed", Message: err.Error()}
