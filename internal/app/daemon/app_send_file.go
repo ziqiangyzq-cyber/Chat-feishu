@@ -73,6 +73,18 @@ func (a *App) prepareSendIMFileLocked(command control.DaemonCommand) (preparedSe
 	if toolErr != nil {
 		return preparedSendIMFile{}, a.sendFilePreflightFailureLocked(command, "send_file_unavailable", sendFileToolErrorText(toolErr)), false
 	}
+	// The policy command is an external process and reads App policy state; do not
+	// hold a.mu while it runs, otherwise outboundArtifactPolicyForGateway would
+	// deadlock on the same mutex.
+	a.mu.Unlock()
+	preparedPath, policyErr := a.prepareOutboundArtifact(context.Background(), resolved, "file", path)
+	a.mu.Lock()
+	if a.shuttingDown {
+		return preparedSendIMFile{}, nil, false
+	}
+	if policyErr != nil {
+		return preparedSendIMFile{}, a.sendFilePreflightFailureLocked(command, policyErr.Code, policyErr.Message), false
+	}
 	sender, ok := a.gateway.(feishu.IMFileSender)
 	if !ok {
 		return preparedSendIMFile{}, a.sendFilePreflightFailureLocked(command, "send_file_unavailable", "当前运行环境暂不支持发送飞书文件消息。"), false
@@ -84,9 +96,9 @@ func (a *App) prepareSendIMFileLocked(command control.DaemonCommand) (preparedSe
 			SurfaceSessionID: resolved.SurfaceSessionID,
 			ChatID:           resolved.ChatID,
 			ActorUserID:      resolved.ActorUserID,
-			Path:             path,
+			Path:             preparedPath,
 		},
-		fileName: filepath.Base(path),
+		fileName: filepath.Base(preparedPath),
 		fileSize: fileSize,
 	}, nil, true
 }
