@@ -94,7 +94,7 @@ func RunUpgradeHelperWithStatePath(ctx context.Context, statePath string) error 
 
 	stateValue.PendingUpgrade.Phase = PendingUpgradePhaseObserving
 	if err := WriteState(statePath, stateValue); err != nil {
-		return err
+		return rollbackUpgradeState(ctx, statePath, stateValue, cfg, paths, fmt.Errorf("write observing state: %w", err))
 	}
 
 	if _, err := startUpgradeDaemon(ctx, cfg, stateValue, paths); err != nil {
