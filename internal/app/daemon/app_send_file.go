@@ -19,6 +19,7 @@ const sendIMFileCommandTimeout = 2 * time.Minute
 type preparedSendIMFile struct {
 	sender   feishu.IMFileSender
 	request  feishu.IMFileSendRequest
+	resolved resolvedToolSurfaceContext
 	fileName string
 	fileSize int64
 }
@@ -98,6 +99,7 @@ func (a *App) prepareSendIMFileLocked(command control.DaemonCommand) (preparedSe
 			ActorUserID:      resolved.ActorUserID,
 			Path:             preparedPath,
 		},
+		resolved: resolved,
 		fileName: filepath.Base(preparedPath),
 		fileSize: fileSize,
 	}, nil, true
@@ -106,6 +108,13 @@ func (a *App) prepareSendIMFileLocked(command control.DaemonCommand) (preparedSe
 func (a *App) runPreparedSendIMFileLocked(command control.DaemonCommand, prepared preparedSendIMFile) []eventcontract.Event {
 	a.mu.Unlock()
 	result, err := a.sendPreparedIMFile(prepared)
+	if err == nil && strings.TrimSpace(result.MessageID) == "" {
+		a.recordOutboundDeliveryFailure(context.Background(), prepared.resolved, "file", prepared.request.Path, "missing_message_id", nil)
+		err = errors.New("文件发送未返回真实 message_id")
+	}
+	if err == nil {
+		err = a.recordOutboundDelivery(context.Background(), prepared.resolved, "file", prepared.request.Path, result.MessageID)
+	}
 	a.mu.Lock()
 	if err != nil {
 		_ = a.observeFeishuPermissionError(prepared.request.GatewayID, err)
@@ -129,6 +138,13 @@ func (a *App) runPreparedSendIMFileLocked(command control.DaemonCommand, prepare
 func (a *App) startSendIMFileBackground(command control.DaemonCommand, prepared preparedSendIMFile) {
 	go func() {
 		result, err := a.sendPreparedIMFile(prepared)
+		if err == nil && strings.TrimSpace(result.MessageID) == "" {
+			a.recordOutboundDeliveryFailure(context.Background(), prepared.resolved, "file", prepared.request.Path, "missing_message_id", nil)
+			err = errors.New("文件发送未返回真实 message_id")
+		}
+		if err == nil {
+			err = a.recordOutboundDelivery(context.Background(), prepared.resolved, "file", prepared.request.Path, result.MessageID)
+		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.shuttingDown {

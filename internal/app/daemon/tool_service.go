@@ -314,7 +314,7 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 			case feishu.IMImageSendErrorUploadFailed:
 				return nil, &toolError{Code: "upload_failed", Message: sendErr.Error()}
 			case feishu.IMImageSendErrorSendFailed, feishu.IMImageSendErrorMissingReceiveTarget, feishu.IMImageSendErrorGatewayNotRunning:
-				return nil, &toolError{Code: "send_failed", Message: sendErr.Error(), Retryable: true}
+				return nil, &toolError{Code: "send_failed", Message: sendErr.Error()}
 			}
 		}
 		var wecomErr *wecom.IMMediaSendError
@@ -323,13 +323,12 @@ func (a *App) sendIMImageTool(ctx context.Context, arguments map[string]any) (ma
 			case wecom.IMMediaSendErrorUploadFailed:
 				return nil, &toolError{Code: "upload_failed", Message: wecomErr.Error()}
 			case wecom.IMMediaSendErrorSendFailed, wecom.IMMediaSendErrorNotConnected:
-				return nil, &toolError{Code: "send_failed", Message: wecomErr.Error(), Retryable: true}
+				return nil, &toolError{Code: "send_failed", Message: wecomErr.Error()}
 			}
 		}
 		return nil, &toolError{
-			Code:      "send_failed",
-			Message:   err.Error(),
-			Retryable: true,
+			Code:    "send_failed",
+			Message: err.Error(),
 		}
 	}
 	if strings.TrimSpace(result.MessageID) == "" {

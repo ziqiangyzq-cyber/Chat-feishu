@@ -316,13 +316,14 @@ func rollbackUpgradeState(ctx context.Context, statePath string, stateValue Inst
 		stateValue.CurrentSlot = stateValue.RollbackCandidate.Version
 	}
 	stateValue.PendingUpgrade.Phase = PendingUpgradePhaseRolledBack
-	if err := WriteState(statePath, stateValue); err != nil {
-		return err
-	}
+	stateWriteErr := WriteState(statePath, stateValue)
 	if _, err := startUpgradeDaemon(ctx, cfg, stateValue, paths); err != nil {
 		stateValue.PendingUpgrade.Phase = PendingUpgradePhaseFailed
 		_ = WriteState(statePath, stateValue)
 		return fmt.Errorf("restart rollback service failed after %v: %w", cause, err)
+	}
+	if stateWriteErr != nil {
+		return fmt.Errorf("rollback service restored but state persistence failed after %v: %w", cause, stateWriteErr)
 	}
 	return cause
 }
