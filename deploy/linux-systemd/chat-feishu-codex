@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="${CHAT_FEISHU_HOME:-/var/lib/chat-feishu-codex}"
+export CODEX_HOME="${CODEX_HOME:-${HOME}/codex-home}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/xdg/config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/xdg/data}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/xdg/state}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/xdg/cache}"
+export CODEX_REMOTE_CONFIG="${CODEX_REMOTE_CONFIG:-${XDG_CONFIG_HOME}/codex-remote/config.json}"
+export CODEX_REAL_BINARY="${CODEX_REAL_BINARY:-/usr/local/lib/chat-feishu-codex/codex}"
+
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "OPENAI_API_KEY is required; configure it in the service EnvironmentFile" >&2
+  exit 78
+fi
+
+for directory in "${CODEX_HOME}" "${XDG_CONFIG_HOME}" "${XDG_DATA_HOME}" "${XDG_STATE_HOME}" "${XDG_CACHE_HOME}"; do
+  [[ -d "${directory}" ]] || {
+    echo "required isolated runtime directory is missing: ${directory}" >&2
+    exit 78
+  }
+done
+
+[[ -x "${CODEX_REAL_BINARY}" ]] || {
+  echo "managed Codex CLI is missing or not executable: ${CODEX_REAL_BINARY}" >&2
+  exit 78
+}
+
+exec /usr/local/lib/chat-feishu-codex/codex-remote "$@"

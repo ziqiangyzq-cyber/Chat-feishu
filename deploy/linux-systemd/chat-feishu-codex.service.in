@@ -1,0 +1,28 @@
+[Unit]
+Description=Chat Feishu dedicated Feishu and WeCom gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@SERVICE_HOME@
+EnvironmentFile=@ENV_FILE@
+Environment=CHAT_FEISHU_HOME=@SERVICE_HOME@
+ExecStart=@WRAPPER_PATH@ daemon
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=@SERVICE_HOME@
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,7 @@
 # Feishu 配置模板
 
+独立 Linux systemd 部署（可同时启用飞书与企微）见 [`deploy/linux-systemd/README.md`](../linux-systemd/README.md)。
+
 `app-template.json` 是这个项目的飞书应用配置模板，不是飞书控制台的官方导入格式。
 
 它的作用是把当前实现依赖的事项固定下来，方便你在飞书开放平台里逐项完成配置：

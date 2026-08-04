@@ -1,5 +1,7 @@
 # WeCom / 企业微信通道配置
 
+独立 Linux systemd 部署（可同时启用飞书与企微）见 [`deploy/linux-systemd/README.md`](../linux-systemd/README.md)。
+
 WeCom 通道使用企业微信 aibot 长连接。它是可选第二通道：不配置时 daemon 仍按 Feishu-only 模式运行；配置后 Feishu 和 WeCom 可以同时接入同一台 `codex-remote` daemon。
 
 ## 需要准备

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "relay": {
+    "listenHost": "127.0.0.1",
+    "listenPort": 9500
+  },
+  "admin": {
+    "listenHost": "127.0.0.1",
+    "listenPort": 9501,
+    "autoOpenBrowser": false
+  },
+  "feishu": {
+    "apps": [
+      {
+        "id": "main",
+        "name": "Main Feishu bot",
+        "enabled": true
+      }
+    ]
+  },
+  "wecom": {
+    "enabled": true
+  }
+}
