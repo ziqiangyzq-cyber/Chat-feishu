@@ -765,12 +765,7 @@ test_default_manifest_keeps_declared_lifecycle() {
   local expected_units=(
     codex-remote.service
     codex-remote-site.service
-    codex-remote-2.service
-    codex-remote-2-site.service
-    claude-remote.service
-    claude-remote-site.service
   )
-  local active_units=" codex-remote.service codex-remote-site.service "
   local seen_units=" "
   local unit_count=0
 
@@ -786,11 +781,7 @@ test_default_manifest_keeps_declared_lifecycle() {
       return 1
     fi
     seen_units+="${unit} "
-    if [[ "${active_units}" == *" ${unit} "* ]]; then
-      [[ "${lifecycle}" == "active" ]] || { echo "default deployment manifest must keep ${unit} active, got ${lifecycle}" >&2; return 1; }
-    else
-      [[ "${lifecycle}" == "inactive" ]] || { echo "retired deployment unit ${unit} must stay inactive, got ${lifecycle}" >&2; return 1; }
-    fi
+    [[ "${lifecycle}" == "active" ]] || { echo "default deployment manifest must keep ${unit} active, got ${lifecycle}" >&2; return 1; }
   done < "${manifest_path}"
 
   [[ "${unit_count}" -eq "${#expected_units[@]}" ]]

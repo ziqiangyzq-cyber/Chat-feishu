@@ -1,18 +1,16 @@
 # Unified Local Release Runbook
 
 > Type: `general`
-> Updated: `2026-07-22`
-> Summary: 定义三套本地 relay stack 共用一个不可变构建产物的审计、预检、部署、回滚与 canonical checkout 操作规范。
+> Updated: `2026-08-04`
+> Summary: 定义单一 Chat-feishu 本地 stack 的不可变构建产物审计、预检、部署、回滚与 canonical checkout 操作规范。
 
 ## 1. 目标与边界
 
-本流程只管理同一用户下的三套本地 stack：
+本流程只管理当前用户下唯一的本地 stack：
 
 - `codex-remote`
-- `codex-remote-2`
-- `claude-remote`
 
-三套 stack 继续使用各自的 XDG config/data/state root、凭证和运行状态。统一的是二进制，不是配置或数据。operator 不读取、输出或复制配置和凭证。
+飞书、企业微信以及 Codex/Claude backend 共用这一套 daemon、XDG config/data/state root 和凭据注入边界。operator 不读取、输出或复制配置和凭证。
 
 入口只有一个：
 
@@ -20,7 +18,7 @@
 ./deploy-local-release.sh <audit|preflight|deploy|rollback|canonical-checkout>
 ```
 
-它与 `./upgrade-local.sh`、`./upgrade-self.sh` 的边界不同：后两者只管理一个已有 `install-state.json` 的安装实例；本流程从 systemd user unit 发现实际 `ExecStart`，再以显式 manifest 管理完整三套 fleet。已经迁入 unified layout 的路径会带 ownership marker，普通 install、repair 和单实例 upgrade 不得覆盖它。
+它与 `./upgrade-local.sh`、`./upgrade-self.sh` 的边界不同：后两者管理已有 `install-state.json` 的安装实例；本流程从 systemd user unit 发现实际 `ExecStart`，再以显式 manifest 管理唯一生产 stack。已经迁入 unified layout 的路径会带 ownership marker，普通 install、repair 和单实例 upgrade 不得覆盖它。
 
 ## 2. 不变量与目录布局
 
@@ -34,14 +32,12 @@
     codex-remote
     .codex-remote-unified-release
   stacks/codex-remote/current -> <release-root>/releases/<release-id>
-  stacks/codex-remote-2/current -> <release-root>/releases/<release-id>
-  stacks/claude-remote/current -> <release-root>/releases/<release-id>
   transactions/<transaction-id>/
   operator.log
   deploy.lock
 ```
 
-每个 unit 原有的 `ExecStart` binary path 会变成指向对应 stack `current/codex-remote` 的 symlink。`claude-remote.service` 和 `claude-remote-site.service` 即使保留两个兼容入口名，也只能是指向同一 `current` 的 symlink，不能再各自持有 regular-file copy。
+daemon 与 site unit 的 `ExecStart` binary path 都指向唯一 stack 的 `current/codex-remote`。`chat-feishu.service` 是 `codex-remote.service` 的正式运维 alias，不是独立 stack。
 
 release 目录在发布后只读，名称同时绑定 full commit 和 binary hash。`.codex-remote-unified-release` 记录 version、commit、UTC build time、dirty state 和 SHA-256。部署只接受 `dirty=false`。
 
@@ -63,9 +59,9 @@ operator 会同时读取 `systemctl --user list-unit-files` 和 `list-units`，�
 - stack 缺少 daemon 或 site role；
 - transaction 开始前任一 allowlisted unit 不符合显式 `active/inactive` lifecycle。
 
-`xdg_identity` 当前只是 manifest 内的唯一 stack 身份标签。operator 不解析 unit 的 `Environment` 或 `EnvironmentFile`，因此它不能替代人工核对实际 XDG root。它也不会修改这些环境。首次迁移前必须由 operator/Hermes 核对三套 unit 的 XDG config/data/state root 仍彼此隔离。
+`xdg_identity` 是 manifest 内的 stack 身份标签。operator 不解析 unit 的 `Environment` 或 `EnvironmentFile`，因此它不会修改现有 XDG root、密钥或工作区环境。
 
-默认 health origin `9501`、`9701`、`9601` 已按当前现场监听器核对，但仍不是自动发现值。首次执行前必须再次对照实际 unit/config 验证；如不一致，先更新 manifest 并走 review，不能临时绕过 health check。
+默认 health origin `9501` 已按当前现场监听器核对，但仍不是自动发现值。如现场配置不一致，必须先更新 manifest 并走 review，不能临时绕过 health check。
 
 ## 4. Source 与版本溯源
 
@@ -173,18 +169,18 @@ deploy 的顺序固定为：
 
 未指定 transaction 时选择最新 committed transaction。rollback 会先验证 active manifest、journal、release marker/hash/provenance 和当前 configured release；任何歧义都拒绝执行。
 
-## 7. 首次迁移检查表
+## 7. 部署检查表
 
 首次 live 操作由 Hermes 在 diff review 和生产侧核对后执行，本实现任务不执行这些动作。
 
-1. 核对六个 unit、实际 `ExecStart`、三套 XDG root 和三个 health origin。
+1. 核对 daemon/site 两个 canonical unit、`chat-feishu.service` alias、实际 `ExecStart`、XDG root 和 health origin。
 2. 确认 `deploy/local-stacks.tsv` 精确覆盖全部候选 unit，没有额外本产品 user service。
 3. 从 accepted exact tag/commit 准备 canonical read-only checkout。
 4. 保存 deploy 前 audit 输出。
 5. 执行 preflight，再执行 deploy；不要并发 stop/start/restart 同一 daemon。
 6. 保存 transaction id、artifact SHA-256、deploy 后 audit 和 `operator.log`。
-7. 确认 Claude 两个入口都是 symlink，resolved path/inode/hash/commit 完全相同。
-8. 确认三套配置、数据、状态和凭证仍在原隔离 root，未被复制或合并。
+7. 确认 daemon/site 两个入口的 resolved path/inode/hash/commit 完全相同。
+8. 确认飞书、企业微信及全部 managed backend 已恢复在线。
 
 ## 8. Canonical Checkout 与旧 worktree 收敛
 
@@ -209,4 +205,4 @@ deploy 的顺序固定为：
 - Hermes 先创建、校验并外置保存包含历史 refs 的 git bundle；
 - bundle 可恢复性和最终 tag/commit 均验证后，旧 remote feature/release branches 与旧 tags 才可删除。
 
-这些 GitHub side effects 不属于 deploy operator。source-control publish 与本机部署始终是两个独立、可审计动作：push/tag 不自动调用 `deploy-local-release.sh`，deploy 也不 push、merge、打 tag 或删除 ref。未来 CI 继续产生 release/dev feed 时，也只能发布 source artifacts，不能隐式部署本地三套 stack。
+这些 GitHub side effects 不属于 deploy operator。source-control publish 与本机部署始终是两个独立、可审计动作：push/tag 不自动调用 `deploy-local-release.sh`，deploy 也不 push、merge、打 tag 或删除 ref。未来 CI 继续产生 release/dev feed 时，也只能发布 source artifacts，不能隐式部署本地 stack。
