@@ -58,6 +58,23 @@ func TestWorkspaceKeyWithinPolicyRoots(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRestrictedByAnotherGateway(t *testing.T) {
+	svc := newServiceForTest(nil)
+	svc.SetGatewaySurfacePolicies(map[string]GatewaySurfacePolicy{
+		"efc-structa":  {WorkspaceRoots: []string{"/data/efc"}},
+		"other-locked": {WorkspaceRoots: []string{"/data/other"}},
+	})
+	if !svc.WorkspaceRestrictedByAnotherGateway("/data/efc/project", "wecom:bot") {
+		t.Fatal("expected EFC workspace to be reserved from unrestricted channel")
+	}
+	if svc.WorkspaceRestrictedByAnotherGateway("/data/general", "wecom:bot") {
+		t.Fatal("did not expect general workspace to be reserved")
+	}
+	if svc.WorkspaceRestrictedByAnotherGateway("/data/efc/project", "efc-structa") {
+		t.Fatal("gateway must not reserve its own workspace from itself")
+	}
+}
+
 func TestClampAccessModeToMax(t *testing.T) {
 	cases := []struct {
 		mode, max, want string

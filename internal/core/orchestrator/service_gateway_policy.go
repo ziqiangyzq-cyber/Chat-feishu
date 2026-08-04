@@ -92,6 +92,29 @@ func (s *Service) surfaceGatewayPolicy(surface *state.SurfaceConsoleRecord) (Gat
 	return policy, ok
 }
 
+// WorkspaceRestrictedByAnotherGateway reports whether a workspace is inside a
+// configured gateway allowlist owned by a different channel.  Unrestricted
+// channels (for example WeCom) use this to avoid silently inheriting a
+// specialized Feishu workspace when selecting their automatic default.
+func (s *Service) WorkspaceRestrictedByAnotherGateway(workspaceKey, gatewayID string) bool {
+	if s == nil || len(s.gatewayPolicies) == 0 {
+		return false
+	}
+	workspaceKey = state.NormalizeWorkspaceKey(workspaceKey)
+	if workspaceKey == "" {
+		return false
+	}
+	for ownerGatewayID, policy := range s.gatewayPolicies {
+		if strings.TrimSpace(ownerGatewayID) == strings.TrimSpace(gatewayID) || len(policy.WorkspaceRoots) == 0 {
+			continue
+		}
+		if workspaceKeyWithinPolicyRoots(workspaceKey, policy.WorkspaceRoots) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) surfaceDefaultWorkspaceRoot(surface *state.SurfaceConsoleRecord) string {
 	policy, ok := s.surfaceGatewayPolicy(surface)
 	if !ok {

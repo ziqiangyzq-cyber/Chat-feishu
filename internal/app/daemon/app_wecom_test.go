@@ -13,6 +13,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/eventcontract"
+	"github.com/kxn/codex-remote-feishu/internal/core/orchestrator"
 	"github.com/kxn/codex-remote-feishu/internal/core/render"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 	"github.com/kxn/codex-remote-feishu/internal/core/surface"
@@ -239,6 +240,33 @@ func TestWeComTextAutoAttachesDefaultWorkspace(t *testing.T) {
 	}
 	if surface.Platform != "wecom" {
 		t.Fatalf("expected wecom platform, got %#v", surface)
+	}
+}
+
+func TestWeComTextSkipsWorkspaceReservedByFeishuPolicy(t *testing.T) {
+	app := New(":0", ":0", &messageIDAssigningGateway{}, agentproto.ServerIdentity{})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	app.SetGatewaySurfacePolicies(map[string]orchestrator.GatewaySurfacePolicy{
+		"efc-structa": {WorkspaceRoots: []string{"/data/efc"}},
+	})
+	app.service.UpsertInstance(&state.InstanceRecord{
+		InstanceID: "inst-efc", DisplayName: "EFC", WorkspaceRoot: "/data/efc",
+		WorkspaceKey: "/data/efc", Backend: agentproto.BackendCodex,
+		Source: "headless", Managed: true, Online: true,
+	})
+
+	action := tagWeComInboundAction(control.Action{
+		Kind: control.ActionTextMessage, ChatID: "wcchat-policy", ActorUserID: "wecom-user", Text: "hello",
+	})
+	app.HandleAction(context.Background(), action)
+
+	surface := app.service.Surface(wecomSurfaceID("wcchat-policy"))
+	if surface == nil {
+		t.Fatal("expected wecom surface")
+	}
+	if surface.AttachedInstanceID != "" || surface.ClaimedWorkspaceKey != "" {
+		t.Fatalf("must not auto-attach reserved EFC workspace, got %#v", surface)
 	}
 }
 

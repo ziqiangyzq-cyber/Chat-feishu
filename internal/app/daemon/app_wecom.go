@@ -377,6 +377,13 @@ func (a *App) defaultWeComWorkspaceKeyLocked(targetBackend agentproto.Backend) s
 		if workspaceKey == "" {
 			continue
 		}
+		// Do not silently attach an unrestricted WeCom surface to a workspace
+		// reserved by a specialized Feishu gateway (for example EFC Structa).
+		// The user can still explicitly choose a workspace later; automatic
+		// selection must never import the specialized channel's context.
+		if a.service.WorkspaceRestrictedByAnotherGateway(workspaceKey, wecomGatewayID) {
+			continue
+		}
 		if internalPrefix != "" && strings.HasPrefix(workspaceKey, internalPrefix) {
 			if fallback == "" {
 				fallback = workspaceKey
