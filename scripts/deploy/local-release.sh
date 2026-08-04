@@ -255,7 +255,7 @@ path_is_allowed_for_unit() {
 }
 
 discover_and_validate_inventory() {
-  local unit raw exec_path load_state id
+  local unit raw exec_path load_state id canonical_raw canonical_exec_path
   collect_discovered_unit_names
 
   for unit in "${!DISCOVERED_UNITS[@]}"; do
@@ -265,8 +265,22 @@ discover_and_validate_inventory() {
     if [[ -n "${raw}" ]]; then
       exec_path="$(extract_exec_path "${raw}" || true)"
     fi
-    if is_candidate_unit "${unit}" "${exec_path}" && [[ -z "${UNIT_SEEN[${unit}]:-}" ]]; then
-      die "unknown candidate service ${unit} (${exec_path:-unresolved}); add it to the manifest or remove it"
+    if is_candidate_unit "${unit}" "${exec_path}"; then
+      id="$(show_property "${unit}" Id 2>/dev/null || true)"
+      if [[ -z "${id}" ]]; then
+        die "candidate service ${unit} has no canonical Id"
+      fi
+      if [[ "${id}" != "${unit}" ]]; then
+        [[ -n "${UNIT_SEEN[${id}]:-}" ]] || die "unknown candidate service alias ${unit} resolves to ${id} (${exec_path:-unresolved})"
+        canonical_raw="$(show_property "${id}" ExecStart 2>/dev/null || true)"
+        canonical_exec_path="$(extract_exec_path "${canonical_raw}" || true)"
+        [[ -n "${canonical_exec_path}" && "${exec_path}" == "${canonical_exec_path}" ]] || die "service alias ${unit} ExecStart does not match canonical unit ${id}"
+        path_is_allowed_for_unit "${id}" "${exec_path}" || die "service alias ${unit} ExecStart path is not allowlisted for ${id}: ${exec_path}"
+        continue
+      fi
+      if [[ -z "${UNIT_SEEN[${unit}]:-}" ]]; then
+        die "unknown candidate service ${unit} (${exec_path:-unresolved}); add it to the manifest or remove it"
+      fi
     fi
   done
 

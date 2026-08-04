@@ -33,6 +33,8 @@ var defaultSystemdUserPATH = []string{
 	"/bin",
 }
 
+const systemdUserPublicAlias = "chat-feishu.service"
+
 type systemdUserUnitState struct {
 	ActiveState string
 	MainPID     string
@@ -141,7 +143,7 @@ func renderSystemdUserUnit(state InstallState) (string, error) {
 		"WantedBy=default.target",
 	}
 	if isDefaultInstance(state.InstanceID) {
-		lines = append(lines, "Alias=chat-feishu.service")
+		lines = append(lines, "Alias="+systemdUserPublicAlias)
 	}
 	lines = append(lines, "")
 	return strings.Join(lines, "\n"), nil
@@ -173,12 +175,105 @@ func installSystemdUserUnit(ctx context.Context, state InstallState) (InstallSta
 	return state, nil
 }
 
+func prepareSystemdUserUpgrade(ctx context.Context, state InstallState) (InstallState, error) {
+	state, err := systemdUserServiceState(state)
+	if err != nil {
+		return InstallState{}, err
+	}
+	wasEnabled, _, err := detectSystemdUserEnabled(ctx, state.InstanceID)
+	if err != nil {
+		return InstallState{}, fmt.Errorf("detect existing systemd user enablement: %w", err)
+	}
+	if wasEnabled && isDefaultInstance(state.InstanceID) {
+		if err := ensureSystemdUserPublicAlias(state); err != nil {
+			return InstallState{}, err
+		}
+		if _, err := systemctlUserRunner(ctx, "daemon-reload"); err != nil {
+			return InstallState{}, fmt.Errorf("reload systemd user aliases: %w", err)
+		}
+	}
+	return state, nil
+}
+
+func systemdUserPublicAliasPath(state InstallState) string {
+	return filepath.Join(filepath.Dir(state.ServiceUnitPath), systemdUserPublicAlias)
+}
+
+func systemdUserAliasPointsToUnit(aliasPath, unitPath string) (bool, error) {
+	target, err := os.Readlink(aliasPath)
+	if err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(aliasPath), target)
+	}
+	return filepath.Clean(target) == filepath.Clean(unitPath), nil
+}
+
+func ensureSystemdUserPublicAlias(state InstallState) error {
+	aliasPath := systemdUserPublicAliasPath(state)
+	info, err := os.Lstat(aliasPath)
+	if os.IsNotExist(err) {
+		if err := os.Symlink(filepath.Base(state.ServiceUnitPath), aliasPath); err != nil {
+			return fmt.Errorf("create systemd user alias %s: %w", aliasPath, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect systemd user alias %s: %w", aliasPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("systemd user alias path is not a symlink: %s", aliasPath)
+	}
+	matches, err := systemdUserAliasPointsToUnit(aliasPath, state.ServiceUnitPath)
+	if err != nil {
+		return fmt.Errorf("read systemd user alias %s: %w", aliasPath, err)
+	}
+	if !matches {
+		return fmt.Errorf("systemd user alias %s points to a different unit", aliasPath)
+	}
+	return nil
+}
+
+func removeSystemdUserPublicAlias(state InstallState) error {
+	if !isDefaultInstance(state.InstanceID) {
+		return nil
+	}
+	aliasPath := systemdUserPublicAliasPath(state)
+	info, err := os.Lstat(aliasPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect systemd user alias %s: %w", aliasPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("refuse to remove non-symlink systemd user alias path: %s", aliasPath)
+	}
+	matches, err := systemdUserAliasPointsToUnit(aliasPath, state.ServiceUnitPath)
+	if err != nil {
+		return fmt.Errorf("read systemd user alias %s: %w", aliasPath, err)
+	}
+	if !matches {
+		return fmt.Errorf("refuse to remove systemd user alias %s owned by a different unit", aliasPath)
+	}
+	if err := serviceRemoveFile(aliasPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func uninstallSystemdUserUnit(ctx context.Context, state InstallState) error {
 	state, err := systemdUserServiceState(state)
 	if err != nil {
 		return err
 	}
-	_, _ = systemctlUserRunner(ctx, "disable", "--now", systemdUserUnitName(state))
+	if _, err := systemctlUserRunner(ctx, "disable", "--now", systemdUserUnitName(state)); err != nil {
+		return fmt.Errorf("disable systemd user unit before uninstall: %w", err)
+	}
+	if err := removeSystemdUserPublicAlias(state); err != nil {
+		return err
+	}
 	if err := serviceRemoveFile(state.ServiceUnitPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}

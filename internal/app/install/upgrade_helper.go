@@ -79,6 +79,19 @@ func RunUpgradeHelperWithStatePath(ctx context.Context, statePath string) error 
 		return err
 	}
 	paths := RuntimePathsForState(stateValue)
+	if isManagedServiceManager(stateValue) {
+		driver, ok := managedServiceDriverForManager(effectiveServiceManager(stateValue))
+		if !ok {
+			return fmt.Errorf("unsupported managed service manager %q", effectiveServiceManager(stateValue))
+		}
+		if driver.PrepareUpgradeRun != nil {
+			updated, err := driver.PrepareUpgradeRun(ctx, stateValue)
+			if err != nil {
+				return fmt.Errorf("prepare managed service upgrade: %w", err)
+			}
+			stateValue = updated
+		}
+	}
 
 	stateValue.PendingUpgrade.Phase = PendingUpgradePhaseSwitching
 	if err := WriteState(statePath, stateValue); err != nil {

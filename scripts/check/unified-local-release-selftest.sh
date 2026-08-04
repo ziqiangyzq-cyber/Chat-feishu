@@ -145,6 +145,8 @@ case "${command_name}" in
       Id)
         if [[ -f "${FAKE_STATE_DIR}/${unit}.empty-id" ]]; then
           printf '\n'
+        elif [[ -f "${FAKE_STATE_DIR}/${unit}.id" ]]; then
+          cat "${FAKE_STATE_DIR}/${unit}.id"
         else
           printf '%s\n' "${unit}"
         fi
@@ -475,6 +477,27 @@ test_success_and_audit() {
 }
 
 test_inventory_fail_closed() {
+  setup_fixture valid-service-alias
+  printf '%s\n' 'chat-feishu.service' >> "${fake_state}/unit-list"
+  cp "${fake_state}/codex-remote.service.exec" "${fake_state}/chat-feishu.service.exec"
+  printf '%s\n' 'codex-remote.service' > "${fake_state}/chat-feishu.service.id"
+  run_guarded_operator audit --manifest "${manifest}" --release-root "${release_root}" > "${scenario_dir}/valid-alias.log" 2>&1 || true
+  grep -F 'global_consensus=false' "${scenario_dir}/valid-alias.log" >/dev/null
+  if grep -F 'unknown candidate service' "${scenario_dir}/valid-alias.log" >/dev/null; then
+    echo "valid service alias was rejected as an unknown candidate" >&2
+    return 1
+  fi
+
+  setup_fixture mismatched-service-alias
+  printf '%s\n' 'chat-feishu.service' >> "${fake_state}/unit-list"
+  cp "${fake_state}/codex-remote-2.service.exec" "${fake_state}/chat-feishu.service.exec"
+  printf '%s\n' 'codex-remote.service' > "${fake_state}/chat-feishu.service.id"
+  if run_guarded_operator audit --manifest "${manifest}" --release-root "${release_root}" > "${scenario_dir}/mismatched-alias.log" 2>&1; then
+    echo "mismatched service alias should fail closed" >&2
+    exit 1
+  fi
+  grep -F 'service alias chat-feishu.service ExecStart does not match canonical unit codex-remote.service' "${scenario_dir}/mismatched-alias.log" >/dev/null
+
   setup_fixture unknown-unit
   extra_binary="${fake_home}/.local/share/codex-remote-extra/bin/codex-remote"
   write_legacy_binary "${extra_binary}" "v0.1.0" "5555555555555555555555555555555555555555"
@@ -503,7 +526,7 @@ test_inventory_fail_closed() {
     echo "empty unit Id should fail closed" >&2
     exit 1
   fi
-  grep -F 'service alias codex-remote.service resolves to unexpected Id <empty>' "${scenario_dir}/empty-id.log" >/dev/null
+  grep -F 'candidate service codex-remote.service has no canonical Id' "${scenario_dir}/empty-id.log" >/dev/null
 
   setup_fixture duplicate-health-origin
   sed -i 's/19521/19501/g' "${manifest}"
@@ -720,7 +743,7 @@ test_active_watchdog_is_paused_and_restored() {
   [[ ! -e "${fake_home}/.local/state/claude-remote/watchdog.paused" ]]
 }
 
-test_default_manifest_keeps_full_fleet_active() {
+test_default_manifest_keeps_declared_lifecycle() {
   local manifest_path="${ROOT_DIR}/deploy/local-stacks.tsv"
   local expected_unit stack unit role lifecycle
   local expected_units=(
@@ -731,6 +754,7 @@ test_default_manifest_keeps_full_fleet_active() {
     claude-remote.service
     claude-remote-site.service
   )
+  local active_units=" codex-remote.service codex-remote-site.service "
   local seen_units=" "
   local unit_count=0
 
@@ -746,9 +770,10 @@ test_default_manifest_keeps_full_fleet_active() {
       return 1
     fi
     seen_units+="${unit} "
-    if [[ "${lifecycle}" != "active" ]]; then
-      echo "default deployment manifest must keep ${unit} (${role}) active, got ${lifecycle}" >&2
-      return 1
+    if [[ "${active_units}" == *" ${unit} "* ]]; then
+      [[ "${lifecycle}" == "active" ]] || { echo "default deployment manifest must keep ${unit} active, got ${lifecycle}" >&2; return 1; }
+    else
+      [[ "${lifecycle}" == "inactive" ]] || { echo "retired deployment unit ${unit} must stay inactive, got ${lifecycle}" >&2; return 1; }
     fi
   done < "${manifest_path}"
 
@@ -761,7 +786,7 @@ test_default_manifest_keeps_full_fleet_active() {
   done
 }
 
-test_default_manifest_keeps_full_fleet_active
+test_default_manifest_keeps_declared_lifecycle
 test_success_and_audit
 test_inactive_lifecycle_preserved
 test_mutation_lock_contention_fails_closed

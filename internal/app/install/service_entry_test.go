@@ -3,11 +3,164 @@ package install
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPrepareSystemdUserUpgradeReconcilesAliasOnlyWhenAlreadyEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		want    []string
+	}{
+		{name: "enabled", enabled: true, want: []string{"is-enabled codex-remote.service", "daemon-reload"}},
+		{name: "disabled", enabled: false, want: []string{"is-enabled codex-remote.service"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			stubServiceUserHome(t, baseDir)
+			state := InstallState{
+				BaseDir:         baseDir,
+				StatePath:       defaultInstallStatePath(baseDir),
+				InstalledBinary: seedBinary(t, filepath.Join(baseDir, "bin", "codex-remote"), "binary"),
+				ServiceManager:  ServiceManagerSystemdUser,
+			}
+			unitPath := systemdUserUnitPathForInstance(baseDir, state.InstanceID)
+			if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			const customUnit = "[Service]\nEnvironmentFile=/etc/chat-feishu.env\n"
+			if err := os.WriteFile(unitPath, []byte(customUnit), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			originalGOOS := serviceRuntimeGOOS
+			originalRunner := systemctlUserRunner
+			serviceRuntimeGOOS = "linux"
+			defer func() {
+				serviceRuntimeGOOS = originalGOOS
+				systemctlUserRunner = originalRunner
+			}()
+
+			var calls []string
+			systemctlUserRunner = func(_ context.Context, args ...string) (string, error) {
+				calls = append(calls, strings.Join(args, " "))
+				if len(args) > 0 && args[0] == "is-enabled" {
+					if tc.enabled {
+						return "enabled", nil
+					}
+					return "disabled", errors.New("exit status 1")
+				}
+				return "", nil
+			}
+
+			updated, err := prepareSystemdUserUpgrade(context.Background(), state)
+			if err != nil {
+				t.Fatalf("prepareSystemdUserUpgrade: %v", err)
+			}
+			if strings.Join(calls, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("systemctl calls = %#v, want %#v", calls, tc.want)
+			}
+			aliasPath := systemdUserPublicAliasPath(updated)
+			_, err = os.Lstat(aliasPath)
+			if tc.enabled && err != nil {
+				t.Fatalf("enabled service alias missing: %v", err)
+			}
+			if !tc.enabled && !os.IsNotExist(err) {
+				t.Fatalf("disabled service unexpectedly gained alias: %v", err)
+			}
+			unitRaw, err := os.ReadFile(unitPath)
+			if err != nil || string(unitRaw) != customUnit {
+				t.Fatalf("upgrade alias reconciliation changed existing unit: raw=%q err=%v", unitRaw, err)
+			}
+		})
+	}
+}
+
+func TestUninstallSystemdUserUnitStopsWhenDisableFails(t *testing.T) {
+	baseDir := t.TempDir()
+	stubServiceUserHome(t, baseDir)
+	unitPath := filepath.Join(baseDir, ".config", "systemd", "user", "codex-remote.service")
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalGOOS := serviceRuntimeGOOS
+	originalRunner := systemctlUserRunner
+	serviceRuntimeGOOS = "linux"
+	defer func() {
+		serviceRuntimeGOOS = originalGOOS
+		systemctlUserRunner = originalRunner
+	}()
+	systemctlUserRunner = func(_ context.Context, args ...string) (string, error) {
+		return "permission denied", errors.New("exit status 1")
+	}
+
+	err := uninstallSystemdUserUnit(context.Background(), InstallState{
+		BaseDir:         baseDir,
+		ServiceUnitPath: unitPath,
+		ServiceManager:  ServiceManagerSystemdUser,
+	})
+	if err == nil || !strings.Contains(err.Error(), "disable systemd user unit") {
+		t.Fatalf("uninstall error = %v, want disable failure", err)
+	}
+	if _, err := os.Stat(unitPath); err != nil {
+		t.Fatalf("unit should remain after disable failure: %v", err)
+	}
+}
+
+func TestUninstallSystemdUserUnitRemovesOwnedPublicAlias(t *testing.T) {
+	baseDir := t.TempDir()
+	stubServiceUserHome(t, baseDir)
+	unitPath := filepath.Join(baseDir, ".config", "systemd", "user", "codex-remote.service")
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(filepath.Dir(unitPath), systemdUserPublicAlias)
+	if err := os.Symlink(filepath.Base(unitPath), aliasPath); err != nil {
+		t.Fatal(err)
+	}
+
+	originalGOOS := serviceRuntimeGOOS
+	originalRunner := systemctlUserRunner
+	serviceRuntimeGOOS = "linux"
+	defer func() {
+		serviceRuntimeGOOS = originalGOOS
+		systemctlUserRunner = originalRunner
+	}()
+	var calls []string
+	systemctlUserRunner = func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return "", nil
+	}
+
+	if err := uninstallSystemdUserUnit(context.Background(), InstallState{
+		BaseDir:         baseDir,
+		ServiceUnitPath: unitPath,
+		ServiceManager:  ServiceManagerSystemdUser,
+	}); err != nil {
+		t.Fatalf("uninstallSystemdUserUnit: %v", err)
+	}
+	if _, err := os.Lstat(aliasPath); !os.IsNotExist(err) {
+		t.Fatalf("owned alias still exists after uninstall: %v", err)
+	}
+	if _, err := os.Stat(unitPath); !os.IsNotExist(err) {
+		t.Fatalf("unit still exists after uninstall: %v", err)
+	}
+	want := []string{"disable --now codex-remote.service", "daemon-reload"}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("systemctl calls = %#v, want %#v", calls, want)
+	}
+}
 
 func TestRunServiceInstallUserWritesUnitAndState(t *testing.T) {
 	baseDir := t.TempDir()

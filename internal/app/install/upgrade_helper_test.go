@@ -112,6 +112,7 @@ func TestRunUpgradeHelperWithStatePathSystemdUserUsesSystemctlStopStart(t *testi
 		t.Fatalf("RunUpgradeHelperWithStatePath: %v", err)
 	}
 	if got, want := calls, []string{
+		"is-enabled codex-remote.service",
 		"stop codex-remote.service",
 		"show --property=ActiveState --property=MainPID codex-remote.service",
 		"start codex-remote.service",
@@ -141,6 +142,77 @@ func TestRunUpgradeHelperWithStatePathSystemdUserUsesSystemctlStopStart(t *testi
 	}
 	if updated.CurrentVersion != "v1.1.0" {
 		t.Fatalf("current version = %q, want v1.1.0", updated.CurrentVersion)
+	}
+}
+
+func TestRunUpgradeHelperRejectsAliasConflictBeforeStopOrBinarySwitch(t *testing.T) {
+	dir := t.TempDir()
+	stubServiceUserHome(t, dir)
+	statePath := filepath.Join(dir, "install-state.json")
+	configPath := filepath.Join(dir, ".config", "codex-remote", "config.json")
+	currentBinary := seedBinary(t, filepath.Join(dir, "bin", executableName(runtime.GOOS)), "old-binary")
+	seedBinary(t, filepath.Join(dir, "releases", "v1.1.0", executableName(runtime.GOOS)), "new-binary")
+	if err := config.WriteAppConfig(configPath, config.DefaultAppConfig()); err != nil {
+		t.Fatalf("WriteAppConfig: %v", err)
+	}
+	stateValue := InstallState{
+		BaseDir:           dir,
+		ConfigPath:        configPath,
+		StatePath:         statePath,
+		ServiceManager:    ServiceManagerSystemdUser,
+		CurrentVersion:    "v1.0.0",
+		CurrentBinaryPath: currentBinary,
+		VersionsRoot:      filepath.Join(dir, "releases"),
+		PendingUpgrade:    &PendingUpgrade{Phase: PendingUpgradePhasePrepared, TargetVersion: "v1.1.0"},
+	}
+	rollbackCandidate, err := PrepareRollbackCandidate(stateValue, "v1.1.0")
+	if err != nil {
+		t.Fatalf("PrepareRollbackCandidate: %v", err)
+	}
+	stateValue.RollbackCandidate = rollbackCandidate
+	if err := WriteState(statePath, stateValue); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	unitPath := systemdUserUnitPathForInstance(dir, defaultInstanceID)
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(filepath.Dir(unitPath), systemdUserPublicAlias)
+	if err := os.WriteFile(aliasPath, []byte("conflict"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalRunner := systemctlUserRunner
+	defer func() { systemctlUserRunner = originalRunner }()
+	var calls []string
+	systemctlUserRunner = func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if len(args) > 0 && args[0] == "is-enabled" {
+			return "enabled", nil
+		}
+		return "", nil
+	}
+
+	err = RunUpgradeHelperWithStatePath(context.Background(), statePath)
+	if err == nil || !strings.Contains(err.Error(), "alias path is not a symlink") {
+		t.Fatalf("RunUpgradeHelperWithStatePath error = %v, want alias conflict", err)
+	}
+	if got, want := calls, []string{"is-enabled codex-remote.service"}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("systemctl calls = %#v, want no stop/start", got)
+	}
+	raw, err := os.ReadFile(currentBinary)
+	if err != nil || string(raw) != "old-binary" {
+		t.Fatalf("current binary changed before alias preflight completed: raw=%q err=%v", raw, err)
+	}
+	updated, err := LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PendingUpgrade == nil || updated.PendingUpgrade.Phase != PendingUpgradePhasePrepared {
+		t.Fatalf("pending upgrade phase changed before alias preflight: %#v", updated.PendingUpgrade)
 	}
 }
 
@@ -385,6 +457,7 @@ func TestRunUpgradeHelperWithStatePathDebugInstanceUsesDebugSystemdUnit(t *testi
 		t.Fatalf("RunUpgradeHelperWithStatePath: %v", err)
 	}
 	if got, want := calls, []string{
+		"is-enabled codex-remote-debug.service",
 		"stop codex-remote-debug.service",
 		"show --property=ActiveState --property=MainPID codex-remote-debug.service",
 		"start codex-remote-debug.service",
@@ -453,6 +526,7 @@ func TestRunUpgradeHelperWithStatePathSystemdUserRollsBackOnObserveFailure(t *te
 		t.Fatalf("RunUpgradeHelperWithStatePath error = %v, want gateway unhealthy", err)
 	}
 	if got, want := calls, []string{
+		"is-enabled codex-remote.service",
 		"stop codex-remote.service",
 		"show --property=ActiveState --property=MainPID codex-remote.service",
 		"start codex-remote.service",

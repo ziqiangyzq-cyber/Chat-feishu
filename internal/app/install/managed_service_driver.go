@@ -20,6 +20,7 @@ type managedServiceDriver struct {
 	ServiceName             func(string) string
 	ServiceUnitPath         func(string, string) string
 	AutostartProbe          func(context.Context, InstallState) (configured bool, enabled bool, warning string, err error)
+	PrepareUpgradeRun       func(context.Context, InstallState) (InstallState, error)
 	EnableBeforeEnsureReady bool
 	InstallBeforeUpgradeRun bool
 }
@@ -41,6 +42,7 @@ func managedServiceDriverForManager(manager ServiceManager) (managedServiceDrive
 			ServiceName:             systemdUserServiceNameForInstance,
 			ServiceUnitPath:         systemdUserUnitPathForInstance,
 			AutostartProbe:          probeSystemdAutostart,
+			PrepareUpgradeRun:       prepareSystemdUserUpgrade,
 			EnableBeforeEnsureReady: true,
 		}, true
 	case ServiceManagerLaunchdUser:
