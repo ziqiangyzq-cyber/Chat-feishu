@@ -56,6 +56,7 @@ func TestGatewayRecovered(t *testing.T) {
 }
 
 func TestRunUpgradeHelperWithStatePathSystemdUserUsesSystemctlStopStart(t *testing.T) {
+	requireLinuxSystemdTest(t)
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "install-state.json")
 	configPath := filepath.Join(dir, ".config", "codex-remote", "config.json")
@@ -146,6 +147,7 @@ func TestRunUpgradeHelperWithStatePathSystemdUserUsesSystemctlStopStart(t *testi
 }
 
 func TestRunUpgradeHelperRejectsAliasConflictBeforeStopOrBinarySwitch(t *testing.T) {
+	requireLinuxSystemdTest(t)
 	dir := t.TempDir()
 	stubServiceUserHome(t, dir)
 	statePath := filepath.Join(dir, "install-state.json")
@@ -400,6 +402,7 @@ func TestRunUpgradeHelperWithStatePathTaskSchedulerLogonStopsInstallsAndStartsTa
 }
 
 func TestRunUpgradeHelperWithStatePathDebugInstanceUsesDebugSystemdUnit(t *testing.T) {
+	requireLinuxSystemdTest(t)
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, ".local", "share", "codex-remote-debug", "codex-remote", "install-state.json")
 	configPath := filepath.Join(dir, ".config", "codex-remote-debug", "codex-remote", "config.json")
@@ -467,6 +470,7 @@ func TestRunUpgradeHelperWithStatePathDebugInstanceUsesDebugSystemdUnit(t *testi
 }
 
 func TestRunUpgradeHelperWithStatePathSystemdUserRollsBackOnObserveFailure(t *testing.T) {
+	requireLinuxSystemdTest(t)
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "install-state.json")
 	configPath := filepath.Join(dir, ".config", "codex-remote", "config.json")
@@ -552,6 +556,13 @@ func TestRunUpgradeHelperWithStatePathSystemdUserRollsBackOnObserveFailure(t *te
 	}
 	if updated.CurrentVersion != "v1.0.0" {
 		t.Fatalf("current version = %q, want v1.0.0", updated.CurrentVersion)
+	}
+}
+
+func requireLinuxSystemdTest(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd user service behavior is linux-only")
 	}
 }
 
