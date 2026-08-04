@@ -34,6 +34,7 @@ chmod 600 /tmp/chat-feishu-codex.env
 sudo scripts/deploy/chat-feishu-codex.sh install \
   --binary ./bin/codex-remote \
   --codex-binary /path/to/codex \
+  --codex-config /path/to/config.toml \
   --env-file /tmp/chat-feishu-codex.env \
   --config-file /tmp/chat-feishu-codex-config.json
 ```
@@ -44,7 +45,7 @@ sudo scripts/deploy/chat-feishu-codex.sh install \
 sudo scripts/deploy/chat-feishu-codex.sh upgrade --binary ./bin/codex-remote
 ```
 
-Codex CLI 会先检查 `app-server` 能力，再复制到 root 管理的固定路径，避免独立服务误用操作员 HOME/PATH 中的安装。升级 Codex 本身时额外传 `--codex-binary /path/to/new/codex`。只有明确需要轮换配置时，才在 upgrade 时再次传入 `--env-file` 或 `--config-file`。部署会等待 daemon HTTP、托管 Codex headless instance、所有已配置飞书/企微通道以及 PID/restart 稳定窗全部通过；失败会自动恢复部署前快照。也可以手工回滚最近一次事务：
+Codex CLI 会先检查 `app-server` 能力，再复制到 root 管理的固定路径；Codex 的 `config.toml` 也会安装到独立 `CODEX_HOME`，避免误用操作员的配置或登录态。升级 Codex 本身时额外传 `--codex-binary /path/to/new/codex`；调整 provider 时传 `--codex-config /path/to/new-config.toml`。只有明确需要轮换配置时，才在 upgrade 时再次传入 `--env-file` 或 `--config-file`。部署会等待 daemon HTTP、托管 Codex headless instance、所有已配置飞书/企微通道以及 PID/restart 稳定窗全部通过；失败会自动恢复部署前快照。也可以手工回滚最近一次事务：
 
 ```bash
 sudo scripts/deploy/chat-feishu-codex.sh rollback

@@ -9,6 +9,7 @@ env_source=""
 config_source=""
 binary_source=""
 codex_binary_source=""
+codex_config_source=""
 root_prefix=""
 activate=1
 command="${1:-}"
@@ -21,6 +22,7 @@ usage: scripts/deploy/chat-feishu-codex.sh <install|upgrade|rollback|status> [op
 options:
   --binary <path>       codex-remote binary for install/upgrade
   --codex-binary <path> Codex CLI to install into the isolated runtime
+  --codex-config <path> Codex config.toml for the isolated CODEX_HOME
   --env-file <path>     secret env file containing OPENAI_API_KEY
   --config-file <path>  WeCom-enabled codex-remote config.json
   --user <name>         dedicated service user (default chat-feishu-codex)
@@ -29,7 +31,8 @@ options:
   --root <path>         prefix filesystem writes for smoke tests/images
   --no-activate         do not call useradd/systemctl/chown
 
-Install requires --binary, --codex-binary, --env-file and --config-file. Upgrade
+Install requires --binary, --codex-binary, --codex-config, --env-file and
+--config-file. Upgrade
 requires only --binary and preserves the managed Codex CLI and live env/config.
 Pass --codex-binary during upgrade only when upgrading Codex too. Every deployment
 records a restorable snapshot before publishing changes.
@@ -40,6 +43,7 @@ while (($# > 0)); do
   case "$1" in
     --binary) binary_source="${2:?missing --binary value}"; shift 2 ;;
     --codex-binary) codex_binary_source="${2:?missing --codex-binary value}"; shift 2 ;;
+    --codex-config) codex_config_source="${2:?missing --codex-config value}"; shift 2 ;;
     --env-file) env_source="${2:?missing --env-file value}"; shift 2 ;;
     --config-file) config_source="${2:?missing --config-file value}"; shift 2 ;;
     --user) service_user="${2:?missing --user value}"; shift 2 ;;
@@ -68,6 +72,7 @@ wrapper_path="$(target /usr/local/bin/chat-feishu-codex)"
 unit_path="$(target /etc/systemd/system/chat-feishu-codex.service)"
 env_path="$(target /etc/chat-feishu-codex/chat-feishu-codex.env)"
 home_path="$(target "${service_home}")"
+codex_config_path="${home_path}/codex-home/config.toml"
 config_path="${home_path}/xdg/config/codex-remote/config.json"
 snapshot_root="$(target /var/lib/chat-feishu-codex-deploy/snapshots)"
 
@@ -115,7 +120,7 @@ assert_managed_paths_safe() {
     [[ ! -L "${path}" ]] || { echo "managed service path must not be a symlink: ${path}" >&2; return 1; }
     [[ ! -e "${path}" || -d "${path}" ]] || { echo "managed service path is not a directory: ${path}" >&2; return 1; }
   done
-  for path in "${config_path}" "${env_path}" "${unit_path}" "${wrapper_path}" "${lib_dir}/codex-remote" "${codex_binary_path}"; do
+  for path in "${config_path}" "${codex_config_path}" "${env_path}" "${unit_path}" "${wrapper_path}" "${lib_dir}/codex-remote" "${codex_binary_path}"; do
     [[ ! -L "${path}" ]] || { echo "managed deployment target must not be a symlink: ${path}" >&2; return 1; }
   done
 }
@@ -142,7 +147,7 @@ snapshot() {
     if ((activate == 1)) && [[ "${original_active}" == active ]]; then systemctl start chat-feishu-codex.service || true; fi
     return 1
   fi
-  for item in "${lib_dir}/codex-remote" "${codex_binary_path}" "${wrapper_path}" "${unit_path}" "${env_path}" "${config_path}"; do
+  for item in "${lib_dir}/codex-remote" "${codex_binary_path}" "${wrapper_path}" "${unit_path}" "${env_path}" "${config_path}" "${codex_config_path}"; do
     relative="${item#${root_prefix}/}"
     if ! mkdir -p "${snapshot_dir}/files/$(dirname "${relative}")"; then
       if ((activate == 1)) && [[ "${original_active}" == active ]]; then systemctl start chat-feishu-codex.service || true; fi
@@ -172,7 +177,7 @@ restore_latest() {
   require_file "${snapshot_dir}/manifest.tsv"
   while IFS=$'\t' read -r state relative; do
     case "${relative}" in
-      "${lib_dir#${root_prefix}/}/codex-remote"|"${lib_dir#${root_prefix}/}/codex"|"${wrapper_path#${root_prefix}/}"|"${unit_path#${root_prefix}/}"|"${env_path#${root_prefix}/}"|"${config_path#${root_prefix}/}") ;;
+      "${lib_dir#${root_prefix}/}/codex-remote"|"${lib_dir#${root_prefix}/}/codex"|"${wrapper_path#${root_prefix}/}"|"${unit_path#${root_prefix}/}"|"${env_path#${root_prefix}/}"|"${config_path#${root_prefix}/}"|"${codex_config_path#${root_prefix}/}") ;;
       *) echo "rollback manifest contains an unexpected target: ${relative}" >&2; return 1 ;;
     esac
     [[ "${state}" == present || "${state}" == absent ]] || { echo "invalid rollback state: ${state}" >&2; return 1; }
@@ -276,7 +281,7 @@ rollback_failed_deploy() {
 }
 
 if [[ "${command}" == status ]]; then
-  printf 'unit=%s\nwrapper=%s\nbinary=%s\ncodex=%s\nenv=%s\nconfig=%s\nsnapshots=%s\n' "${unit_path}" "${wrapper_path}" "${lib_dir}/codex-remote" "${codex_binary_path}" "${env_path}" "${config_path}" "${snapshot_root}"
+  printf 'unit=%s\nwrapper=%s\nbinary=%s\ncodex=%s\ncodex_config=%s\nenv=%s\nconfig=%s\nsnapshots=%s\n' "${unit_path}" "${wrapper_path}" "${lib_dir}/codex-remote" "${codex_binary_path}" "${codex_config_path}" "${env_path}" "${config_path}" "${snapshot_root}"
   ((activate == 0)) || systemctl --no-pager status chat-feishu-codex.service
   exit 0
 fi
@@ -293,6 +298,7 @@ require_file "${binary_source}"
 [[ -x "${binary_source}" ]] || { echo "binary is not executable: ${binary_source}" >&2; exit 1; }
 if [[ "${command}" == install ]]; then
   require_file "${codex_binary_source}"
+  require_file "${codex_config_source}"
   require_file "${env_source}"
   require_file "${config_source}"
 else
@@ -301,8 +307,10 @@ else
   require_file "${env_path}"
   require_file "${config_path}"
   require_file "${codex_binary_path}"
+  require_file "${codex_config_path}"
 fi
 [[ -z "${codex_binary_source}" ]] || { require_file "${codex_binary_source}"; [[ -x "${codex_binary_source}" ]] || { echo "Codex binary is not executable: ${codex_binary_source}" >&2; exit 1; }; }
+[[ -z "${codex_config_source}" ]] || require_file "${codex_config_source}"
 if [[ -n "${codex_binary_source}" ]] && ! "${codex_binary_source}" app-server --help 2>&1 | grep -q 'Usage: codex app-server'; then
   echo "Codex binary does not provide the required app-server command" >&2
   exit 1
@@ -344,6 +352,11 @@ if [[ -n "${config_source}" ]]; then
   install -m 0600 "${config_source}" "${config_path}.stage"
   if ((activate == 1)); then chown "${service_user}:${service_group}" "${config_path}.stage"; fi
   mv -Tf "${config_path}.stage" "${config_path}"
+fi
+if [[ -n "${codex_config_source}" ]]; then
+  install -m 0600 "${codex_config_source}" "${codex_config_path}.stage"
+  if ((activate == 1)); then chown "${service_user}:${service_group}" "${codex_config_path}.stage"; fi
+  mv -Tf "${codex_config_path}.stage" "${codex_config_path}"
 fi
 if ((activate == 1)); then
   chown root:"${service_group}" "${env_path}"
