@@ -25,6 +25,7 @@ state_claude="${base_dir}/.local/state/claude-remote/codex-remote/surface-resume
 backup_root="${base_dir}/.local/state/codex-remote-consolidation"
 latest_link="${backup_root}/latest"
 legacy_units=(codex-remote-2-site.service codex-remote-2.service claude-remote-site.service claude-remote.service)
+legacy_timers=(codex-remote-2-watchdog.timer claude-remote-watchdog.timer)
 active_units=(codex-remote.service codex-remote-site.service)
 
 require_file() { [[ -f "$1" ]] || { echo "required file missing: $1" >&2; exit 1; }; }
@@ -52,6 +53,7 @@ restore_backup() {
   cp -a "${dir}/state-main.json" "${state_main}"
   systemctl_user daemon-reload
   for unit in "${active_units[@]}" "${legacy_units[@]}"; do systemctl_user enable "$unit" >/dev/null 2>&1 || true; done
+  for unit in "${legacy_timers[@]}"; do systemctl_user enable --now "$unit" >/dev/null 2>&1 || true; done
   for unit in "${active_units[@]}" "${legacy_units[@]}"; do systemctl_user restart "$unit" >/dev/null 2>&1 || true; done
 }
 health_gate() {
@@ -103,6 +105,7 @@ jq -s '
 jq -s '.[0] as $main | .[1] as $second | .[2] as $claude | $main | .entries = (($main.entries // {}) + ($second.entries // {}) + ($claude.entries // {}))' \
   "${state_main}" "${state_second}" "${state_claude}" >"${backup_dir}/state-merged.json"
 
+for unit in "${legacy_timers[@]}"; do systemctl_user disable --now "$unit" >/dev/null 2>&1 || true; done
 for unit in "${legacy_units[@]}" "${active_units[@]}"; do systemctl_user stop "$unit" >/dev/null 2>&1 || true; done
 install -m 0600 "${backup_dir}/config-merged.json" "${config_main}"
 install -m 0600 "${backup_dir}/state-merged.json" "${state_main}"
