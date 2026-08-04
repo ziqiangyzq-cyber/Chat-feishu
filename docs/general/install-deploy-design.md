@@ -408,7 +408,10 @@ Linux 当前已支持显式选择 `systemd_user` 作为 daemon lifecycle manager
 - `systemd_user`
   - 由 `codex-remote service install-user|enable|start|stop|restart|status` 管理
   - stable unit 为 `<serviceHome>/.config/systemd/user/codex-remote.service`
+  - 默认实例同时发布面向运维的 `chat-feishu.service` alias；日常状态检查和重启优先使用这个产品名
+  - `codex-remote.service` 暂时保留为内部兼容名，确保现有安装状态、升级 helper 和回滚链路无需迁移即可继续工作
   - 命名实例 unit 为 `<serviceHome>/.config/systemd/user/codex-remote-<instanceId>.service`
+  - 命名实例不发布 `chat-feishu.service` alias，避免多个实例争抢同一个运维入口
   - 这里的 `serviceHome` 指真实 `systemd --user` home，通常仍是 `$HOME`；它不等于 install `baseDir`
   - 运行身份仍保持为当前用户
   - unit 里的 `WorkingDirectory` 与 `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_STATE_HOME` 仍指向目标实例自己的 `baseDir`
@@ -417,6 +420,13 @@ Linux 当前已支持显式选择 `systemd_user` 作为 daemon lifecycle manager
 
 ```bash
 loginctl enable-linger "$USER"
+```
+
+默认实例的常用运维命令：
+
+```bash
+systemctl --user status chat-feishu.service
+systemctl --user restart chat-feishu.service
 ```
 
 ### 4.5 统一升级入口

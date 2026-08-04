@@ -42,8 +42,10 @@ launchctl kickstart -k gui/$(id -u)/com.codex-remote.service
 Linux `systemd --user`：
 
 ```bash
-systemctl --user restart codex-remote.service
+systemctl --user restart chat-feishu.service
 ```
+
+`chat-feishu.service` 是默认实例的正式运维别名；底层继续保留 `codex-remote.service` 以兼容既有升级和回滚状态。
 
 ## 环境变量覆盖
 

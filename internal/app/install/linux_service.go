@@ -139,8 +139,11 @@ func renderSystemdUserUnit(state InstallState) (string, error) {
 		"",
 		"[Install]",
 		"WantedBy=default.target",
-		"",
 	}
+	if isDefaultInstance(state.InstanceID) {
+		lines = append(lines, "Alias=chat-feishu.service")
+	}
+	lines = append(lines, "")
 	return strings.Join(lines, "\n"), nil
 }
 

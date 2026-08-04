@@ -283,6 +283,39 @@ func TestRenderSystemdUserUnitIncludesStandardOutputConfig(t *testing.T) {
 	if !strings.Contains(unitText, "Restart=on-failure") {
 		t.Fatalf("unit missing Restart=on-failure: %s", unitText)
 	}
+	if !strings.Contains(unitText, "Alias=chat-feishu.service") {
+		t.Fatalf("default unit missing public service alias: %s", unitText)
+	}
+}
+
+func TestRenderSystemdUserUnitOmitsPublicAliasForNamedInstance(t *testing.T) {
+	originalGOOS := serviceRuntimeGOOS
+	serviceRuntimeGOOS = "linux"
+	defer func() { serviceRuntimeGOOS = originalGOOS }()
+
+	baseDir := filepath.Join(string(filepath.Separator), "tmp", "codex-remote")
+	state := InstallState{
+		InstanceID:      "debug",
+		BaseDir:         baseDir,
+		StatePath:       filepath.Join(baseDir, ".local", "share", "codex-remote-debug", "codex-remote", "install-state.json"),
+		ConfigPath:      filepath.Join(baseDir, ".config", "codex-remote-debug", "codex-remote", "config.json"),
+		InstalledBinary: filepath.Join(baseDir, "bin", "codex-remote"),
+		ServiceManager:  ServiceManagerSystemdUser,
+	}
+	ApplyStateMetadata(&state, StateMetadataOptions{
+		InstanceID:     state.InstanceID,
+		StatePath:      state.StatePath,
+		BaseDir:        state.BaseDir,
+		ServiceManager: state.ServiceManager,
+	})
+
+	unitText, err := renderSystemdUserUnit(state)
+	if err != nil {
+		t.Fatalf("renderSystemdUserUnit: %v", err)
+	}
+	if strings.Contains(unitText, "Alias=chat-feishu.service") {
+		t.Fatalf("named instance must not claim the public service alias: %s", unitText)
+	}
 }
 
 func TestRunServiceStatusUsesWorkspaceBindingWhenStatePathOmitted(t *testing.T) {
