@@ -681,6 +681,17 @@ probe_stack_http_health() {
   "${CURL_BIN}" --noproxy '*' --max-time 5 -fsS "${base}/v1/status" >/dev/null || return 1
 }
 
+stack_has_active_unit() {
+  local stack="$1"
+  local unit
+  for unit in "${UNITS[@]}"; do
+    if [[ "${UNIT_STACK[${unit}]}" == "${stack}" && "${UNIT_LIFECYCLE[${unit}]}" == "active" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 health_check_all() {
   local expected_release="${1:-}"
   local expected_sha="${2:-}"
@@ -718,6 +729,7 @@ health_check_all() {
   done
 
   for stack in "${STACKS[@]}"; do
+    stack_has_active_unit "${stack}" || continue
     probe_stack_http_health "${stack}" || { echo "stack ${stack} failed HTTP health checks" >&2; return 1; }
   done
 }

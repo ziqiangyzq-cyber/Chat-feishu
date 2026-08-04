@@ -101,6 +101,9 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 url="${*: -1}"
+if [[ -f "${FAKE_STATE_DIR}/fail-health-19521" && "${url}" == http://127.0.0.1:19521/* ]]; then
+  exit 22
+fi
 if [[ -f "${FAKE_STATE_DIR}/fail-health" && ! -f "${FAKE_STATE_DIR}/fail-health-used" && "${url}" == */healthz ]]; then
   : > "${FAKE_STATE_DIR}/fail-health-used"
   exit 22
@@ -705,6 +708,19 @@ test_inactive_lifecycle_preserved() {
   grep -F 'global_consensus=true' "${scenario_dir}/audit.log" >/dev/null
 }
 
+test_fully_inactive_stack_skips_http_health() {
+  setup_fixture fully-inactive-stack
+  active_mv_bin=/bin/mv
+  sed -i '/^codex-remote-2|/s/|active$/|inactive/' "${manifest}"
+  FAKE_STATE_DIR="${fake_state}" PROC_ROOT="${proc_root}" "${fake_dir}/systemctl" --user stop codex-remote-2.service
+  FAKE_STATE_DIR="${fake_state}" PROC_ROOT="${proc_root}" "${fake_dir}/systemctl" --user stop codex-remote-2-site.service
+  : > "${fake_state}/fail-health-19521"
+  mapfile -t args < <(deploy_args)
+  run_guarded_operator "${args[@]}" > "${scenario_dir}/deploy.log" 2>&1
+  [[ "$(<"${fake_state}/codex-remote-2.service.active")" == "inactive" ]]
+  [[ "$(<"${fake_state}/codex-remote-2-site.service.active")" == "inactive" ]]
+}
+
 test_mutation_lock_contention_fails_closed() {
   setup_fixture mutation-lock
   active_mv_bin=/bin/mv
@@ -789,6 +805,7 @@ test_default_manifest_keeps_declared_lifecycle() {
 test_default_manifest_keeps_declared_lifecycle
 test_success_and_audit
 test_inactive_lifecycle_preserved
+test_fully_inactive_stack_skips_http_health
 test_mutation_lock_contention_fails_closed
 test_active_watchdog_is_paused_and_restored
 test_inventory_fail_closed
