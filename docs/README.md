@@ -1,8 +1,8 @@
 # Documentation Index
 
 > Type: `general`
-> Updated: `2026-07-22`
-> Summary: 增加三套本地 stack 统一不可变二进制部署与 canonical checkout runbook 索引。
+> Updated: `2026-08-04`
+> Summary: 记录单一 Chat-feishu 本地 stack 的不可变部署与 canonical checkout runbook 索引。
 
 ## 1. 适用范围
 

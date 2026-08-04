@@ -2,7 +2,7 @@
 
 > Type: `general`
 > Updated: `2026-07-22`
-> Summary: 同步 exact-clean shared build helper、unified release ownership guard，并明确单一 InstallState 自升级与三套 stack fleet deployment 的边界。
+> Summary: 同步 exact-clean shared build helper、unified release ownership guard，并明确单一 InstallState 自升级与生产部署 operator 的边界。
 
 ## 1. 这份文档回答什么问题
 
@@ -24,7 +24,7 @@
 
 这份文档描述的是当前实现里的“repo 构建产物 -> 本地已安装实例”的自升级事务。
 
-这里的事务边界始终是一份 `install-state.json`。它不负责同时升级多套 systemd stack；三套本地 fleet 的统一部署见 [unified-local-release-runbook.md](./unified-local-release-runbook.md)。
+这里的事务边界始终是一份 `install-state.json`。生产环境中唯一 daemon/site pair 的不可变部署见 [unified-local-release-runbook.md](./unified-local-release-runbook.md)。
 
 它不展开：
 
@@ -361,11 +361,11 @@ helper shim 入口是一个独立 binary，本身不再接受 `upgrade-helper -s
 
 它会被放进独立 transient unit，而不是复用 `codex-remote.service` 本身。否则 stop 原 service 时，helper 也会被连带终止。
 
-### 10.5 unified alias 不属于单实例 upgrade-helper
+### 10.5 unified deployment alias 不属于单实例 upgrade-helper
 
-三套本地 stack 迁入 unified release layout 后，稳定入口是 unified operator 管理的 symlink。install-state upgrade、release upgrade、packaged repair 与普通 install 都会检查 `.codex-remote-unified-release` ownership marker，并拒绝覆盖该 alias。
+生产 stack 迁入 unified release layout 后，稳定入口是 unified operator 管理的 symlink。install-state upgrade、release upgrade、packaged repair 与普通 install 都会检查 `.codex-remote-unified-release` ownership marker，并拒绝覆盖该 alias。
 
-这不是临时互斥锁，而是 ownership 边界：fleet transaction 必须由 `deploy-local-release.sh` 同时 stop/publish/start/health-check 全部 allowlisted daemon/site units。要回到普通单实例管理，必须先设计并执行显式 migration，不能删除 marker 或强制 copy。
+这不是临时互斥锁，而是 ownership 边界：deployment transaction 必须由 `deploy-local-release.sh` 同时 stop/publish/start/health-check allowlisted daemon/site units。要回到普通单实例管理，必须先设计并执行显式 migration，不能删除 marker 或强制 copy。
 
 ## 11. 常看路径
 

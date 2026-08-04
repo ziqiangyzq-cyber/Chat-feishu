@@ -2,7 +2,7 @@
 
 > Type: `general`
 > Updated: `2026-07-22`
-> Summary: 补充统一 build provenance helper 与三套本地 systemd stack 的 immutable fleet deployment 边界，并修正 upgrade helper 来源说明。
+> Summary: 补充统一 build provenance helper 与单一 Chat-feishu systemd stack 的 immutable deployment 边界，并修正 upgrade helper 来源说明。
 
 ## 1. 范围
 
@@ -475,19 +475,17 @@ Windows 下文件名为 `codex-remote.exe`。
 
 - [local-self-upgrade-flow.md](./local-self-upgrade-flow.md)
 
-### 4.6 三套本地 stack 的 unified deployment
+### 4.6 单一本地 stack 的 unified deployment
 
-`upgrade-local.sh` / `upgrade-self.sh` 与 daemon upgrade-helper 都以一份 `install-state.json` 为事务边界。它们不能把缺少 install-state 的其他实例伪装成同一套 managed install，也不能原子管理多个 daemon/site pair。
-
-本机同时运行 `codex-remote`、`codex-remote-2`、`claude-remote` 时，使用仓库 operator：
+`upgrade-local.sh` / `upgrade-self.sh` 与 daemon upgrade-helper 都以一份 `install-state.json` 为事务边界。生产部署则由仓库 operator 管理唯一的 daemon/site pair：
 
 ```bash
 ./deploy-local-release.sh <audit|preflight|deploy|rollback|canonical-checkout>
 ```
 
-这条路径从 systemd user units 发现实际 `ExecStart`，再用显式 allowlist 校验完整 inventory；它从 exact clean commit/tag 构建一次，把同一 SHA-256 artifact 发布到 immutable release store，并让所有 stack path 通过各自 `current` indirection 解析到同一 inode。它不读取或复制任何 stack config/state。
+这条路径从 systemd user units 发现实际 `ExecStart`，再用显式 allowlist 校验完整 inventory；它从 exact clean commit/tag 构建一次，把 artifact 发布到 immutable release store，并让 daemon/site 都通过唯一的 `current` indirection 解析到同一 inode。飞书、企业微信和不同 backend 共用这套运行时；用户权限隔离属于应用层身份与授权策略，不通过复制 systemd stack 实现。operator 不读取或复制 config/state。
 
-迁入 unified layout 后，普通 install、packaged repair、单实例 local/release upgrade 都会识别 ownership marker 并拒绝覆盖 unified alias。完整布局、首次迁移、health assumptions 与回滚限制见：
+迁入 unified layout 后，普通 install、packaged repair、单实例 local/release upgrade 都会识别 ownership marker 并拒绝覆盖 unified alias。完整布局、health assumptions 与回滚限制见：
 
 - [unified-local-release-runbook.md](./unified-local-release-runbook.md)
 

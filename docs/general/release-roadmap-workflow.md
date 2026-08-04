@@ -2,7 +2,7 @@
 
 > Type: `general`
 > Updated: `2026-07-22`
-> Summary: 补充历史 refs bundle 收敛目标，并明确 source-control publish 与本地三套 stack deploy 是两个独立审计动作。
+> Summary: 补充历史 refs bundle 收敛目标，并明确 source-control publish 与本地生产 stack deploy 是两个独立审计动作。
 
 ## 1. 当前基线
 
@@ -159,12 +159,12 @@ readiness 通过的条件是：
 
 ### 5.6 Source publish 与本地 deploy
 
-push/tag/release 与本机三套 stack 部署是两个独立动作：
+push/tag/release 与本机生产 stack 部署是两个独立动作：
 
 - GitHub workflow 只构建和发布 source artifacts，不控制本机 user services；
 - `deploy-local-release.sh` 只消费 reviewed exact tag/full commit，不 push、merge、打 tag 或删除 remote ref；
 - 每次 deploy 单独保存 preflight、transaction id、artifact SHA-256、operator log 和 deploy 后 audit；
-- 不因一次 push 成功就自动部署 `codex-remote`、`codex-remote-2`、`claude-remote`。
+- 不因一次 push 成功就自动部署本机 `codex-remote`；部署必须单独通过 preflight 与 audit 闸门。
 
 本地统一部署的 operator contract 见 [unified-local-release-runbook.md](./unified-local-release-runbook.md)。
 
