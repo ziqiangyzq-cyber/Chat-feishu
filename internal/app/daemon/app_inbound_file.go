@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,7 +262,10 @@ func moveFileWithFallback(srcPath, dstPath string) error {
 	if copyErr != nil {
 		return copyErr
 	}
-	return os.Remove(srcPath)
+	if err := os.Remove(srcPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("cleanup copied inbound source file failed: path=%s err=%v", srcPath, err)
+	}
+	return nil
 }
 
 func removeInboundWorkspaceFile(path string) error {

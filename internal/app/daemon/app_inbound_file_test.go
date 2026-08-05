@@ -76,6 +76,31 @@ func TestHandleFileActionMaterializesIntoWorkspaceAndUpdatesGitExclude(t *testin
 	}
 }
 
+func TestMoveFileWithFallbackKeepsSuccessfulCopyWhenSourceCleanupFails(t *testing.T) {
+	sourceDir := t.TempDir()
+	sourcePath := filepath.Join(sourceDir, "attachment.txt")
+	if err := os.WriteFile(sourcePath, []byte("attachment body"), 0o600); err != nil {
+		t.Fatalf("WriteFile(source): %v", err)
+	}
+	destinationPath := filepath.Join(t.TempDir(), "attachment.txt")
+
+	if err := os.Chmod(sourceDir, 0o500); err != nil {
+		t.Fatalf("Chmod(sourceDir): %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sourceDir, 0o700) })
+
+	if err := moveFileWithFallback(sourcePath, destinationPath); err != nil {
+		t.Fatalf("moveFileWithFallback() should preserve a completed copy when only source cleanup fails: %v", err)
+	}
+	got, err := os.ReadFile(destinationPath)
+	if err != nil {
+		t.Fatalf("ReadFile(destination): %v", err)
+	}
+	if string(got) != "attachment body" {
+		t.Fatalf("unexpected destination content: %q", string(got))
+	}
+}
+
 func TestHandleTextActionWithQuotedFileMaterializesIntoWorkspaceInput(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspaceRoot, ".git", "info"), 0o755); err != nil {
