@@ -471,7 +471,18 @@ func (s *Service) surfaceOwnsThread(surface *state.SurfaceConsoleRecord, threadI
 	}
 	claim := s.threadClaims[threadID]
 	if claim == nil {
-		return false
+		// WeCom shared-attach surfaces deliberately do not write a competing
+		// thread claim. Once such a surface has selected a visible thread on its
+		// shared instance, that selection is nevertheless a valid routing lease
+		// as long as no exclusive claim conflicts with it.
+		if !s.surfaceIsSharedAttach(surface) || strings.TrimSpace(surface.SelectedThreadID) != threadID {
+			return false
+		}
+		inst := s.root.Instances[strings.TrimSpace(surface.AttachedInstanceID)]
+		if inst == nil || !threadVisible(inst.Threads[threadID]) {
+			return false
+		}
+		return !headlessThreadWorkspaceMustMatch(inst) || threadBelongsToInstanceWorkspace(inst, inst.Threads[threadID])
 	}
 	if claim.SurfaceSessionID == surface.SurfaceSessionID {
 		return true

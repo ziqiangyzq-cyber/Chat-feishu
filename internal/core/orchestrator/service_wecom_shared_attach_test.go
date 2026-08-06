@@ -103,3 +103,96 @@ func TestSharedAttachAllowsSecondSurfaceToQueueOnSameHeadlessInstance(t *testing
 		t.Fatalf("expected second surface to dispatch after first turn completion, got %#v", finished)
 	}
 }
+
+func TestSharedAttachKeepsNewlyCreatedThreadRoutableWithoutExclusiveClaim(t *testing.T) {
+	now := time.Date(2026, 8, 6, 13, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:    "inst-1",
+		DisplayName:   "repo",
+		WorkspaceRoot: "/data/repo",
+		WorkspaceKey:  "/data/repo",
+		ShortName:     "repo",
+		Online:        true,
+		Threads: map[string]*state.ThreadRecord{
+			"thread-owner": {ThreadID: "thread-owner", Name: "owner", CWD: "/data/repo", Loaded: true},
+		},
+	})
+
+	svc.MaterializeSurface("surface-feishu", "app-1", "chat-1", "user-1")
+	svc.MaterializeSurface("surface-wecom", "wecom:bot", "chat-2", "user-2")
+	owner := svc.root.Surfaces["surface-feishu"]
+	shared := svc.root.Surfaces["surface-wecom"]
+	if !svc.transitionSurfaceRouteCore(owner, svc.root.Instances["inst-1"], surfaceRouteCoreState{
+		AttachedInstanceID: "inst-1",
+		WorkspaceKey:       "/data/repo",
+		RouteMode:          state.RouteModePinned,
+		SelectedThreadID:   "thread-owner",
+		ThreadClaimPolicy:  surfaceRouteThreadClaimVisible,
+	}) {
+		t.Fatal("expected owner attach to succeed")
+	}
+	shared.SharedAttach = true
+	shared.ClaimedWorkspaceKey = "/data/repo"
+	if !svc.transitionSurfaceRouteCore(shared, svc.root.Instances["inst-1"], surfaceRouteCoreState{
+		AttachedInstanceID: "inst-1",
+		WorkspaceKey:       "/data/repo",
+		RouteMode:          state.RouteModeNewThreadReady,
+		PreparedThreadCWD:  "/data/repo",
+	}) {
+		t.Fatal("expected shared new-thread-ready attach to succeed")
+	}
+
+	first := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-wecom",
+		MessageID:        "msg-1",
+		Text:             "first",
+	})
+	var sawCommand bool
+	for _, event := range first {
+		if event.Command != nil {
+			sawCommand = true
+		}
+	}
+	if !sawCommand {
+		t.Fatalf("expected first text to create a thread, got %#v", first)
+	}
+	commandID := "cmd-1"
+	svc.BindPendingRemoteCommand("surface-wecom", commandID)
+
+	svc.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:      agentproto.EventTurnStarted,
+		CommandID: commandID,
+		ThreadID:  "thread-created",
+		TurnID:    "turn-1",
+		Initiator: agentproto.Initiator{Kind: agentproto.InitiatorRemoteSurface, SurfaceSessionID: "surface-wecom"},
+	})
+	svc.ApplyAgentEvent("inst-1", agentproto.Event{
+		Kind:                 agentproto.EventTurnCompleted,
+		CommandID:            commandID,
+		ThreadID:             "thread-created",
+		TurnID:               "turn-1",
+		Status:               "completed",
+		Initiator:            agentproto.Initiator{Kind: agentproto.InitiatorRemoteSurface, SurfaceSessionID: "surface-wecom"},
+		TurnCompletionOrigin: agentproto.TurnCompletionOriginRuntime,
+	})
+
+	if shared.RouteMode != state.RouteModePinned || shared.SelectedThreadID != "thread-created" {
+		t.Fatalf("expected shared surface to keep created thread selected, got %#v", shared)
+	}
+	if !svc.surfaceOwnsThread(shared, "thread-created") {
+		t.Fatal("expected lease-less shared selection to remain routable")
+	}
+	second := svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-wecom",
+		MessageID:        "msg-2",
+		Text:             "continue",
+	})
+	for _, event := range second {
+		if event.Notice != nil && event.Notice.Code == "thread_not_ready" {
+			t.Fatalf("expected follow-up text to use the created thread, got %#v", second)
+		}
+	}
+}

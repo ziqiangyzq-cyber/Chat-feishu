@@ -256,7 +256,7 @@ surface 不是单一枚举，而是五层正交状态叠加。
 | --- | --- | --- |
 | `R0 Detached` | `AttachedInstanceID == ""` | 当前没有接管任何目标；headless 主链下若 gateway 配有有效 `defaultWorkspaceRoot`，首条文本/图片/文件会自动 bootstrap 到该工作区，否则表现为“未接管工作区”；`vscode` 下表现为“未接管实例” |
 | `R1 AttachedUnbound` | `AttachedInstanceID != ""`，`RouteMode=unbound`，`SelectedThreadID == ""` | 已接管目标但当前没有可发送 thread；headless 主链下通常表示“已接管 workspace、未选 thread” |
-| `R2 AttachedPinned` | `AttachedInstanceID != ""`，`RouteMode=pinned`，`SelectedThreadID != ""`，且持有 thread claim | 当前输入固定发到该 thread |
+| `R2 AttachedPinned` | `AttachedInstanceID != ""`，`RouteMode=pinned`，`SelectedThreadID != ""`，且持有 thread claim；企业微信 `SharedAttach` 例外使用同 instance/workspace 内、无冲突 exclusive claim 的 lease-less selection | 当前输入固定发到该 thread |
 | `R3 FollowWaiting` | `AttachedInstanceID != ""`，`RouteMode=follow_local`，`SelectedThreadID == ""` | 仅 `vscode` 合法：已进入 follow，但当前没有可接管 thread |
 | `R4 FollowBound` | `AttachedInstanceID != ""`，`RouteMode=follow_local`，`SelectedThreadID != ""`，且持有 thread claim | 仅 `vscode` 合法：已跟随到一个 thread |
 | `R5 NewThreadReady` | `AttachedInstanceID != ""`，`RouteMode=new_thread_ready`，`SelectedThreadID == ""`，`PreparedThreadCWD != ""` | 仅 headless 主链合法：已准备一个待 materialize 的新 thread；下一条普通文本会创建新 thread |
@@ -1148,6 +1148,8 @@ review mode 第一版当前不是新的 route state，而是挂在 surface 上�
 
 候选工作区选择、查找其它 surface 的共享接入目标，以及最终写入 shared attach 三个阶段都必须过滤到同一目标 backend。外部路径优先、内部 state 目录 fallback 的排序只在同 backend 候选内部生效，不能让路径排序覆盖 backend 约束。共享接入前还要再次核对 owner instance 在线且 `EffectiveInstanceBackend` 匹配；不匹配时回到目标 backend 的普通 workspace attach，禁止把 Codex surface 绑定到 Claude instance（反向同理）。显式保存为 Claude backend 的既有企业微信 surface 仍可选择 Claude 工作区，不强制改写成 Codex。
 
+`SharedAttach` 不写入竞争性的 instance/workspace/thread claim，但它的 pinned selection 仍是有效路由租约：要求选中 thread 在 attached instance 上可见、属于同一 workspace，且不存在不允许共享的 exclusive claim。新会话首轮一旦 materialize 出真实 thread ID，企业微信 surface 会保持该 lease-less selection；后续普通文本可直接续发，不能因为 `threadClaims` 中没有以企业微信 surface 为 owner 的记录而退回 `thread_not_ready`。
+
 ## 5. 主要状态迁移
 
 ### 5.1 attach / use / follow / new
@@ -1865,6 +1867,7 @@ retained-offline overlay 额外规则：
 45. **idle attached workspace 在服务重启或实例正常下线时仍反复发送“当前接管的工作区已离线”噪音**：已修复。`ApplyInstanceDisconnected` 仍会完整清理并 detach，但只在 surface 断线前仍有 active、queued、steer、auto-continue、compact 或 running review 等未完成远端工作时发送一条离线提示；空闲接管静默收口，active item 自带失败提示时也不会重复追加。
 46. **企业微信 detached 首条文本只按路径优先级挑在线 headless，Codex surface 会跨 backend 共享接入 Claude instance**：已修复。自动工作区选择、owner 查找与 shared attach 最终落点现在都以同一个 desired backend 过滤；新企业微信 surface 默认 Codex，显式保存为 Claude 的既有 surface 仍保持 Claude，不再因 Claude 外部目录排在 Codex 内部 pool 前而误路由并暴露无关 OAuth 错误。
 47. **新增 Agy backend 后若仍落入 Codex 的 normalize/default catalog 分支，会把 `/mode agy` 静默改回 Codex 或展示错误历史**：已修复。`Backend=agy` 现在贯穿 surface/instance/launch contract、workspace defaults、surface resume 与 managed headless launch；Agy 没有离线 catalog 时显式返回空结果，不回退 Codex catalog。执行中的 Agy turn 可由 `/stop` 结束，启动失败、断连和超时继续复用既有 `PendingHeadless` watchdog 与 detach 逃生口。
+48. **企业微信 `SharedAttach` 新会话首轮已完成并保存 `SelectedThreadID`，但因不写 exclusive thread claim，下一条文本仍被误判为未选择会话**：已修复。shared surface 的 pinned thread 在同 attached instance/workspace 内可见且无冲突 claim 时，`surfaceOwnsThread` 会把 lease-less selection 视为有效路由租约；后续文本直接续发到刚创建的 thread。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 
