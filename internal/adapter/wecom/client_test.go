@@ -77,6 +77,32 @@ func TestDispatchMessageCallbackUsesOfficialEnvelope(t *testing.T) {
 	}
 }
 
+func TestDispatchMessageCallbackPreservesBodyReqIDWhenEnvelopeOmitsIt(t *testing.T) {
+	client := NewClient(Config{})
+	var got msgCallbackFrame
+	client.onMessage = func(_ context.Context, frame msgCallbackFrame) {
+		got = frame
+	}
+
+	raw := []byte(`{
+		"cmd": "aibot_msg_callback",
+		"body": {
+			"headers": {"req_id": "req-in-body"},
+			"msgid": "msg-1",
+			"chatid": "chat-1",
+			"msgtype": "text",
+			"text": {"content": "hello"}
+		}
+	}`)
+	if err := client.dispatch(context.Background(), raw); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if got.Headers.ReqID != "req-in-body" {
+		t.Fatalf("body req_id was lost: %+v", got.Headers)
+	}
+}
+
 func TestDispatchMessageCallbackDecodesInboundMediaAndVoiceFields(t *testing.T) {
 	client := NewClient(Config{})
 	var frames []msgCallbackFrame

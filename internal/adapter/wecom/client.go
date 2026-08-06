@@ -396,7 +396,14 @@ func (c *Client) dispatch(ctx context.Context, raw []byte) error {
 		}
 		frame := wire.Body
 		frame.Cmd = wire.Cmd
-		frame.Headers = wire.Headers
+		// WeCom has emitted msg_callback frames with headers at both the
+		// envelope level and inside body. Keep the body copy when the outer
+		// envelope omits req_id; overwriting it with an empty value loses the
+		// only callback reply handle and forces later output onto the less
+		// reliable proactive-send path.
+		if strings.TrimSpace(wire.Headers.ReqID) != "" {
+			frame.Headers = wire.Headers
+		}
 		return c.handleMsgCallback(ctx, frame)
 	case frameCmdEventCallback:
 		event, err := decodeInboundCardEvent(raw)
