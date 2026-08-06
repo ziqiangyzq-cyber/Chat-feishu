@@ -31,17 +31,20 @@ func TestBuildCodexChildLaunchAddsFeishuMCPForHeadless(t *testing.T) {
 
 	args, env := app.buildCodexChildLaunch([]string{"app-server", "-c", `model="gpt-5"`})
 
-	if len(args) != 7 {
+	if len(args) != 9 {
 		t.Fatalf("expected base args plus MCP overrides, got %d args: %#v", len(args), args)
 	}
 	if args[0] != "app-server" || args[1] != "-c" || args[2] != `model="gpt-5"` {
 		t.Fatalf("expected base args to stay intact, got %#v", args[:3])
 	}
-	if args[3] != "-c" || args[4] != `mcp_servers.codex_remote_feishu.url="http://127.0.0.1:9702?codex_remote_instance_id=inst-1"` {
-		t.Fatalf("unexpected url override args: %#v", args[3:5])
+	if args[3] != "-c" || args[4] != headlessNodeREPLDisable {
+		t.Fatalf("unexpected headless isolation args: %#v", args[3:5])
 	}
-	if args[5] != "-c" || args[6] != `mcp_servers.codex_remote_feishu.bearer_token_env_var="CODEX_REMOTE_FEISHU_MCP_BEARER"` {
-		t.Fatalf("unexpected bearer override args: %#v", args[5:7])
+	if args[5] != "-c" || args[6] != `mcp_servers.codex_remote_feishu.url="http://127.0.0.1:9702?codex_remote_instance_id=inst-1"` {
+		t.Fatalf("unexpected url override args: %#v", args[5:7])
+	}
+	if args[7] != "-c" || args[8] != `mcp_servers.codex_remote_feishu.bearer_token_env_var="CODEX_REMOTE_FEISHU_MCP_BEARER"` {
+		t.Fatalf("unexpected bearer override args: %#v", args[7:9])
 	}
 	if got := lookupEnv(env, feishuMCPBearerEnvName); got != "secret-token" {
 		t.Fatalf("expected injected bearer env, got %q", got)

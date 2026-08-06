@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	feishuMCPServerID      = "codex_remote_feishu"
-	feishuMCPBearerEnvName = "CODEX_REMOTE_FEISHU_MCP_BEARER"
-	feishuMCPInstanceIDKey = "codex_remote_instance_id"
+	feishuMCPServerID       = "codex_remote_feishu"
+	feishuMCPBearerEnvName  = "CODEX_REMOTE_FEISHU_MCP_BEARER"
+	feishuMCPInstanceIDKey  = "codex_remote_instance_id"
+	headlessNodeREPLDisable = "mcp_servers.node_repl.enabled=false"
 )
 
 type childToolServiceInfo struct {
@@ -42,6 +43,11 @@ func (a *App) applyCodexFeishuMCPPublication(baseArgs, baseEnv []string) ([]stri
 	}
 	args = append(
 		args,
+		// Desktop's node_repl targets an interactive native GUI pipe. A managed
+		// remote child cannot attach to it reliably and may block thread/start.
+		// Disable it only for children that publish the remote tool service;
+		// Desktop/VS Code sessions keep their native automation capability.
+		"-c", headlessNodeREPLDisable,
 		"-c", codexMCPOverride("url", info.URL),
 		"-c", codexMCPOverride("bearer_token_env_var", feishuMCPBearerEnvName),
 	)
