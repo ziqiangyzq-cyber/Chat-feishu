@@ -354,6 +354,9 @@ func (t *Translator) buildThreadStartParams(cwd string, overrides agentproto.Pro
 	setDefault(params, "experimentalRawEvents", false)
 	setDefault(params, "dynamicTools", nil)
 	applyPromptOverridesToThreadStart(params, overrides)
+	if lookupStringFromAny(params["model"]) == "" && strings.TrimSpace(t.defaultModel) != "" {
+		params["model"] = strings.TrimSpace(t.defaultModel)
+	}
 	return params
 }
 

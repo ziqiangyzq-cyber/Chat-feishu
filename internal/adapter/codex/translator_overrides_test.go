@@ -121,8 +121,8 @@ func TestTranslatePromptSendNewThreadPlanModeOffBuildsCompleteCollaborationMode(
 		t.Fatalf("unmarshal thread/start: %v", err)
 	}
 	threadParams, _ := threadStart["params"].(map[string]any)
-	if lookupStringFromAny(threadParams["model"]) != "" {
-		t.Fatalf("configured fallback must not override native thread/start resolution, got %#v", threadParams)
+	if lookupStringFromAny(threadParams["model"]) != "gpt-config-default" {
+		t.Fatalf("expected configured fallback in thread/start, got %#v", threadParams)
 	}
 
 	result, err := tr.ObserveServer([]byte(`{"id":"relay-thread-start-0","result":{"thread":{"id":"thread-created"},"model":"gpt-config-default"}}`))

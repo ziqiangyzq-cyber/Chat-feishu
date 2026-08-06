@@ -7,7 +7,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 )
 
-func TestTranslatePromptSendDoesNotInjectResolvedDefaultIntoThreadStart(t *testing.T) {
+func TestTranslatePromptSendInjectsResolvedDefaultIntoThreadStart(t *testing.T) {
 	tr := NewTranslator("inst-1")
 	tr.SetDefaultModel("gpt-config-default")
 
@@ -16,8 +16,8 @@ func TestTranslatePromptSendDoesNotInjectResolvedDefaultIntoThreadStart(t *testi
 		t.Fatalf("translate command: %v", err)
 	}
 	params := decodeCommandParams(t, commands[0])
-	if model := lookupStringFromAny(params["model"]); model != "" {
-		t.Fatalf("bootstrap default leaked into thread/start model: %q", model)
+	if model := lookupStringFromAny(params["model"]); model != "gpt-config-default" {
+		t.Fatalf("thread/start model = %q, want resolved bootstrap default", model)
 	}
 }
 
