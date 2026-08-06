@@ -8,6 +8,7 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 	"github.com/kxn/codex-remote-feishu/internal/debuglog"
 	"github.com/kxn/codex-remote-feishu/internal/execlaunch"
+	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
 )
 
 func (a *App) launchAgyChildSession(ctx context.Context, rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo), resume *claudeLaunchResumeTarget) (*childSession, error) {
@@ -17,6 +18,7 @@ func (a *App) launchAgyChildSession(ctx context.Context, rawLogger *debuglog.Raw
 		childCancel()
 		return nil, err
 	}
+	binary = relayruntime.StableLaunchBinaryPath(os.Args[0], binary)
 	args := []string{"agy-bridge", "--cwd", a.config.WorkspaceRoot}
 	if resume != nil && strings.TrimSpace(resume.ThreadID) != "" {
 		args = append(args, "--conversation", strings.TrimSpace(resume.ThreadID))

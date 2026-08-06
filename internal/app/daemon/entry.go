@@ -136,7 +136,7 @@ func RunMainWithArgs(ctx context.Context, args []string, version, branch string)
 	}
 	baseEnv := buildDaemonHeadlessBaseEnv(os.Environ(), capturedProxyEnv)
 	app.SetHeadlessRuntime(HeadlessRuntimeConfig{
-		BinaryPath: identity.BinaryPath,
+		BinaryPath: relayruntime.StableLaunchBinaryPath(os.Args[0], identity.BinaryPath),
 		ConfigPath: cfg.ConfigPath,
 		BaseEnv:    baseEnv,
 		Paths:      paths,
