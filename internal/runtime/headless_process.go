@@ -8,6 +8,7 @@ import (
 const (
 	HeadlessLaunchModeAppServer       = "app-server"
 	HeadlessLaunchModeClaudeAppServer = "claude-app-server"
+	HeadlessLaunchModeAgyAppServer    = "agy-app-server"
 )
 
 type HeadlessLaunchOptions struct {
@@ -44,6 +45,8 @@ func normalizeHeadlessLaunchMode(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case HeadlessLaunchModeClaudeAppServer:
 		return HeadlessLaunchModeClaudeAppServer
+	case HeadlessLaunchModeAgyAppServer:
+		return HeadlessLaunchModeAgyAppServer
 	default:
 		return HeadlessLaunchModeAppServer
 	}

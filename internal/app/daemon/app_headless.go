@@ -237,8 +237,11 @@ func (a *App) handleManagedHeadlessLaunchFailure(command control.DaemonCommand, 
 }
 
 func headlessLaunchModeForBackend(backend agentproto.Backend) string {
-	if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
+	switch agentproto.NormalizeBackend(backend) {
+	case agentproto.BackendClaude:
 		return relayruntime.HeadlessLaunchModeClaudeAppServer
+	case agentproto.BackendAgy:
+		return relayruntime.HeadlessLaunchModeAgyAppServer
 	}
 	return relayruntime.HeadlessLaunchModeAppServer
 }

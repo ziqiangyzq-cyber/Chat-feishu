@@ -1,7 +1,7 @@
 # Remote Surface 核心状态机
 
 > Type: `general`
-> Updated: `2026-07-23`
+> Updated: `2026-08-06`
 > Summary: 当前实现同步了 workspace-aware headless 主链与 vscode 主链，并把当前 live 的 backend-aware 可见命令面收口到新的投影：`codex` 继续以 `workspace` 命令族作为主展示壳，`claude` 当前 live 实现也把 `switch_target` 收口到同一套 `/workspace` 父页与 `切换 / 从目录新建 / 从 GIT URL 新建 / 从 Worktree 新建 / 解除接管` 五个入口，`current_work` 继续保留 `/new` 等当前工作动作，`常用工具` 继续收口到 `/history` 与 `/sendfile`；`/list`、`/use`、裸 `/detach` 则退回 hidden + allow 兼容 alias。`send_settings` 则改成 backend 互斥入口：`codex headless` 可见 `/codexprovider`，`claude headless` 可见 `/claudeprofile`，`vscode` 两者都隐藏，且手动输入错误 backend 的命令也会显式拒绝。`/list` `/use` / target picker / workspace recency 全部只按当前 backend 过滤，且不再因为 surface/instance `ClaudeProfileID` 不同而隐藏 Claude workspace/session 候选；同时工作区一旦确定，`/workspace list` 与 alias `/list` 现在会把 `新建会话` 置顶并默认选中，`/use`、`/useall` 与锁定工作区的恢复 picker 则继续保留 `新建会话` fallback。2026-06-05 的补充是：headless auto-resume 的运行态只在真实恢复目标身份变化时重置 backoff / last notice，标题、更新时间等非目标元数据刷新不会把同一失败 episode 重新刷成新失败；auto-restore 启动的 managed headless 一旦连回，若 exact-thread 接管失败，也会立刻终止本轮 `PendingHeadless`、kill 这次拉起的 headless，并保留持久化恢复目标等待后续 backoff 重试。2026-05-31 的补充是：headless auto-resume 现在把“恢复 episode 的稳定失败根因”与“后续 retry 观测到的派生 busy/not_found 状态”分开记账；provider/profile/runtime 这类启动前失败会保留为本轮恢复的 canonical cause，并且只有在真正恢复成功或 target 改变后才会清空，因此后续 retry 不会再把用户提示改写成误导性的 workspace/thread busy，也不会对同一根因重复刷失败卡。2026-05-01 的新变化是：headless attach/reuse/restart/create/reject 已进一步收口成单一路径，visible 与 compatibility 继续拆层，但所有 consumer 现在都共享同一个 `desired surface contract vs observed instance contract` 解析核。结果是：
 > 1. visible 但 contract mismatch 的 workspace/session 仍然可见，不会再被 `/list`、`/use`、workspace recency、target picker 直接吞掉；
 > 2. 这些 mismatch 候选不会再假装“可直接接管”；
@@ -12,6 +12,8 @@
 > `claude <-> codex` 的 headless backend 互切现在统一锚定当前工作区目录：只要切换前已有当前 workspace，surface 就会保留这份 workspace claim，并优先 attach 目标 backend 下同 workspace 的兼容在线实例；若只剩 incompatible managed headless，则会 restart 成匹配合同；若没有兼容实例，则会 fresh-start matching managed headless，并保留原来的 unbound / new-thread-ready / exact-thread continuation 意图。进入 Claude workspace 时，surface 会按 `workspace+profile` 快照恢复飞书临时 `reasoning / access` override；`plan` 不写入也不恢复这套快照，surface resume 也不跨 daemon 恢复 `PlanMode`，而 `/status` 会把“最近观察到的当前会话权限/模式”和“下条飞书消息的实际 override”分开投影。2026-05-02 的新变化是：Claude headless 的 `/reasoning` 也正式并入 headless launch contract，queue item / auto-continue / review apply 都会冻结各自目标 reasoning；真正 dispatch 前统一比较 `desired launch contract` 与 wrapper hello 上报的 observed runtime contract，若不一致则进入 `PendingHeadless(Purpose=prompt_dispatch_restart)`，由 daemon 显式 `kill + start headless`，实例重新 attach 后再自动继续原 dispatch。`/access` 与 `/plan` 仍保留动态 permission-mode 通道，不被并入这条 restart-only 合同；其中显式 `/access` override 还会额外写入 `workspace+profile` 快照，而 `plan` 不会。Codex provider 切换也已并入同一条 surface 级 headless 重启主链，切换时会沿用与 Claude profile 相同的 request-gate / busy-gate / current-workspace continuation 规则；idle detached 只改当前 surface 的 provider，workspace 内切换则会直接重启或 fresh-start 当前工作区。其余能力仍保持此前基线：headless 的被动恢复入口（attach unbound、`selected_thread_lost`、`thread_claim_lost`）统一回到“锁定当前工作区”的 target picker，不再回退旧 scoped selection prompt；VS Code `/list` / `/use` / `/useall` 继续走结构化实例/线程卡，其中线程选择统一成当前实例内的 dropdown，并隐藏不可切换会话、改用 plain-text 提示说明。surface-level backend seam 也已正式落成真实状态：headless 下区分 `codex` / `claude` 两个 backend，workspace defaults、surface resume 与 detached catalog context 都按 backend 分区，`/mode` 的底层语义收口成 `codex|claude|vscode`，其中 `normal` 仍作为 `codex` 的兼容 alias。另一个新变化是把上游 runtime 问题自动继续从 `autowhip` 中拆成独立 `autocontinue` overlay：它由 orchestrator 本地 codex/gateway error-family policy 驱动，拥有自己的 queue lane、reply anchor、tail-only 状态卡与 backoff，不再和“正常结束后继续催活”混用；request gate 现在还补上了 `item/tool/call` 的最小 fail-closed 分支：relay / Feishu / headless 会展示只读 `tool_callback` 提示，并立即自动回写 unsupported 结构化结果，避免 tool 在中途 silent hang；同时 detached-branch 产品入口已经正式接上：普通文本里的 `[什么？]` / `[耸肩摊手]` 会分别触发 `fork_ephemeral` / `start_ephemeral`，统一复用 `keep_surface_selection`，且不会再让 detour turn 污染当前 surface 默认 thread；review mode 的 detached review session 也已接入同一条远端状态机：review thread 会带显式 `source=review` / parent-thread 元数据，surface 会在不改绑当前选中 thread 的前提下记录 `ReviewSession` runtime，并把后续审阅文本继续路由到 review thread；与此同时，普通 attach/list/use 候选现在会显式排除 `source=review` 会话，不再把 detached review thread 混进 merged thread list、current-instance dropdown 或 workspace recency。本轮还把 `process.child.restart` 收口成“两段式 restart 合同”：`ack` 只代表新 child 已接管，thread restore 结果改由独立 outcome event 回传，daemon 会对 `/bendtomywill` 与 standalone Codex upgrade 统一等待最终 outcome，因此 late restore 不会再把 patch / upgrade 误判成已失败或已完成。2026-05-06 的补充是：Claude wrapper 在“当前 child 已经 `--resume` 到某个旧 session”时，如果 surface 明确要求 `PromptExecutionMode=start_new + threadID=""`，会先把 child 重启成 fresh launch，再清掉旧的 expected-resume 影子状态，确保 `/new` 的首条消息不会重新落回被恢复的旧 Claude session。同一轮里，remote-surface 的 execution lifecycle 也已明确拆成两个 sibling seam：dispatch core 统一 owner `DispatchMode / ActiveQueueItemID / QueuedQueueItemIDs / pendingRemote / activeRemote`，recovery core 统一 owner `PendingHeadless / headless attach-fail-expire / disconnect-degraded-timeout teardown`；`prompt_dispatch_restart` 只保留显式 handshake，不再让 queue/recovery 在业务路径里平行散写同一批 carrier。注意：2026-04-29 新拍板的下一轮 Claude MVP 产品边界不再由本文定义，而改以 [Claude Backend Integration Plan](../inprogress/claude-backend-integration-plan.md) 第 `7.6` / `12.1` 节为准；本文仍只记录当前 live 实现。
 
 ## 1. 文档定位
+
+2026-08-06 增加第三个 headless backend `agy`：`/mode agy`（兼容别名 `/mode antigravity`）与 `codex`、`claude` 共用 workspace claim、`PendingHeadless`、queue、detach 和恢复主链，但通过独立 `agy-app-server` 启动。wrapper 内部把 `agy --print --output-format stream-json` 的 conversation ID、文本增量、Token 与完成态转换成统一 relay event；`/new` 创建新 conversation，已有 conversation 可按 ID 续接，`/stop` 终止当前 CLI 子进程。Agy 当前不声明 persisted session catalog、active-turn steer 或交互式 request-response 能力，因此离线历史不会混入 Codex/Claude catalog，执行中追加消息进入普通队列。
 
 这份文档描述的是**当前代码已经实现**的 remote surface 状态机，不是历史问题列表，也不是未来方案草稿。
 
@@ -129,7 +131,8 @@ surface 不是单一枚举，而是五层正交状态叠加。
 | --- | --- | --- |
 | `M0 HeadlessCodex` | `ProductMode=normal`，`Backend=codex` | headless 主链的 Codex 分支；也是新 surface 默认值。当前会开启 workspace claim 仲裁，并把已占用 workspace 投影到 `/status` |
 | `M1 HeadlessClaude` | `ProductMode=normal`，`Backend=claude` | headless 主链的 Claude 分支。workspace defaults、surface resume 与 detached catalog context 都按 Claude backend 分区；surface 还会额外携带当前 `ClaudeProfileID`，并按 `workspace+profile` 恢复飞书显式 `reasoning / access` override；`plan` 不从这套快照恢复；不进入 VS Code 语义，但已经共享 headless exact-thread 恢复主链，并在需要时通过 Claude 原生 `--resume` 恢复旧 session |
-| `M2 VSCode` | `ProductMode=vscode`，`Backend=codex` | VS Code 专属分支；只能显式 `/mode vscode` 进入。当前不参与 workspace claim，仍保留既有 instance/thread-first 路由语义 |
+| `M2 HeadlessAgy` | `ProductMode=normal`，`Backend=agy` | headless 主链的 Antigravity 分支；workspace defaults 与 surface resume 按 `agy` 独立分区，通过 conversation ID 恢复当前会话；当前不扫描离线历史 catalog，不支持 active-turn steer 或交互式 permission request |
+| `M3 VSCode` | `ProductMode=vscode`，`Backend=codex` | VS Code 专属分支；只能显式 `/mode vscode` 进入。当前不参与 workspace claim，仍保留既有 instance/thread-first 路由语义 |
 
 补充说明：
 
@@ -164,11 +167,11 @@ surface 不是单一枚举，而是五层正交状态叠加。
       4. 若当前还没有新的 VS Code 活动可继续 follow，会保留 follow waiting，并明确提示用户去 VS Code 再说一句话或手动 `/use`。
       5. `vscode` 不会参与 managed-headless exact-thread continuation；`surface resume state` 在 load/write 时也会把所有非 headless entry（当前即 `ProductMode!=normal`）的 `ResumeHeadless` 强制归零，因此 `vscode` surface 不会保留可继续触发这条恢复分支的持久化目标。
 3. `/mode` 当前只在没有 live remote work 的 surface 上执行切换：
-   1. 接受 `normal|codex|claude|vscode` 四种字面值；其中 `normal` 是 `codex` 的兼容 alias。
-   2. `codex = Backend=codex + ProductMode=normal`，`claude = Backend=claude + ProductMode=normal`，`vscode = Backend=codex + ProductMode=vscode`。
+   1. 接受 `normal|codex|claude|agy|antigravity|vscode` 六种字面值；其中 `normal` 是 `codex` 的兼容 alias，`antigravity` 是 `agy` 的兼容 alias。
+   2. `codex = Backend=codex + ProductMode=normal`，`claude = Backend=claude + ProductMode=normal`，`agy = Backend=agy + ProductMode=normal`，`vscode = Backend=codex + ProductMode=vscode`。
    1. 会先走 detach-like 清理。
    2. 清掉 attachment / workspace claim / thread claim、`PromptOverride`、`PendingRequest`、`RequestCapture`、`PreparedThread*`、staged image / staged file 与 queued draft。
-   3. 如果切换前后都处于 headless 主链（当前 persisted token 仍是 `ProductMode=normal`），且 backend 发生了 `codex <-> claude` 变化，只要切换前已经存在当前 workspace，则 surface 会恢复这份 workspace claim，并立即优先 attach 目标 backend 下同 workspace 的在线 instance；若当前还没有可 attach 的目标 backend instance，则直接启动 fresh managed headless，并保留 `new_thread_ready` 意图，而不是停在 detached idle。Claude fresh headless 仍会显式走 `claude-app-server`，而不是复用 Codex `app-server` 入口再靠 env 猜 backend。
+   3. 如果切换前后都处于 headless 主链，且 backend 在 `codex / claude / agy` 之间变化，只要切换前已经存在当前 workspace，则 surface 会恢复这份 workspace claim，并立即优先 attach 目标 backend 下同 workspace 的在线 instance；若当前还没有可 attach 的目标 backend instance，则直接启动 fresh managed headless，并保留 `new_thread_ready` 意图，而不是停在 detached idle。Claude 与 Antigravity 分别显式走 `claude-app-server` 与 `agy-app-server`。
    4. 如果切换前后发生了 backend 或 `ProductMode` 变化，会清掉 `surface resume state` 里的旧 resume target，避免 `codex` / `claude` 之间串恢复。
    5. 如果当时还带着 `PendingHeadless`，会先显式 kill 当前 headless 启动流程，并清掉 `surface resume state` 里的 headless 恢复目标与内存恢复状态。
 4. 若当前仍有 live remote work，则 `/mode` 直接拒绝，并明确提示用户 `/stop` 或 `/detach`。
@@ -186,7 +189,7 @@ surface 不是单一枚举，而是五层正交状态叠加。
    2. 当前 running turn、已入队消息、当前 turn 的 `/steer` 与 reply auto-steer 都不受新设置追溯改写。
    3. headless 主链的 queue item 会在入队时冻结 `PlanMode`，dispatch `turn/start` 时再把它落到 `PromptOverrides.PlanMode -> collaborationMode.mode=plan/default`；只要下发 `collaborationMode`，wrapper 就必须同时携带完整 `settings(model / reasoning_effort / developer_instructions)`。其中 `model` 是必填字符串，按显式 override、目标 thread 最近一次权威/本地观察值、当前选中模板值、child bootstrap `config/read` 返回的当前 cwd 有效默认值依次解析；全部为空时 fail-closed，不得发送空字符串或 `null`。目标 thread 的值由该 thread 的 `thread/start|resume` 成功响应或后续本地 `turn/start` 按观察顺序更新，跨 thread 的最近模板只能兜底，不能覆盖目标 thread。其余未显式覆盖的可空字段继续用 native `null` 交还 Codex 当前线程配置与内置模式指令处理。
    4. `vscode` 主链属于 shared-authority：只有用户显式 `/plan on|off` 后才会冻结 `PlanMode`；若未设置或已 `/plan clear`，queue item 的 `FrozenPlanMode` 保持 empty，dispatch 时不下发 plan override，让 VS Code/backend 保持当前状态。
-   5. `/detach`、`/new`、`/use`、`/mode normal|codex|claude|vscode` 不会顺手清掉当前内存里的 `PlanMode`；daemon 重启后，latent surface 不再从 `surface resume state` 恢复 `PlanMode`，旧持久化 entry 里的 `planMode` 会被忽略并在下一次保存时清理。
+   5. `/detach`、`/new`、`/use`、`/mode normal|codex|claude|agy|vscode` 不会顺手清掉当前内存里的 `PlanMode`；daemon 重启后，latent surface 不再从 `surface resume state` 恢复 `PlanMode`，旧持久化 entry 里的 `planMode` 会被忽略并在下一次保存时清理。
    6. 在 `claude` 模式下，`PlanMode` 也不进入 `workspace+profile` 快照：
       1. 进入某个 Claude workspace 时，会按 `workspace + ClaudeProfileID` 恢复最近一次飞书临时 `ReasoningEffort / AccessMode` 覆盖。
       2. 离开该 workspace 或切走该 profile 前，会把当前显式 `ReasoningEffort / AccessMode` 覆盖写回独立的 `workspace+profile` 持久化 store。
@@ -1473,7 +1476,7 @@ G1 PendingHeadlessStarting
   -- instance connected 且 pending.ThreadID != "" 且 auto-restore --> R2 AttachedPinned + G0 None + 单条恢复成功 notice
   -- instance connected 且 pending.ThreadID != "" 且 auto-restore exact-thread 接管失败 --> kill headless + clear pending + R0 Detached + 单条恢复失败 notice
   -- instance connected 且 pending.ThreadID == "" 且也不是 fresh_workspace（仅历史兼容兜底） --> kill headless + generic notice + G0 None
-  -- /mode codex|claude|vscode（目标 backend 或 ProductMode 发生变化） --> kill headless + clear persisted resume target + G0 None + R0 Detached(目标 mode/backend)
+  -- /mode codex|claude|agy|vscode（目标 backend 或 ProductMode 发生变化） --> kill headless + clear persisted resume target + G0 None + R0 Detached(目标 mode/backend)
   -- /detach --> kill headless + G0 None + R0 Detached
   -- Tick timeout --> kill headless + clear pending + detach if needed
 ```
@@ -1770,7 +1773,8 @@ retained-offline overlay 额外规则：
 2. `/mode normal`
 3. `/mode codex`
 4. `/mode claude`
-5. `/mode vscode`
+5. `/mode agy`
+6. `/mode vscode`
 
 这些字面值都映射到 `ActionModeCommand`，由服务端在当前 surface 上解释并决定是否执行切换。
 
@@ -1860,6 +1864,7 @@ retained-offline overlay 额外规则：
 44. **thread A 的全局最近模板或 child restart 前旧模板覆盖 thread B / 新一代 resume 响应的实际 model，导致请求发往错误模型**：已修复。wrapper 现在把 server 成功响应与同 thread 后续本地模板观察统一写入按事件顺序更新的 thread model 记录；目标 thread 记录优先于全局/旧代模板，跨 thread 模板只在目标 thread 尚无 model 事实时兜底。
 45. **idle attached workspace 在服务重启或实例正常下线时仍反复发送“当前接管的工作区已离线”噪音**：已修复。`ApplyInstanceDisconnected` 仍会完整清理并 detach，但只在 surface 断线前仍有 active、queued、steer、auto-continue、compact 或 running review 等未完成远端工作时发送一条离线提示；空闲接管静默收口，active item 自带失败提示时也不会重复追加。
 46. **企业微信 detached 首条文本只按路径优先级挑在线 headless，Codex surface 会跨 backend 共享接入 Claude instance**：已修复。自动工作区选择、owner 查找与 shared attach 最终落点现在都以同一个 desired backend 过滤；新企业微信 surface 默认 Codex，显式保存为 Claude 的既有 surface 仍保持 Claude，不再因 Claude 外部目录排在 Codex 内部 pool 前而误路由并暴露无关 OAuth 错误。
+47. **新增 Agy backend 后若仍落入 Codex 的 normalize/default catalog 分支，会把 `/mode agy` 静默改回 Codex 或展示错误历史**：已修复。`Backend=agy` 现在贯穿 surface/instance/launch contract、workspace defaults、surface resume 与 managed headless launch；Agy 没有离线 catalog 时显式返回空结果，不回退 Codex catalog。执行中的 Agy turn 可由 `/stop` 结束，启动失败、断连和超时继续复用既有 `PendingHeadless` watchdog 与 detach 逃生口。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 

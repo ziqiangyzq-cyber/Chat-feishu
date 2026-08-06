@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/kxn/codex-remote-feishu/internal/app/agybridge"
 	"github.com/kxn/codex-remote-feishu/internal/app/daemon"
 	"github.com/kxn/codex-remote-feishu/internal/app/install"
 	"github.com/kxn/codex-remote-feishu/internal/app/wrapper"
@@ -32,6 +33,7 @@ type RunnerSet struct {
 	RunService              func([]string, io.Reader, io.Writer, io.Writer, string) error
 	RunUpgradeHelper        func([]string, io.Reader, io.Writer, io.Writer, string) error
 	RunWrapper              func(context.Context, []string, io.Reader, io.Writer, io.Writer, string, string) (int, error)
+	RunAgyBridge            func(context.Context, []string, io.Reader, io.Writer, io.Writer) error
 }
 
 func Main(opts Options) int {
@@ -115,6 +117,12 @@ func Main(opts Options) int {
 			return exitCode
 		}
 		return exitCode
+	case RoleAgyBridge:
+		if err := opts.Runners.RunAgyBridge(ctx, decision.Args, opts.Stdin, opts.Stdout, opts.Stderr); err != nil && err != context.Canceled {
+			_, _ = fmt.Fprintf(opts.Stderr, "agy bridge error: %v\n", err)
+			return 1
+		}
+		return 0
 	default:
 		_, _ = fmt.Fprintf(opts.Stderr, "error: unhandled role %q\n", decision.Role)
 		return 1
@@ -164,6 +172,9 @@ func withDefaults(opts Options) Options {
 	if opts.Runners.RunWrapper == nil {
 		opts.Runners.RunWrapper = wrapper.RunMain
 	}
+	if opts.Runners.RunAgyBridge == nil {
+		opts.Runners.RunAgyBridge = agybridge.RunMain
+	}
 	return opts
 }
 
@@ -178,8 +189,10 @@ func usageText() string {
   codex-remote service <subcommand> [flags]
   codex-remote app-server [codex app-server args...]
   codex-remote claude-app-server [claude app-server args...]
+  codex-remote agy-app-server
   codex-remote wrapper app-server [codex app-server args...]
   codex-remote wrapper claude-app-server [claude app-server args...]
+  codex-remote wrapper agy-app-server
   codex-remote version
   codex-remote --version
   codex-remote --version-detail
@@ -187,7 +200,7 @@ func usageText() string {
 
 Notes:
   - no arguments defaults to service mode
-  - wrapper role supports Codex and Claude app-server modes
+  - wrapper role supports Codex, Claude, and Antigravity app-server modes
   - unknown top-level commands do not fall through to wrapper
 `
 }

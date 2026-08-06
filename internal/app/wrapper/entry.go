@@ -12,13 +12,15 @@ func RunMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	backend := agentproto.BackendCodex
 	switch {
 	case len(args) == 0:
-		return 2, fmt.Errorf("wrapper role requires app-server or claude-app-server mode")
+		return 2, fmt.Errorf("wrapper role requires app-server, claude-app-server, or agy-app-server mode")
 	case args[0] == "app-server":
 		backend = agentproto.BackendCodex
 	case args[0] == "claude-app-server":
 		backend = agentproto.BackendClaude
+	case args[0] == "agy-app-server":
+		backend = agentproto.BackendAgy
 	default:
-		return 2, fmt.Errorf("wrapper role only supports app-server or claude-app-server mode")
+		return 2, fmt.Errorf("wrapper role only supports app-server, claude-app-server, or agy-app-server mode")
 	}
 
 	cfg, err := LoadConfig(args, version, branch)

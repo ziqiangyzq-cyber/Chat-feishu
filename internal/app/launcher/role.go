@@ -16,6 +16,7 @@ const (
 	RoleService              Role = "service"
 	RoleUpgradeHelper        Role = "upgrade_helper"
 	RoleWrapper              Role = "wrapper"
+	RoleAgyBridge            Role = "agy_bridge"
 )
 
 type Decision struct {
@@ -25,7 +26,7 @@ type Decision struct {
 
 func isWrapperMode(mode string) bool {
 	switch mode {
-	case "app-server", "claude-app-server":
+	case "app-server", "claude-app-server", "agy-app-server":
 		return true
 	default:
 		return false
@@ -58,15 +59,17 @@ func Detect(args []string) (Decision, error) {
 		return Decision{Role: RoleService, Args: args[1:]}, nil
 	case "upgrade-helper":
 		return Decision{Role: RoleUpgradeHelper, Args: args[1:]}, nil
+	case "agy-bridge":
+		return Decision{Role: RoleAgyBridge, Args: args[1:]}, nil
 	case "wrapper":
 		if len(args) < 2 {
-			return Decision{}, usageError("wrapper requires app-server or claude-app-server arguments")
+			return Decision{}, usageError("wrapper requires app-server, claude-app-server, or agy-app-server arguments")
 		}
 		if !isWrapperMode(args[1]) {
-			return Decision{}, usageError("wrapper only supports app-server or claude-app-server mode")
+			return Decision{}, usageError("wrapper only supports app-server, claude-app-server, or agy-app-server mode")
 		}
 		return Decision{Role: RoleWrapper, Args: args[1:]}, nil
-	case "app-server", "claude-app-server":
+	case "app-server", "claude-app-server", "agy-app-server":
 		return Decision{Role: RoleWrapper, Args: args}, nil
 	default:
 		return Decision{}, usageError(fmt.Sprintf("unsupported command: %s", args[0]))

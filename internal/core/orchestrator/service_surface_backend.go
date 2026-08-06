@@ -33,6 +33,8 @@ func (s *Service) setSurfaceDesiredContract(surface *state.SurfaceConsoleRecord,
 		// remembered headless selections untouched so mode switches can reuse them.
 	case contract.Backend == agentproto.BackendClaude:
 		surface.ClaudeProfileID = contract.ClaudeProfileID
+	case contract.Backend == agentproto.BackendAgy:
+		// Antigravity currently has no additional per-surface profile binding.
 	default:
 		surface.CodexProviderID = contract.CodexProviderID
 	}
@@ -116,6 +118,8 @@ func (s *Service) surfaceWorkspaceDefaultsContract(surface *state.SurfaceConsole
 				return observed
 			}
 			return state.ClaudeInstanceBackendContract("")
+		case agentproto.BackendAgy:
+			return state.AgyInstanceBackendContract()
 		default:
 			if desired.Backend == agentproto.BackendCodex && state.EffectiveSurfaceCodexProviderID(desired) != "" {
 				return state.CodexInstanceBackendContract(state.EffectiveSurfaceCodexProviderID(desired))

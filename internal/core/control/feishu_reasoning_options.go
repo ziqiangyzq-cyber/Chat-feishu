@@ -7,6 +7,14 @@ import (
 )
 
 func ReasoningOptionsForBackend(backend agentproto.Backend) []FeishuCommandOption {
+	if agentproto.NormalizeBackend(backend) == agentproto.BackendAgy {
+		return []FeishuCommandOption{
+			commandOption("/reasoning", "reasoning", "low", "low", "把后续消息切到 low 推理，直到 clear 或接管清理。"),
+			commandOption("/reasoning", "reasoning", "medium", "medium", "把后续消息切到 medium 推理，直到 clear 或接管清理。"),
+			commandOption("/reasoning", "reasoning", "high", "high", "把后续消息切到 high 推理，直到 clear 或接管清理。"),
+			commandOption("/reasoning", "reasoning", "clear", "clear", "清除临时推理强度覆盖。"),
+		}
+	}
 	if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
 		return []FeishuCommandOption{
 			commandOption("/reasoning", "reasoning", "low", "low", "把后续飞书消息切到 low 推理，直到 clear 或接管清理。"),
@@ -35,6 +43,13 @@ func NormalizeReasoningEffortForBackend(backend agentproto.Backend, value string
 		default:
 			return "", false
 		}
+	case agentproto.BackendAgy:
+		switch effort {
+		case "low", "medium", "high":
+			return effort, true
+		default:
+			return "", false
+		}
 	default:
 		switch effort {
 		case "low", "medium", "high", "xhigh":
@@ -46,6 +61,9 @@ func NormalizeReasoningEffortForBackend(backend agentproto.Backend, value string
 }
 
 func ReasoningEffortHintForBackend(backend agentproto.Backend) string {
+	if agentproto.NormalizeBackend(backend) == agentproto.BackendAgy {
+		return "`low`、`medium` 或 `high`"
+	}
 	if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
 		return "`low`、`medium`、`high` 或 `max`"
 	}

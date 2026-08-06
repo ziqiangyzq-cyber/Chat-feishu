@@ -1,6 +1,7 @@
 package wrapper
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,33 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/adapter/claude"
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
 )
+
+func TestAgyBackendRuntimeTranslatesPromptWithAgyConfig(t *testing.T) {
+	runtime := &agyBackendRuntime{
+		translator:    claude.NewTranslator("inst-agy"),
+		workspaceRoot: t.TempDir(),
+	}
+	result, err := runtime.TranslateCommand(agentproto.Command{
+		CommandID: "cmd-agy-1",
+		Kind:      agentproto.CommandPromptSend,
+		Prompt:    agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+		Overrides: agentproto.PromptOverrides{Model: "gemini-test", ReasoningEffort: "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Phases) != 2 || len(result.Phases[1].OutboundToChild) != 2 {
+		t.Fatalf("unexpected agy phases: %#v", result.Phases)
+	}
+	var configFrame map[string]any
+	if err := json.Unmarshal(result.Phases[1].OutboundToChild[0], &configFrame); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := configFrame["request"].(map[string]any)
+	if request["subtype"] != "agy_config" || request["model"] != "gemini-test" || request["effort"] != "high" {
+		t.Fatalf("unexpected agy config frame: %#v", configFrame)
+	}
+}
 
 func TestClaudeBackendRuntimeRestartPlanUsesPersistedResumeTarget(t *testing.T) {
 	configDir := t.TempDir()

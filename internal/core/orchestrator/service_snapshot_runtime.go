@@ -98,6 +98,8 @@ func (s *Service) MaterializeSurfaceResume(surfaceID, gatewayID, chatID, actorUs
 		contract = state.VSCodeSurfaceBackendContract()
 	} else if agentproto.NormalizeBackend(backend) == agentproto.BackendClaude {
 		contract = state.HeadlessClaudeSurfaceBackendContract(claudeProfileID)
+	} else if agentproto.NormalizeBackend(backend) == agentproto.BackendAgy {
+		contract = state.HeadlessAgySurfaceBackendContract()
 	} else {
 		contract = state.HeadlessCodexSurfaceBackendContract("")
 	}

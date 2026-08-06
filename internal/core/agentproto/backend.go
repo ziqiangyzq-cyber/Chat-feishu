@@ -7,12 +7,15 @@ type Backend string
 const (
 	BackendCodex  Backend = "codex"
 	BackendClaude Backend = "claude"
+	BackendAgy    Backend = "agy"
 )
 
 func NormalizeBackend(value Backend) Backend {
 	switch strings.ToLower(strings.TrimSpace(string(value))) {
 	case string(BackendClaude):
 		return BackendClaude
+	case string(BackendAgy), "antigravity":
+		return BackendAgy
 	default:
 		return BackendCodex
 	}
@@ -22,6 +25,8 @@ func BackendDisplayName(backend Backend) string {
 	switch NormalizeBackend(backend) {
 	case BackendClaude:
 		return "Claude"
+	case BackendAgy:
+		return "Antigravity"
 	default:
 		return "Codex"
 	}
@@ -35,6 +40,11 @@ func DefaultCapabilitiesForBackend(backend Backend) Capabilities {
 			TurnSteer:            true,
 			RequestRespond:       true,
 			SessionCatalog:       true,
+			ResumeByThreadID:     true,
+			RequiresCWDForResume: true,
+		}
+	case BackendAgy:
+		return Capabilities{
 			ResumeByThreadID:     true,
 			RequiresCWDForResume: true,
 		}

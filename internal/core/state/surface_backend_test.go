@@ -24,6 +24,7 @@ func TestSurfaceModeAlias(t *testing.T) {
 	}{
 		{name: "codex headless", mode: ProductModeNormal, backend: agentproto.BackendCodex, want: "codex"},
 		{name: "claude headless", mode: ProductModeNormal, backend: agentproto.BackendClaude, want: "claude"},
+		{name: "agy headless", mode: ProductModeNormal, backend: agentproto.BackendAgy, want: "agy"},
 		{name: "vscode forces codex alias", mode: ProductModeVSCode, backend: agentproto.BackendClaude, want: "vscode"},
 	}
 	for _, tc := range tests {
@@ -32,6 +33,20 @@ func TestSurfaceModeAlias(t *testing.T) {
 				t.Fatalf("SurfaceModeAlias(%q, %q) = %q, want %q", tc.mode, tc.backend, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHeadlessAgyContractDoesNotInheritProviderBindings(t *testing.T) {
+	contract := NormalizeSurfaceBackendContract(SurfaceBackendContract{
+		ProductMode: ProductModeNormal, Backend: agentproto.BackendAgy,
+		CodexProviderID: "team-proxy", ClaudeProfileID: "devseek",
+	})
+	if contract.Backend != agentproto.BackendAgy || contract.CodexProviderID != "" || contract.ClaudeProfileID != "" {
+		t.Fatalf("unexpected agy surface contract: %#v", contract)
+	}
+	launch := HeadlessLaunchContractFromSurface(&SurfaceConsoleRecord{ProductMode: ProductModeNormal, Backend: agentproto.BackendAgy})
+	if launch.Backend != agentproto.BackendAgy {
+		t.Fatalf("unexpected agy launch contract: %#v", launch)
 	}
 }
 

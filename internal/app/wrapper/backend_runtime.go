@@ -86,9 +86,162 @@ func newBackendRuntime(cfg Config) backendRuntime {
 			}
 		}
 		return runtime
+	case agentproto.BackendAgy:
+		runtime := &agyBackendRuntime{
+			translator:    claude.NewTranslator(cfg.InstanceID),
+			workspaceRoot: cfg.WorkspaceRoot,
+		}
+		if threadID := strings.TrimSpace(cfg.ResumeThreadID); threadID != "" {
+			runtime.initialLaunchResume = &claudeLaunchResumeTarget{ThreadID: threadID, CWD: strings.TrimSpace(cfg.WorkspaceRoot)}
+		}
+		return runtime
 	default:
 		return &codexBackendRuntime{translator: codex.NewTranslator(cfg.InstanceID)}
 	}
+}
+
+type agyBackendRuntime struct {
+	mu                  sync.Mutex
+	translator          *claude.Translator
+	workspaceRoot       string
+	initialLaunchResume *claudeLaunchResumeTarget
+	pendingLaunchResume *claudeLaunchResumeTarget
+	currentLaunchResume *claudeLaunchResumeTarget
+}
+
+func (r *agyBackendRuntime) Backend() agentproto.Backend { return agentproto.BackendAgy }
+
+func (r *agyBackendRuntime) Capabilities() agentproto.Capabilities {
+	return agentproto.DefaultCapabilitiesForBackend(agentproto.BackendAgy)
+}
+
+func (r *agyBackendRuntime) Launch(ctx context.Context, app *App, rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo)) (*childSession, error) {
+	if app == nil {
+		return nil, nil
+	}
+	r.mu.Lock()
+	resume := r.pendingLaunchResume
+	if resume == nil {
+		resume = r.initialLaunchResume
+	}
+	r.pendingLaunchResume = nil
+	r.initialLaunchResume = nil
+	r.currentLaunchResume = resume
+	resumeID := ""
+	if resume != nil {
+		resumeID = strings.TrimSpace(resume.ThreadID)
+	}
+	r.translator.PrepareForChildLaunch(resumeID)
+	r.mu.Unlock()
+	return app.launchAgyChildSession(ctx, rawLogger, reportProblem, resume)
+}
+
+func (r *agyBackendRuntime) ObserveClient(line []byte) (runtimeObserveResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result, err := r.translator.ObserveClient(line)
+	return runtimeObserveResult{Events: result.Events, OutboundToChild: result.OutboundToClaude, Suppress: result.Suppress}, err
+}
+
+func (r *agyBackendRuntime) ObserveServer(line []byte) (runtimeObserveResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result, err := r.translator.ObserveServer(line)
+	if snapshot := r.translator.RuntimeStateSnapshot(); strings.TrimSpace(snapshot.SessionID) != "" {
+		r.currentLaunchResume = &claudeLaunchResumeTarget{ThreadID: snapshot.SessionID, CWD: firstNonEmpty(snapshot.CWD, r.workspaceRoot)}
+	}
+	return runtimeObserveResult{
+		Events: result.Events, OutboundToChild: result.OutboundToClaude, OutboundToParent: result.OutboundToParent,
+		ResolvedCommandResponses: mapClaudeResolvedCommandResponses(result.ResolvedCommandResponses), Suppress: result.Suppress,
+	}, err
+}
+
+func (r *agyBackendRuntime) TranslateCommand(command agentproto.Command) (runtimeCommandResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if plan := r.restartPlanForCommand(command); plan != nil {
+		return runtimeCommandResult{Restart: plan}, nil
+	}
+	outbound, err := r.translator.TranslateCommand(command)
+	if err != nil {
+		return runtimeCommandResult{}, err
+	}
+	if command.Kind == agentproto.CommandPromptSend {
+		configFrame, marshalErr := json.Marshal(map[string]any{
+			"type":       "control_request",
+			"request_id": "relay-agy-config-" + strings.TrimSpace(command.CommandID),
+			"request": map[string]any{
+				"subtype": "agy_config",
+				"model":   strings.TrimSpace(command.Overrides.Model),
+				"effort":  strings.TrimSpace(command.Overrides.ReasoningEffort),
+			},
+		})
+		if marshalErr != nil {
+			return runtimeCommandResult{}, marshalErr
+		}
+		configFrame = append(configFrame, '\n')
+		insertAt := len(outbound) - 1
+		outbound = append(outbound, nil)
+		copy(outbound[insertAt+1:], outbound[insertAt:])
+		outbound[insertAt] = configFrame
+	}
+	phases, err := r.newCommandPhases(command, outbound)
+	return runtimeCommandResult{Phases: phases}, err
+}
+
+func (r *agyBackendRuntime) newCommandPhases(command agentproto.Command, outbound [][]byte) ([]runtimeCommandPhase, error) {
+	phases := singleRuntimeCommandPhases(outbound)
+	if command.Kind != agentproto.CommandPromptSend || len(outbound) < 3 {
+		return phases, nil
+	}
+	gate, ok, err := newClaudePermissionModeResponseGate(command, outbound[0])
+	if err != nil || !ok {
+		return phases, err
+	}
+	return []runtimeCommandPhase{{OutboundToChild: [][]byte{outbound[0]}, ResponseGate: gate}, {OutboundToChild: outbound[1:]}}, nil
+}
+
+func (r *agyBackendRuntime) restartPlanForCommand(command agentproto.Command) *runtimeCommandRestart {
+	if command.Kind != agentproto.CommandPromptSend {
+		return nil
+	}
+	plan := agentproto.PromptDispatchPlanFromTarget(command.Target)
+	currentID := ""
+	if r.currentLaunchResume != nil {
+		currentID = strings.TrimSpace(r.currentLaunchResume.ThreadID)
+	}
+	if plan.ExecutionMode == agentproto.PromptExecutionModeStartNew && currentID != "" {
+		return &runtimeCommandRestart{DispatchPlan: plan}
+	}
+	if target := strings.TrimSpace(plan.ExecutionThreadID); target != "" && !strings.EqualFold(target, currentID) {
+		return &runtimeCommandRestart{DispatchPlan: plan}
+	}
+	return nil
+}
+
+func (r *agyBackendRuntime) PrepareChildRestart(_ string, plan agentproto.PromptDispatchPlan) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	plan = agentproto.NormalizePromptDispatchPlan(plan)
+	if plan.ExecutionMode == agentproto.PromptExecutionModeStartNew {
+		r.pendingLaunchResume = nil
+		r.currentLaunchResume = nil
+		return nil
+	}
+	if id := strings.TrimSpace(plan.ExecutionThreadID); id != "" {
+		r.pendingLaunchResume = &claudeLaunchResumeTarget{ThreadID: id, CWD: firstNonEmpty(plan.CWD, r.workspaceRoot)}
+	}
+	return nil
+}
+
+func (r *agyBackendRuntime) BuildChildRestartRestoreFrame(string) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+func (r *agyBackendRuntime) CancelChildRestartRestore(string) {}
+func (r *agyBackendRuntime) SetDebugLogger(log func(string, ...any)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.translator.SetDebugLogger(log)
 }
 
 type codexBackendRuntime struct {

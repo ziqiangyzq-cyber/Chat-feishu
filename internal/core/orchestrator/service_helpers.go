@@ -20,7 +20,11 @@ func isVSCodeInstance(inst *state.InstanceRecord) bool {
 }
 
 func headlessThreadWorkspaceMustMatch(inst *state.InstanceRecord) bool {
-	return isHeadlessInstance(inst) && state.EffectiveInstanceBackend(inst) == agentproto.BackendClaude
+	if !isHeadlessInstance(inst) {
+		return false
+	}
+	backend := state.EffectiveInstanceBackend(inst)
+	return backend == agentproto.BackendClaude || backend == agentproto.BackendAgy
 }
 
 func metadataString(metadata map[string]any, key string) string {

@@ -1,8 +1,8 @@
 # 使用说明书
 
 > Type: `general`
-> Updated: `2026-04-30`
-> Summary: 按当前 mode 术语基线重写 headless/vscode 与 `codex|claude|vscode` 的用户说明，保留 `/mode normal` 兼容说明。
+> Updated: `2026-08-06`
+> Summary: 说明 headless/vscode 与 `codex|claude|agy|vscode` 的用户用法，保留 `/mode normal` 兼容说明。
 
 ## 1. 这是什么
 
@@ -283,6 +283,7 @@ Windows PowerShell：
 - 用户可见 mode
   - `codex`
   - `claude`
+  - `agy`
   - `vscode`
 
 其中：
@@ -291,6 +292,8 @@ Windows PowerShell：
   - 默认也是最推荐的 headless mode
 - `claude`
   - 也是 headless，只是 backend 换成 Claude
+- `agy`
+  - 也是 headless，使用本机 Antigravity CLI；支持新建、按 conversation ID 续接、流式回复和 `/stop`
 - `vscode`
   - 专门给“飞书跟随 VS Code 当前焦点”这个场景准备
 
@@ -299,6 +302,7 @@ Windows PowerShell：
 ```text
 /mode codex
 /mode claude
+/mode agy
 /mode vscode
 /mode normal
 ```
@@ -598,6 +602,8 @@ Windows PowerShell：
   - 切回默认的 headless Codex 模式
 - `/mode claude`
   - 切到 headless Claude 模式
+- `/mode agy`
+  - 切到 headless Antigravity 模式
 - `/mode normal`
   - 兼容旧写法，等价于 `/mode codex`
 - `/follow`

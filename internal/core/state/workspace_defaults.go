@@ -24,6 +24,8 @@ func WorkspaceDefaultsIdentity(contract InstanceBackendContract) string {
 	switch contract.Backend {
 	case agentproto.BackendClaude:
 		return NormalizeClaudeProfileID(contract.ClaudeProfileID)
+	case agentproto.BackendAgy:
+		return "default"
 	default:
 		return NormalizeCodexProviderID(contract.CodexProviderID)
 	}
