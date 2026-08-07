@@ -342,7 +342,11 @@ func (s *Service) ApplySurfaceAction(action control.Action) []eventcontract.Even
 	}
 	s.applyCommandLauncherDisposition(surface, action)
 	if action.Kind == control.ActionTextMessage && strings.TrimSpace(action.BridgePrompt) != "" {
-		action.Inputs = append([]agentproto.Input{{Type: agentproto.InputText, Text: action.BridgePrompt}}, action.Inputs...)
+		bridgeInput := agentproto.Input{Type: agentproto.InputText, Text: action.BridgePrompt}
+		action.Inputs = append([]agentproto.Input{bridgeInput}, action.Inputs...)
+		if len(action.SteerInputs) != 0 {
+			action.SteerInputs = append([]agentproto.Input{bridgeInput}, action.SteerInputs...)
+		}
 	}
 	if events, ok := s.boundDaemonCommandEvents(surface, action); ok {
 		return s.filterEventsForSurfaceVisibility(events)

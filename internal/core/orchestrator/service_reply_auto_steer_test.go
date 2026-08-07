@@ -29,6 +29,7 @@ func TestReplyToActiveRunningSourceAutoSteersText(t *testing.T) {
 		SteerInputs: []agentproto.Input{
 			{Type: agentproto.InputText, Text: "请重点看最后一段"},
 		},
+		BridgePrompt: `<bridge_context>{"senderId":"user-1","chatId":"chat-1","messageIds":["msg-reply-1"]}</bridge_context>`,
 	})
 
 	if len(events) != 2 {
@@ -40,8 +41,8 @@ func TestReplyToActiveRunningSourceAutoSteersText(t *testing.T) {
 	if events[1].Command == nil || events[1].Command.Kind != agentproto.CommandTurnSteer {
 		t.Fatalf("expected steer command, got %#v", events)
 	}
-	if len(events[1].Command.Prompt.Inputs) != 1 || events[1].Command.Prompt.Inputs[0].Text != "请重点看最后一段" {
-		t.Fatalf("expected steer command to use current reply only, got %#v", events[1].Command.Prompt.Inputs)
+	if len(events[1].Command.Prompt.Inputs) != 2 || !strings.Contains(events[1].Command.Prompt.Inputs[0].Text, `"messageIds":["msg-reply-1"]`) || events[1].Command.Prompt.Inputs[1].Text != "请重点看最后一段" {
+		t.Fatalf("expected steer command to use trusted bridge context plus current reply only, got %#v", events[1].Command.Prompt.Inputs)
 	}
 
 	surface := svc.root.Surfaces["surface-1"]
@@ -52,10 +53,10 @@ func TestReplyToActiveRunningSourceAutoSteersText(t *testing.T) {
 	if item == nil || item.Status != state.QueueItemSteering {
 		t.Fatalf("expected synthetic steering item, got %#v", item)
 	}
-	if len(item.Inputs) != 2 || item.Inputs[0].Text != "<被引用内容>\n原始消息\n</被引用内容>" {
+	if len(item.Inputs) != 3 || !strings.Contains(item.Inputs[0].Text, `"messageIds":["msg-reply-1"]`) || item.Inputs[1].Text != "<被引用内容>\n原始消息\n</被引用内容>" {
 		t.Fatalf("expected fallback queue item to keep ordinary reply inputs, got %#v", item)
 	}
-	if len(item.SteerInputs) != 1 || item.SteerInputs[0].Text != "请重点看最后一段" {
+	if len(item.SteerInputs) != 2 || !strings.Contains(item.SteerInputs[0].Text, `"messageIds":["msg-reply-1"]`) || item.SteerInputs[1].Text != "请重点看最后一段" {
 		t.Fatalf("expected steering item to keep current-only steer inputs, got %#v", item)
 	}
 

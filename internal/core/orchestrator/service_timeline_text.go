@@ -126,6 +126,9 @@ func inputTextHiddenFromSteerSupplement(text string) bool {
 	if _, ok := unwrapTaggedInputBody(text, "被引用内容"); ok {
 		return true
 	}
+	if _, ok := unwrapTaggedInputBody(text, "bridge_context"); ok {
+		return true
+	}
 	return false
 }
 

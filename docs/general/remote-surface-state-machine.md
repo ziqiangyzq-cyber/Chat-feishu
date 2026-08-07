@@ -809,6 +809,7 @@ review mode 第一版当前不是新的 route state，而是挂在 surface 上�
    2. 命中后不会改写其他 queued item 的相对顺序，也不会跨 thread 偷偷 retarget。
    3. steering 失败时，目标输入必须恢复回普通语义，不能 silently 消失。
    4. 图片 reply 回退成 staged image 时，必须保留原始发送者归属；后续仍只允许同一个 actor 的下一条文本消费它，不能被别的 actor 抢绑。
+   5. Feishu gateway 从可信消息事件生成的 `bridge_context` 会同时进入普通 prompt inputs 与 reply auto-steer inputs；active turn 的追加输入不能丢掉 sender/chat/message identity，也不能要求用户手工补这些内部字段。
 
 ### 4.7 `R5 NewThreadReady` 是稳定态，不是半成品
 
