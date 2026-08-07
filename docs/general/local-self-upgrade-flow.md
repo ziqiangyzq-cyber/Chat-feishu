@@ -177,6 +177,15 @@ repo 里常用的辅助解析入口是：
 - 携带当前 host 平台的内嵌 upgrade shim 资产，供后续 `local-upgrade` 释放
 - 保持 `--version` 的旧语义版本输出，通过 `--version-detail` 暴露 version、full commit、UTC build time、dirty state、branch 与 flavor
 
+在 macOS host 上构建 Darwin 产物时，shared build helper 还会统一完成代码签名：
+
+- 本地 / dev 构建默认使用 ad-hoc 签名，但显式固定 identifier 与 designated requirement 为 `com.kxn.codex-remote`
+- 内容变化仍会产生新的 CDHash，但 macOS TCC 用于持续识别 daemon 的 designated requirement 不再随每次本地升级变化
+- release builder 可通过 `CODEX_REMOTE_MACOS_CODESIGN_IDENTITY` 提供 Developer ID 身份；此时由证书链提供稳定身份
+- `CODEX_REMOTE_MACOS_CODESIGN_IDENTIFIER` 只用于受控品牌变体，默认不得随版本或 slot 改变
+
+这一约束是升级事务的一部分，而不是可选的包装步骤。否则用户已经授予的 Documents / Desktop / Downloads 或完全磁盘访问权限会在二进制替换后失效，无界面的 daemon 可能在 workspace `open` 上等待系统授权，最终表现为 Codex `thread/start` 无响应。
+
 ### 5.2 第二步：解析 repo install target
 
 脚本会调用 `scripts/install/repo-install-target.sh --format shell`，拿到：
@@ -366,6 +375,18 @@ helper shim 入口是一个独立 binary，本身不再接受 `upgrade-helper -s
 生产 stack 迁入 unified release layout 后，稳定入口是 unified operator 管理的 symlink。install-state upgrade、release upgrade、packaged repair 与普通 install 都会检查 `.codex-remote-unified-release` ownership marker，并拒绝覆盖该 alias。
 
 这不是临时互斥锁，而是 ownership 边界：deployment transaction 必须由 `deploy-local-release.sh` 同时 stop/publish/start/health-check allowlisted daemon/site units。要回到普通单实例管理，必须先设计并执行显式 migration，不能删除 marker 或强制 copy。
+
+### 10.6 macOS 升级必须保持代码身份
+
+macOS 的升级源、导入 slot、stable binary 与 rollback copy 都必须保留 shared build helper 写入的签名。升级实现只能复制已签名 artifact，不能在导入或切换阶段剥离、重写为 linker 默认签名，或按版本生成新的 identifier。
+
+对本地 ad-hoc 构建，允许 CDHash 随内容变化，但 designated requirement 必须稳定为：
+
+```text
+designated => identifier "com.kxn.codex-remote"
+```
+
+首次从旧的 `a.out + exact CDHash` 版本迁入稳定身份时，macOS 可能仍要求用户重新授权一次；完成这次迁移后，后续使用同一身份构建的本地升级不应再次丢失 TCC 授权。
 
 ## 11. 常看路径
 

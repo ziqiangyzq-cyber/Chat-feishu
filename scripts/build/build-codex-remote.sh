@@ -31,6 +31,9 @@ target_goos=""
 target_goarch=""
 require_clean=0
 
+macos_codesign_identifier="${CODEX_REMOTE_MACOS_CODESIGN_IDENTIFIER:-com.kxn.codex-remote}"
+macos_codesign_identity="${CODEX_REMOTE_MACOS_CODESIGN_IDENTITY:--}"
+
 usage() {
   cat <<'EOF'
 usage: scripts/build/build-codex-remote.sh --output <path> [options]
@@ -67,6 +70,39 @@ validate_field() {
   local name="$1"
   local value="$2"
   [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._/+:-]*$ ]] || die "${name} contains unsupported characters: ${value}"
+}
+
+sign_macos_binary() {
+  local binary_path="$1"
+  local identity="${macos_codesign_identity}"
+
+  command -v codesign >/dev/null 2>&1 || die "codesign is required for macOS artifacts"
+  [[ "${macos_codesign_identifier}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]+$ ]] || \
+    die "invalid macOS code-signing identifier: ${macos_codesign_identifier}"
+
+  if [[ "${identity}" == "-" ]]; then
+    # Go's linker-generated ad-hoc signature has an exact-CDHash designated
+    # requirement. That identity changes on every local upgrade and invalidates
+    # macOS TCC grants for Documents/Desktop/Downloads. An explicit stable
+    # designated requirement preserves the local daemon identity across builds.
+    local requirement="=designated => identifier \"${macos_codesign_identifier}\""
+    codesign --force \
+      --sign - \
+      --identifier "${macos_codesign_identifier}" \
+      --requirements "${requirement}" \
+      "${binary_path}"
+  else
+    # Shipping builders can provide a Developer ID identity. Its certificate
+    # chain supplies the stable designated requirement used by macOS TCC.
+    codesign --force \
+      --sign "${identity}" \
+      --identifier "${macos_codesign_identifier}" \
+      --options runtime \
+      --timestamp \
+      "${binary_path}"
+  fi
+
+  codesign --verify --strict "${binary_path}"
 }
 
 is_semantic_version() {
@@ -264,13 +300,17 @@ fi
     "${GO_BIN}" build -trimpath -buildvcs=false -ldflags "${ldflags[*]}" -o "${output}" ./cmd/codex-remote
 )
 
+host_goos="$("${GO_BIN}" env GOOS)"
+host_goarch="$("${GO_BIN}" env GOARCH)"
+if [[ "${target_goos}" == "darwin" && "${host_goos}" == "darwin" ]]; then
+  sign_macos_binary "${output}"
+fi
+
 if [[ "${require_clean}" == "1" ]]; then
   final_worktree_status="$("${GIT_BIN}" status --porcelain --untracked-files=normal)" || die "unable to re-inspect source worktree"
   [[ -z "${final_worktree_status}" ]] || die "checkout became dirty during build"
 fi
 
-host_goos="$("${GO_BIN}" env GOOS)"
-host_goarch="$("${GO_BIN}" env GOARCH)"
 if [[ "${target_goos}/${target_goarch}" == "${host_goos}/${host_goarch}" ]]; then
   version_output="$("${output}" --version-detail)"
   expected_output="codex-remote version=${version} commit=${head_commit} built_at=${build_time_utc} dirty=${dirty} branch=${branch} flavor=${flavor}"

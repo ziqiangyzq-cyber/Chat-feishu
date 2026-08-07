@@ -10,6 +10,7 @@ check:
 	files="$$(find cmd internal testkit -name '*.go' | sort)"; output="$$(gofmt -l $$files)"; test -z "$$output" || (echo "$$output" >&2; exit 1)
 	bash scripts/check/release-track-version.sh
 	bash scripts/check/build-provenance-selftest.sh
+	bash scripts/check/macos-stable-code-identity-selftest.sh
 	bash scripts/check/canonical-checkout-selftest.sh
 	bash scripts/check/unified-local-release-selftest.sh
 	bash scripts/check/smoke-install-release.sh

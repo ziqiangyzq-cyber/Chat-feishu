@@ -654,21 +654,22 @@ release / installer smoke test 必须覆盖真实产品路径：
 macOS packaged installer 的额外验证要求：
 
 1. 在 mac runner 上先构建双架构 release tarball。
-2. 优先通过 `scripts/release/build-macos-packaged-installer.sh` 统一产出最终 `dmg`。
-3. 如需排查 bundle 组装细节，再单独调用：
+2. 检查 tarball 内的 `codex-remote` 已通过 `codesign --verify --strict`，且不允许再出现 linker 默认的 `Identifier=a.out` / exact-CDHash designated requirement；本地 dev 产物使用稳定 `com.kxn.codex-remote` requirement，正式签发产物使用稳定 Developer ID 身份。
+3. 优先通过 `scripts/release/build-macos-packaged-installer.sh` 统一产出最终 `dmg`。
+4. 如需排查 bundle 组装细节，再单独调用：
    - `scripts/release/build-macos-installer-app.sh`
    - `scripts/release/build-macos-dmg.sh`
-4. 先通过 `scripts/check/smoke-macos-installer-result-model.sh` 验证结果页模型语义：
+5. 先通过 `scripts/check/smoke-macos-installer-result-model.sh` 验证结果页模型语义：
    - `Continue WebSetup` 只在 first install + `setupRequired=true` 出现
    - 不允许安装完成瞬间自动打开浏览器
    - repair / upgrade 不触发 WebSetup handoff
    - `Open Admin UI` 与 `Continue WebSetup` 互斥
    - failure 只保留 `Finish` 与 `Open Logs`
-5. 至少验证三条用户路径：
+6. 至少验证三条用户路径：
    - first install
    - 已安装版本升级
    - 同版本重复运行触发 repair
-6. 验证 GUI 行为与 shared contract 一致：
+7. 验证 GUI 行为与 shared contract 一致：
    - first-install 可选安装目录
    - repair / upgrade 不可改 live binary 目录
    - 失败页能看到 `error` 和日志路径

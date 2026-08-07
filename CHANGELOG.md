@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### macOS 本地升级不再反复丢失目录授权
+
+- macOS 构建现在使用稳定的 `com.kxn.codex-remote` 代码身份；二进制升级即使改变 CDHash，也不会再因为 linker 默认的 `a.out + exact CDHash` 身份导致 Documents、Desktop、Downloads 或完全磁盘访问授权随版本失效。
+- 新增双构建签名自测，明确验证“CDHash 变化、designated requirement 保持稳定”，并把签名合同写入本地升级与 macOS 发布检查文档。
+
 ### 标签页：同一个飞书聊天并行多任务
 
 - 新增网关层 `/tab` 命令族：`/tab new` 新建标签页、`/tab <1-9>` 切换、`/tab` 查看列表。每个标签页是一个独立的虚拟 surface（`<surface>#tabN`），拥有自己的工作区绑定、会话与消息队列，多个标签页的任务真正并发执行。
