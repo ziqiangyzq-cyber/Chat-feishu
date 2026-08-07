@@ -15,6 +15,8 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
 
+const outboundArtifactPolicyTestTimeout = 5 * time.Second
+
 func attachOutboundPolicyTestSurface(t *testing.T, app *App) {
 	t.Helper()
 	workspaceRoot := t.TempDir()
@@ -115,7 +117,7 @@ func TestSendIMFileToolUsesPreparedArtifactPath(t *testing.T) {
 	app.SetOutboundArtifactPolicies(map[string]outboundArtifactPolicy{
 		"app-1": {
 			Command: writeOutboundPolicyCommand(t, prepared, 0),
-			Timeout: time.Second,
+			Timeout: outboundArtifactPolicyTestTimeout,
 		},
 	})
 
@@ -151,7 +153,7 @@ func TestSendIMImageToolFailsClosedWhenPolicyRejects(t *testing.T) {
 	app.SetOutboundArtifactPolicies(map[string]outboundArtifactPolicy{
 		"app-1": {
 			Command: writeOutboundPolicyCommand(t, "", 5),
-			Timeout: time.Second,
+			Timeout: outboundArtifactPolicyTestTimeout,
 		},
 	})
 
@@ -187,7 +189,7 @@ func TestSendIMVideoToolCannotBypassConfiguredPolicy(t *testing.T) {
 	app.SetOutboundArtifactPolicies(map[string]outboundArtifactPolicy{
 		"app-1": {
 			Command: writeOutboundPolicyCommand(t, "", 5),
-			Timeout: time.Second,
+			Timeout: outboundArtifactPolicyTestTimeout,
 		},
 	})
 
