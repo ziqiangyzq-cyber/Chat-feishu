@@ -83,7 +83,7 @@ func TestStdoutLoopIgnoresClosedPipeAfterSessionCancel(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		stdoutLoop(ctx, reader, io.Discard, make(chan []byte, 1), runtime, nil, newCommandResponseTracker(), newRuntimeTurnTracker(), nil, 0, errCh, nil, nil, nil, done)
+		stdoutLoop(ctx, reader, io.Discard, make(chan []byte, 1), runtime, nil, newCommandResponseTracker(), newRuntimeTurnTracker(), nil, 0, errCh, nil, nil, nil, nil, done)
 	}()
 
 	cancel()

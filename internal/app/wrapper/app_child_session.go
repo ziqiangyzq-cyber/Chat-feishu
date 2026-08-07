@@ -84,8 +84,14 @@ func startChildSessionIO(ctx context.Context, session *childSession, parentStdou
 	session.writeDone = make(chan struct{})
 	session.stdoutDone = make(chan struct{})
 	session.stderrDone = make(chan struct{})
-	go writeLoop(writeCtx, session.stdin, writeCh, errCh, debugf, rawLogger, reportProblem, session.writeDone)
-	go stdoutLoop(ioCtx, session.stdout, parentStdout, writeCh, runtime, client, commandResponses, turnTracker, activeGeneration, generation, errCh, debugf, rawLogger, reportProblem, session.stdoutDone)
+	watch := newChildActivityWatch()
+	pid := 0
+	if session.cmd != nil && session.cmd.Process != nil {
+		pid = session.cmd.Process.Pid
+	}
+	go childHangWatchLoop(ioCtx, watch, activeGeneration, generation, pid, errCh, reportProblem, debugf, childHangCheckInterval, providerRuntimeHangTimeout)
+	go writeLoop(writeCtx, session.stdin, writeCh, errCh, debugf, rawLogger, reportProblem, watch, session.writeDone)
+	go stdoutLoop(ioCtx, session.stdout, parentStdout, writeCh, runtime, client, commandResponses, turnTracker, activeGeneration, generation, errCh, debugf, rawLogger, reportProblem, watch, session.stdoutDone)
 	if session.stderr != nil {
 		go func() {
 			defer close(session.stderrDone)

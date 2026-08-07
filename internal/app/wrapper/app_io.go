@@ -81,7 +81,7 @@ func stdinLoop(ctx context.Context, stdin io.Reader, writeCh chan<- []byte, runt
 	}
 }
 
-func stdoutLoop(ctx context.Context, childStdout io.Reader, parentStdout io.Writer, writeCh chan<- []byte, runtime backendRuntime, client *relayws.Client, commandResponses *commandResponseTracker, turnTracker *runtimeTurnTracker, activeGeneration *int64, generation int64, errCh chan<- error, debugf func(string, ...any), rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo), done chan<- struct{}) {
+func stdoutLoop(ctx context.Context, childStdout io.Reader, parentStdout io.Writer, writeCh chan<- []byte, runtime backendRuntime, client *relayws.Client, commandResponses *commandResponseTracker, turnTracker *runtimeTurnTracker, activeGeneration *int64, generation int64, errCh chan<- error, debugf func(string, ...any), rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo), watch *childActivityWatch, done chan<- struct{}) {
 	defer close(done)
 	reader := bufio.NewReader(childStdout)
 	coalescer := newRelayEventCoalescer(nil, 0, 0)
@@ -119,6 +119,9 @@ func stdoutLoop(ctx context.Context, childStdout io.Reader, parentStdout io.Writ
 					}
 					continue
 				}
+			}
+			if watch != nil {
+				watch.NoteActivity()
 			}
 			_, suppressCommandResponse := commandResponses.ResolveFrame(line)
 			result, parseErr := runtime.ObserveServer(line)
@@ -228,7 +231,7 @@ func stdoutLoop(ctx context.Context, childStdout io.Reader, parentStdout io.Writ
 	}
 }
 
-func writeLoop(ctx context.Context, childStdin io.WriteCloser, writeCh <-chan []byte, errCh chan<- error, debugf func(string, ...any), rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo), done chan<- struct{}) {
+func writeLoop(ctx context.Context, childStdin io.WriteCloser, writeCh <-chan []byte, errCh chan<- error, debugf func(string, ...any), rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo), watch *childActivityWatch, done chan<- struct{}) {
 	defer childStdin.Close()
 	defer close(done)
 	for {
@@ -242,6 +245,9 @@ func writeLoop(ctx context.Context, childStdin io.WriteCloser, writeCh <-chan []
 			if err := writeChildFrame(childStdin, line, debugf, rawLogger, reportProblem); err != nil {
 				errCh <- err
 				return
+			}
+			if watch != nil {
+				watch.NoteWrite()
 			}
 		}
 	}
