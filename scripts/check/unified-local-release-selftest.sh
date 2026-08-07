@@ -101,10 +101,19 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 url="${*: -1}"
+printf 'curl %s\n' "${url}" >> "${FAKE_STATE_DIR}/timeline.log"
+health_count=0
+if [[ "${url}" == */healthz ]]; then
+  if [[ -f "${FAKE_STATE_DIR}/health-count" ]]; then
+    health_count="$(<"${FAKE_STATE_DIR}/health-count")"
+  fi
+  health_count=$((health_count + 1))
+  printf '%s\n' "${health_count}" > "${FAKE_STATE_DIR}/health-count"
+fi
 if [[ -f "${FAKE_STATE_DIR}/fail-health-19521" && "${url}" == http://127.0.0.1:19521/* ]]; then
   exit 22
 fi
-if [[ -f "${FAKE_STATE_DIR}/fail-health" && ! -f "${FAKE_STATE_DIR}/fail-health-used" && "${url}" == */healthz ]]; then
+if [[ -f "${FAKE_STATE_DIR}/fail-health" && ! -f "${FAKE_STATE_DIR}/fail-health-used" && "${url}" == */healthz && "${health_count}" -gt 3 ]]; then
   : > "${FAKE_STATE_DIR}/fail-health-used"
   exit 22
 fi
@@ -122,6 +131,7 @@ shift
 command_name="${1:-}"
 shift || true
 printf '%s %s\n' "${command_name}" "$*" >> "${FAKE_STATE_DIR}/systemctl.log"
+printf 'systemctl %s %s\n' "${command_name}" "$*" >> "${FAKE_STATE_DIR}/timeline.log"
 case "${command_name}" in
   list-unit-files|list-units)
     while IFS= read -r unit; do
@@ -321,6 +331,7 @@ EOF
     pid=$((pid + 1))
   done
   : > "${fake_state}/systemctl.log"
+  : > "${fake_state}/timeline.log"
   : > "${fake_state}/build.log"
   : > "${fake_state}/test.log"
   : > "${fake_state}/systemd-run.log"
@@ -335,6 +346,7 @@ EOF
     FAKE_STATE_DIR="${fake_state}" PROC_ROOT="${proc_root}" "${fake_dir}/systemctl" --user start "${unit}"
   done
   : > "${fake_state}/systemctl.log"
+  : > "${fake_state}/timeline.log"
 }
 
 run_guarded_operator() {
@@ -443,6 +455,7 @@ test_success_and_audit() {
   local index
   local -a stopped_units=()
   local -a started_units=()
+  local first_health_line first_site_start_line
   mapfile -t args < <(deploy_args)
   run_guarded_operator "${args[@]}" > "${scenario_dir}/deploy.log" 2>&1
   [[ "$(wc -l < "${fake_state}/build.log")" -eq 1 ]]
@@ -466,6 +479,10 @@ test_success_and_audit() {
     [[ "${stopped_units[index]}" != *-site.service ]]
     [[ "${started_units[index]}" == *-site.service ]]
   done
+  first_health_line="$(grep -n '^curl .*/healthz$' "${fake_state}/timeline.log" | head -n 1 | cut -d: -f1)"
+  first_site_start_line="$(grep -n '^systemctl start .*site\.service$' "${fake_state}/timeline.log" | head -n 1 | cut -d: -f1)"
+  [[ -n "${first_health_line}" && -n "${first_site_start_line}" ]]
+  [[ "${first_health_line}" -lt "${first_site_start_line}" ]]
 
   : > "${fake_state}/systemctl.log"
   filesystem_before="$(find "${fake_home}" "${release_root}" -printf '%p|%y|%m|%s|%T@|%l\n' | sort)"

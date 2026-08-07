@@ -153,7 +153,7 @@ deploy 的顺序固定为：
 5. 按 reverse order 停止全部 daemon/site units，并确认 PID 已退出；
 6. 原子发布全部 current links 和 alias links；
 7. 验证所有 configured path 收敛到同一 artifact；
-8. 按 manifest order 只启动 lifecycle=`active` 的daemon/site；lifecycle=`inactive` 的历史unit继续保持inactive；
+8. 按 manifest order 只启动 lifecycle=`active` 的 daemon/site；每个 daemon 必须先通过该 stack 的本地 HTTP 健康探针，才启动依赖它的 site；lifecycle=`inactive` 的历史 unit 继续保持 inactive；
 9. 检查 active/running/result、PID/restart stability、running inode/hash/provenance，以及每套 stack 的 HTTP endpoints；
 10. 全部通过后提交 transaction journal。
 

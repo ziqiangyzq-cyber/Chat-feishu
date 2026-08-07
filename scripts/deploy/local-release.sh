@@ -25,6 +25,8 @@ SELF_CGROUP_FILE="${SELF_CGROUP_FILE:-/proc/self/cgroup}"
 
 STOP_TIMEOUT_SECONDS="${CODEX_REMOTE_DEPLOY_STOP_TIMEOUT_SECONDS:-20}"
 HEALTH_STABILITY_SECONDS="${CODEX_REMOTE_DEPLOY_STABILITY_SECONDS:-5}"
+DAEMON_READY_TIMEOUT_SECONDS="${CODEX_REMOTE_DEPLOY_DAEMON_READY_TIMEOUT_SECONDS:-20}"
+DAEMON_READY_POLL_SECONDS="${CODEX_REMOTE_DEPLOY_DAEMON_READY_POLL_SECONDS:-1}"
 
 usage() {
   cat <<'EOF'
@@ -610,11 +612,33 @@ resume_stack_watchdogs() {
 }
 
 start_expected_units() {
-  local unit
+  local unit stack
   mapfile -t start_units < <(ordered_units forward)
   for unit in "${start_units[@]}"; do
     [[ "${UNIT_LIFECYCLE[${unit}]}" == "active" ]] || continue
     systemctl_user start "${unit}" || { echo "failed to start ${unit}" >&2; return 1; }
+    if [[ "${UNIT_ROLE[${unit}]}" == "daemon" ]]; then
+      stack="${UNIT_STACK[${unit}]}"
+      wait_for_stack_http_health "${stack}" || return 1
+    fi
+  done
+}
+
+wait_for_stack_http_health() {
+  local stack="$1"
+  local elapsed=0
+  [[ "${DAEMON_READY_TIMEOUT_SECONDS}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${DAEMON_READY_POLL_SECONDS}" =~ ^[1-9][0-9]*$ ]] || return 1
+  while true; do
+    if probe_stack_http_health "${stack}"; then
+      return 0
+    fi
+    if [[ "${elapsed}" -ge "${DAEMON_READY_TIMEOUT_SECONDS}" ]]; then
+      echo "stack ${stack} daemon did not become HTTP-ready before dependent units started" >&2
+      return 1
+    fi
+    "${SLEEP_BIN}" "${DAEMON_READY_POLL_SECONDS}"
+    elapsed=$((elapsed + DAEMON_READY_POLL_SECONDS))
   done
 }
 
