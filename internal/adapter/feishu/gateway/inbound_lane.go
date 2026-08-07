@@ -274,6 +274,11 @@ func (w *QueuedMessageWork) parseAction(ctx context.Context, env InboundEnv) (co
 	if replyTargetMessageID != "" {
 		action.TargetMessageID = replyTargetMessageID
 	}
+	bridgePrompt, err := makeBridgeContext("feishu:"+w.gatewayID, w.actorUserID, w.chatID, w.messageID, replyTargetMessageID)
+	if err != nil {
+		return control.Action{}, false, err
+	}
+	action.BridgePrompt = bridgePrompt
 
 	switch strings.ToLower(strings.TrimSpace(w.messageType)) {
 	case "text":

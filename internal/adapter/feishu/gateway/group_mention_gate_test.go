@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
@@ -102,6 +103,13 @@ func TestP2PPlainTextIsQueuedWithoutMention(t *testing.T) {
 	}
 	if !ok || planned.Queue == nil {
 		t.Fatalf("expected p2p plain text to be queued, got ok=%v planned=%#v", ok, planned)
+	}
+	action, parsed, err := planned.Queue.parseAction(t.Context(), gateTestEnv())
+	if err != nil || !parsed {
+		t.Fatalf("expected queued p2p message to parse: parsed=%v err=%v", parsed, err)
+	}
+	if !strings.Contains(action.BridgePrompt, `"senderId":"ou_human"`) || !strings.Contains(action.BridgePrompt, `"chatId":"oc_chat"`) {
+		t.Fatalf("expected production inbound lane to generate trusted bridge context, got %q", action.BridgePrompt)
 	}
 }
 
