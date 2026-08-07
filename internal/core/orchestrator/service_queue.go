@@ -444,6 +444,11 @@ func (s *Service) completeRemoteTurn(outcome *remoteTurnOutcome) []eventcontract
 		handledByAutoContinueCard = len(autoContinueEvents) != 0
 	}
 
+	missingThreadEvents := s.recoverMissingCodexThread(outcome)
+	if len(missingThreadEvents) != 0 {
+		events = append(events, missingThreadEvents...)
+		handledByAutoContinueCard = true
+	}
 	if !handledByAutoContinueCard && outcome.Cause != terminalCauseCompleted && outcome.Cause != terminalCauseUserInterrupted {
 		if inst := s.root.Instances[outcome.InstanceID]; inst != nil {
 			s.clearThreadReplay(inst, outcome.ThreadID)

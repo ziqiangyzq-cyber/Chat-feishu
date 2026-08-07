@@ -31,24 +31,53 @@ func TestBuildCodexChildLaunchAddsFeishuMCPForHeadless(t *testing.T) {
 
 	args, env := app.buildCodexChildLaunch([]string{"app-server", "-c", `model="gpt-5"`})
 
-	if len(args) != 9 {
+	if len(args) != 7 {
 		t.Fatalf("expected base args plus MCP overrides, got %d args: %#v", len(args), args)
 	}
 	if args[0] != "app-server" || args[1] != "-c" || args[2] != `model="gpt-5"` {
 		t.Fatalf("expected base args to stay intact, got %#v", args[:3])
 	}
-	if args[3] != "-c" || args[4] != headlessNodeREPLDisable {
-		t.Fatalf("unexpected headless isolation args: %#v", args[3:5])
+	if args[3] != "-c" || args[4] != `mcp_servers.codex_remote_feishu.url="http://127.0.0.1:9702?codex_remote_instance_id=inst-1"` {
+		t.Fatalf("unexpected url override args: %#v", args[3:5])
 	}
-	if args[5] != "-c" || args[6] != `mcp_servers.codex_remote_feishu.url="http://127.0.0.1:9702?codex_remote_instance_id=inst-1"` {
-		t.Fatalf("unexpected url override args: %#v", args[5:7])
-	}
-	if args[7] != "-c" || args[8] != `mcp_servers.codex_remote_feishu.bearer_token_env_var="CODEX_REMOTE_FEISHU_MCP_BEARER"` {
-		t.Fatalf("unexpected bearer override args: %#v", args[7:9])
+	if args[5] != "-c" || args[6] != `mcp_servers.codex_remote_feishu.bearer_token_env_var="CODEX_REMOTE_FEISHU_MCP_BEARER"` {
+		t.Fatalf("unexpected bearer override args: %#v", args[5:7])
 	}
 	if got := lookupEnv(env, feishuMCPBearerEnvName); got != "secret-token" {
 		t.Fatalf("expected injected bearer env, got %q", got)
 	}
+}
+
+func TestBuildCodexChildLaunchDisablesConfiguredNodeREPLForHeadless(t *testing.T) {
+	clearFeishuMCPBearerEnv(t)
+	statePath := writeToolServiceState(t, `{
+  "url": "http://127.0.0.1:9702",
+  "token": "secret-token",
+  "tokenType": "bearer"
+}`)
+	app := New(Config{
+		InstanceID:   "inst-1",
+		Source:       "headless",
+		RuntimePaths: relayruntime.Paths{ToolServiceFile: statePath},
+	})
+
+	args, _ := app.buildCodexChildLaunch([]string{
+		"app-server",
+		"-c", `mcp_servers.node_repl.url="http://127.0.0.1:9800"`,
+	})
+
+	if !containsAdjacentArgs(args, "-c", headlessNodeREPLDisable) {
+		t.Fatalf("expected configured node_repl to be disabled for headless child, got %#v", args)
+	}
+}
+
+func containsAdjacentArgs(args []string, first, second string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == first && args[index+1] == second {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildCodexChildLaunchSkipsFeishuMCPForVSCodeSource(t *testing.T) {

@@ -202,13 +202,25 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 						ThreadID:         pending.ThreadID,
 					})}}, nil
 				}
-				return Result{Events: []agentproto.Event{{
+				event := agentproto.Event{
 					Kind:                 agentproto.EventTurnCompleted,
 					ThreadID:             pending.ThreadID,
 					Status:               "failed",
 					ErrorMessage:         errMsg,
 					TurnCompletionOrigin: agentproto.TurnCompletionOriginThreadResumeRejected,
-				}}}, nil
+				}
+				if isMissingRolloutError(errMsg) {
+					event.Problem = &agentproto.ErrorInfo{
+						Code:      "codex_thread_not_found",
+						Layer:     "server",
+						Stage:     "thread_resume_response",
+						Operation: "thread.resume",
+						Message:   "当前 Codex 会话的本地记录已不存在。",
+						Details:   errMsg,
+						ThreadID:  pending.ThreadID,
+					}
+				}
+				return Result{Events: []agentproto.Event{event}}, nil
 			}
 			t.currentThreadID = pending.ThreadID
 			t.rememberThreadModel(pending.ThreadID, lookupString(message, "result", "model"))
@@ -831,6 +843,11 @@ func (t *Translator) ObserveServer(raw []byte) (Result, error) {
 	default:
 		return Result{}, nil
 	}
+}
+
+func isMissingRolloutError(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(normalized, "no rollout found for thread id")
 }
 
 func failedFollowupTurnStartResult(threadID string, err error) Result {

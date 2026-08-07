@@ -41,18 +41,38 @@ func (a *App) applyCodexFeishuMCPPublication(baseArgs, baseEnv []string) ([]stri
 	if !ok {
 		return args, env
 	}
+	// Desktop's node_repl targets an interactive native GUI pipe. Disable it
+	// only when the child launch already carries that server's transport.
+	// Adding enabled=false for an otherwise absent server creates an incomplete
+	// MCP entry, which Codex rejects before app-server initialization.
+	if hasCodexMCPServerOverride(args, "node_repl") {
+		args = append(args, "-c", headlessNodeREPLDisable)
+	}
 	args = append(
 		args,
-		// Desktop's node_repl targets an interactive native GUI pipe. A managed
-		// remote child cannot attach to it reliably and may block thread/start.
-		// Disable it only for children that publish the remote tool service;
-		// Desktop/VS Code sessions keep their native automation capability.
-		"-c", headlessNodeREPLDisable,
 		"-c", codexMCPOverride("url", info.URL),
 		"-c", codexMCPOverride("bearer_token_env_var", feishuMCPBearerEnvName),
 	)
 	env = upsertEnvValue(env, feishuMCPBearerEnvName, strings.TrimSpace(info.Token))
 	return args, env
+}
+
+func hasCodexMCPServerOverride(args []string, serverID string) bool {
+	prefix := "mcp_servers." + strings.TrimSpace(serverID)
+	if prefix == "mcp_servers." {
+		return false
+	}
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] != "-c" && args[index] != "--config" {
+			continue
+		}
+		key, _, ok := strings.Cut(strings.TrimSpace(args[index+1]), "=")
+		if ok && (key == prefix || strings.HasPrefix(key, prefix+".")) {
+			return true
+		}
+		index++
+	}
+	return false
 }
 
 func (a *App) applyClaudeFeishuMCPPublication(baseArgs, baseEnv []string) ([]string, []string) {
