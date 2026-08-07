@@ -433,6 +433,30 @@ func TestObserveServerThreadResumeErrorEmitsFailedTurnCompleted(t *testing.T) {
 	}
 }
 
+func TestObserveServerMissingRolloutClassifiesThreadAsNotFound(t *testing.T) {
+	tr := NewTranslator("inst-1")
+
+	if _, err := tr.TranslateCommand(agentproto.Command{
+		Kind:   agentproto.CommandPromptSend,
+		Origin: agentproto.Origin{ChatID: "surface-1"},
+		Target: agentproto.Target{ThreadID: "thread-missing", CWD: "/tmp/two"},
+		Prompt: agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+	}); err != nil {
+		t.Fatalf("translate command: %v", err)
+	}
+
+	result, err := tr.ObserveServer([]byte(`{"id":"relay-thread-resume-0","error":{"message":"no rollout found for thread id thread-missing"}}`))
+	if err != nil {
+		t.Fatalf("observe resume error: %v", err)
+	}
+	if len(result.Events) != 1 || result.Events[0].Problem == nil {
+		t.Fatalf("expected structured missing-thread problem, got %#v", result)
+	}
+	if result.Events[0].Problem.Code != "codex_thread_not_found" || result.Events[0].Problem.ThreadID != "thread-missing" {
+		t.Fatalf("unexpected missing-thread problem: %#v", result.Events[0].Problem)
+	}
+}
+
 func TestObserveServerSuppressedTurnStartErrorEmitsFailedTurnCompleted(t *testing.T) {
 	tr := NewTranslator("inst-1")
 

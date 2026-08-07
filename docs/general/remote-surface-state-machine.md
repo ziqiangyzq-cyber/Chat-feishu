@@ -1,7 +1,7 @@
 # Remote Surface 核心状态机
 
 > Type: `general`
-> Updated: `2026-08-06`
+> Updated: `2026-08-07`
 > Summary: 当前实现同步了 workspace-aware headless 主链与 vscode 主链，并把当前 live 的 backend-aware 可见命令面收口到新的投影：`codex` 继续以 `workspace` 命令族作为主展示壳，`claude` 当前 live 实现也把 `switch_target` 收口到同一套 `/workspace` 父页与 `切换 / 从目录新建 / 从 GIT URL 新建 / 从 Worktree 新建 / 解除接管` 五个入口，`current_work` 继续保留 `/new` 等当前工作动作，`常用工具` 继续收口到 `/history` 与 `/sendfile`；`/list`、`/use`、裸 `/detach` 则退回 hidden + allow 兼容 alias。`send_settings` 则改成 backend 互斥入口：`codex headless` 可见 `/codexprovider`，`claude headless` 可见 `/claudeprofile`，`vscode` 两者都隐藏，且手动输入错误 backend 的命令也会显式拒绝。`/list` `/use` / target picker / workspace recency 全部只按当前 backend 过滤，且不再因为 surface/instance `ClaudeProfileID` 不同而隐藏 Claude workspace/session 候选；同时工作区一旦确定，`/workspace list` 与 alias `/list` 现在会把 `新建会话` 置顶并默认选中，`/use`、`/useall` 与锁定工作区的恢复 picker 则继续保留 `新建会话` fallback。2026-06-05 的补充是：headless auto-resume 的运行态只在真实恢复目标身份变化时重置 backoff / last notice，标题、更新时间等非目标元数据刷新不会把同一失败 episode 重新刷成新失败；auto-restore 启动的 managed headless 一旦连回，若 exact-thread 接管失败，也会立刻终止本轮 `PendingHeadless`、kill 这次拉起的 headless，并保留持久化恢复目标等待后续 backoff 重试。2026-05-31 的补充是：headless auto-resume 现在把“恢复 episode 的稳定失败根因”与“后续 retry 观测到的派生 busy/not_found 状态”分开记账；provider/profile/runtime 这类启动前失败会保留为本轮恢复的 canonical cause，并且只有在真正恢复成功或 target 改变后才会清空，因此后续 retry 不会再把用户提示改写成误导性的 workspace/thread busy，也不会对同一根因重复刷失败卡。2026-05-01 的新变化是：headless attach/reuse/restart/create/reject 已进一步收口成单一路径，visible 与 compatibility 继续拆层，但所有 consumer 现在都共享同一个 `desired surface contract vs observed instance contract` 解析核。结果是：
 > 1. visible 但 contract mismatch 的 workspace/session 仍然可见，不会再被 `/list`、`/use`、workspace recency、target picker 直接吞掉；
 > 2. 这些 mismatch 候选不会再假装“可直接接管”；
@@ -1150,6 +1150,10 @@ review mode 第一版当前不是新的 route state，而是挂在 surface 上�
 
 `SharedAttach` 不写入竞争性的 instance/workspace/thread claim，但它的 pinned selection 仍是有效路由租约：要求选中 thread 在 attached instance 上可见、属于同一 workspace，且不存在不允许共享的 exclusive claim。新会话首轮一旦 materialize 出真实 thread ID，企业微信 surface 会保持该 lease-less selection；后续普通文本可直接续发，不能因为 `threadClaims` 中没有以企业微信 surface 为 owner 的记录而退回 `thread_not_ready`。
 
+### 4.26 Codex pinned thread 的 rollout 丢失恢复（Updated: 2026-08-07）
+
+当 headless Codex surface 仍处于 `R2 AttachedPinned`，但 app-server 在 `thread/resume` 响应中明确返回 `no rollout found for thread id ...` 时，wrapper 会把它归一成 `codex_thread_not_found`，而不是只透传原始 JSON-RPC 文案。orchestrator 会把当前 queue item 标记为失败，且不会把这条输入静默改投到新上下文；随后解除失效 thread 选择并在同一 attached workspace 进入 `R5 NewThreadReady`，向原消息回复“本条未执行，下一条会创建新会话”。这样本地 session/rollout 被外部清理后，持久化的 `SelectedThreadID` 不会让 surface 永久停在每条消息都重复 resume 失败的半死态。
+
 ## 5. 主要状态迁移
 
 ### 5.1 attach / use / follow / new
@@ -1868,6 +1872,7 @@ retained-offline overlay 额外规则：
 46. **企业微信 detached 首条文本只按路径优先级挑在线 headless，Codex surface 会跨 backend 共享接入 Claude instance**：已修复。自动工作区选择、owner 查找与 shared attach 最终落点现在都以同一个 desired backend 过滤；新企业微信 surface 默认 Codex，显式保存为 Claude 的既有 surface 仍保持 Claude，不再因 Claude 外部目录排在 Codex 内部 pool 前而误路由并暴露无关 OAuth 错误。
 47. **新增 Agy backend 后若仍落入 Codex 的 normalize/default catalog 分支，会把 `/mode agy` 静默改回 Codex 或展示错误历史**：已修复。`Backend=agy` 现在贯穿 surface/instance/launch contract、workspace defaults、surface resume 与 managed headless launch；Agy 没有离线 catalog 时显式返回空结果，不回退 Codex catalog。执行中的 Agy turn 可由 `/stop` 结束，启动失败、断连和超时继续复用既有 `PendingHeadless` watchdog 与 detach 逃生口。
 48. **企业微信 `SharedAttach` 新会话首轮已完成并保存 `SelectedThreadID`，但因不写 exclusive thread claim，下一条文本仍被误判为未选择会话**：已修复。shared surface 的 pinned thread 在同 attached instance/workspace 内可见且无冲突 claim 时，`surfaceOwnsThread` 会把 lease-less selection 视为有效路由租约；后续文本直接续发到刚创建的 thread。
+49. **Codex 本地 rollout 已被清理，但 surface 仍持久化旧 `SelectedThreadID`，导致每条消息都重复返回 `no rollout found`**：已修复。明确的 missing-rollout resume rejection 会失败当前消息、解除 stale pinned 选择并进入同工作区 `R5 NewThreadReady`；下一条消息可创建新会话，不会继续命中失效 thread，也不会把失败消息偷偷改投新上下文。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 

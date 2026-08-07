@@ -171,6 +171,46 @@ func (s *Service) remoteTurnFailureEvent(outcome *remoteTurnOutcome) eventcontra
 	return event
 }
 
+func (s *Service) recoverMissingCodexThread(outcome *remoteTurnOutcome) []eventcontract.Event {
+	if outcome == nil || outcome.Surface == nil || outcome.Problem == nil ||
+		strings.TrimSpace(outcome.Problem.Code) != "codex_thread_not_found" ||
+		outcome.CompletionOrigin != agentproto.TurnCompletionOriginThreadResumeRejected {
+		return nil
+	}
+	surface := outcome.Surface
+	inst := s.root.Instances[outcome.InstanceID]
+	cwd := strings.TrimSpace(firstNonEmpty(
+		queueItemFrozenCWD(outcome.Item),
+		s.surfaceCurrentWorkspaceKey(surface),
+	))
+	if cwd == "" || inst == nil {
+		return nil
+	}
+	if !s.transitionSurfaceRouteCore(surface, inst, surfaceRouteCoreState{
+		AttachedInstanceID: strings.TrimSpace(surface.AttachedInstanceID),
+		RouteMode:          state.RouteModeNewThreadReady,
+		PreparedThreadCWD:  cwd,
+	}) {
+		return nil
+	}
+	surface.PreparedAt = s.now()
+	events := s.threadSelectionEvents(surface, "", string(state.RouteModeNewThreadReady), preparedNewThreadSelectionTitle())
+	notice := control.Notice{
+		Code: "codex_thread_not_found",
+		Text: "原会话的本地记录已不存在，本条消息未执行。已解除失效会话绑定；下一条消息会在当前工作区创建新会话。",
+	}
+	events = append(events, eventcontract.Event{
+		Kind:             eventcontract.KindNotice,
+		SurfaceSessionID: surface.SurfaceSessionID,
+		SourceMessageID:  strings.TrimSpace(firstNonEmpty(outcome.Binding.ReplyToMessageID, outcome.Item.ReplyToMessageID, outcome.Item.SourceMessageID)),
+		Notice:           &notice,
+	})
+	if strings.TrimSpace(events[len(events)-1].SourceMessageID) != "" {
+		events[len(events)-1].Meta.MessageDelivery = eventcontract.ReplyThreadAppendOnlyDelivery()
+	}
+	return events
+}
+
 func remoteTurnEventShowsOutput(event agentproto.Event) bool {
 	switch event.Kind {
 	case agentproto.EventItemStarted,
