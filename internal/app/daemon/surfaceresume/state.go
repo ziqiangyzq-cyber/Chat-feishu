@@ -36,6 +36,8 @@ type Entry struct {
 	ResumeWorkspaceKey string    `json:"resumeWorkspaceKey,omitempty"`
 	ResumeRouteMode    string    `json:"resumeRouteMode,omitempty"`
 	ResumeHeadless     bool      `json:"resumeHeadless,omitempty"`
+	ResumeFailureCode  string    `json:"resumeFailureCode,omitempty"`
+	ResumeFailureCount int       `json:"resumeFailureCount,omitempty"`
 	UpdatedAt          time.Time `json:"updatedAt,omitempty"`
 }
 
@@ -221,6 +223,13 @@ func NormalizeEntry(entry Entry) (Entry, bool) {
 	entry.ResumeThreadID = strings.TrimSpace(entry.ResumeThreadID)
 	entry.ResumeThreadCWD = state.NormalizeWorkspaceKey(entry.ResumeThreadCWD)
 	entry.ResumeWorkspaceKey = state.NormalizeWorkspaceKey(entry.ResumeWorkspaceKey)
+	entry.ResumeFailureCode = strings.TrimSpace(entry.ResumeFailureCode)
+	if entry.ResumeFailureCount < 0 {
+		entry.ResumeFailureCount = 0
+	}
+	if entry.ResumeFailureCode == "" {
+		entry.ResumeFailureCount = 0
+	}
 	entry.ResumeThreadTitle = threadtitle.NormalizeStoredInput(entry.ResumeThreadTitle, threadtitle.Context{
 		ThreadID:     entry.ResumeThreadID,
 		ThreadCWD:    entry.ResumeThreadCWD,
@@ -259,5 +268,7 @@ func SameEntryContent(left, right Entry) bool {
 		state.NormalizeWorkspaceKey(left.ResumeThreadCWD) == state.NormalizeWorkspaceKey(right.ResumeThreadCWD) &&
 		state.NormalizeWorkspaceKey(left.ResumeWorkspaceKey) == state.NormalizeWorkspaceKey(right.ResumeWorkspaceKey) &&
 		strings.TrimSpace(left.ResumeRouteMode) == strings.TrimSpace(right.ResumeRouteMode) &&
-		left.ResumeHeadless == right.ResumeHeadless
+		left.ResumeHeadless == right.ResumeHeadless &&
+		strings.TrimSpace(left.ResumeFailureCode) == strings.TrimSpace(right.ResumeFailureCode) &&
+		left.ResumeFailureCount == right.ResumeFailureCount
 }

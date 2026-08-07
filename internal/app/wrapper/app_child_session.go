@@ -19,12 +19,15 @@ type childSession struct {
 	stdin       io.WriteCloser
 	stdout      io.Reader
 	stderr      io.Reader
+	stdoutClose io.Closer
+	stderrClose io.Closer
 	generation  int64
 	waitErr     chan error
 	cancel      context.CancelFunc
 	ioCancel    context.CancelFunc
 	writeCancel context.CancelFunc
 	stdoutDone  chan struct{}
+	stderrDone  chan struct{}
 	writeDone   chan struct{}
 }
 
@@ -45,25 +48,24 @@ func (a *App) launchCodexChildSession(ctx context.Context, rawLogger *debuglog.R
 	}
 	a.debugf("child started: binary=%s pid=%d process_cwd=%s workspace=%s", a.config.CodexRealBinary, cmd.Process.Pid, cmd.Dir, a.config.WorkspaceRoot)
 
-	bootstrappedStdout, err := a.bootstrapHeadlessCodex(childStdin, childStdout, rawLogger, reportProblem)
+	supervisor := superviseStartedChild(cmd, childStderr)
+	bootstrappedStdout, err := supervisor.run(ctx, agentproto.BackendCodex, func() (io.Reader, error) {
+		return a.bootstrapHeadlessCodex(childStdin, childStdout, rawLogger, reportProblem)
+	})
 	if err != nil {
 		childCancel()
-		_ = cmd.Wait()
 		return nil, err
 	}
 
-	waitErr := make(chan error, 1)
-	go func() {
-		waitErr <- cmd.Wait()
-	}()
-
 	return &childSession{
-		cmd:     cmd,
-		stdin:   childStdin,
-		stdout:  bootstrappedStdout,
-		stderr:  childStderr,
-		waitErr: waitErr,
-		cancel:  childCancel,
+		cmd:         cmd,
+		stdin:       childStdin,
+		stdout:      bootstrappedStdout,
+		stderr:      nil,
+		stdoutClose: childStdout,
+		stderrClose: childStderr,
+		waitErr:     supervisor.waitErr,
+		cancel:      childCancel,
 	}, nil
 }
 
@@ -81,9 +83,17 @@ func startChildSessionIO(ctx context.Context, session *childSession, parentStdou
 	session.writeCancel = writeCancel
 	session.writeDone = make(chan struct{})
 	session.stdoutDone = make(chan struct{})
+	session.stderrDone = make(chan struct{})
 	go writeLoop(writeCtx, session.stdin, writeCh, errCh, debugf, rawLogger, reportProblem, session.writeDone)
 	go stdoutLoop(ioCtx, session.stdout, parentStdout, writeCh, runtime, client, commandResponses, turnTracker, activeGeneration, generation, errCh, debugf, rawLogger, reportProblem, session.stdoutDone)
-	go streamCopy(session.stderr, parentStderr, errCh)
+	if session.stderr != nil {
+		go func() {
+			defer close(session.stderrDone)
+			streamCopy(session.stderr, parentStderr, errCh)
+		}()
+	} else {
+		close(session.stderrDone)
+	}
 }
 
 func signalStopChildSession(session *childSession, debugf func(string, ...any)) {
@@ -97,7 +107,7 @@ func signalStopChildSession(session *childSession, debugf func(string, ...any)) 
 		session.ioCancel()
 	}
 	if session.cmd != nil && session.cmd.Process != nil && session.cmd.Process.Pid > 0 {
-		if err := relayruntime.TerminateProcess(session.cmd.Process.Pid, wrapperChildStopGrace); err != nil && debugf != nil {
+		if err := relayruntime.TerminateManagedProcess(session.cmd.Process.Pid, wrapperChildStopGrace); err != nil && debugf != nil {
 			debugf("child stop failed: pid=%d err=%v", session.cmd.Process.Pid, err)
 		}
 	}

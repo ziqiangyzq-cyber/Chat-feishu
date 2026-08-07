@@ -13,12 +13,14 @@ import (
 )
 
 type surfaceResumeRecoveryState struct {
-	Entry             surfaceresume.Entry
-	NextAttemptAt     time.Time
-	LastAttemptAt     time.Time
-	LastFailureCode   string
-	StickyFailureCode string
-	LastNoticeCode    string
+	Entry               surfaceresume.Entry
+	NextAttemptAt       time.Time
+	LastAttemptAt       time.Time
+	LastFailureCode     string
+	StickyFailureCode   string
+	LastNoticeCode      string
+	TerminalFailureCode string
+	ConsecutiveFailures int
 }
 
 type vscodeMigrationFlowRecord struct {

@@ -133,6 +133,22 @@ func terminateProcess(pid int, grace time.Duration) error {
 	return nil
 }
 
+func prepareManagedProcess(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	execlaunch.Prepare(cmd)
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP
+}
+
+func terminateManagedProcess(pid int, grace time.Duration) error {
+	return terminateProcess(pid, grace)
+}
+
 func prepareDetachedProcess(cmd *exec.Cmd) {
 	if cmd == nil {
 		return

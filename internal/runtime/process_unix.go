@@ -84,6 +84,49 @@ func terminateProcess(pid int, grace time.Duration) error {
 	return fmt.Errorf("process %d still alive after SIGKILL timeout", pid)
 }
 
+func prepareManagedProcess(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	execlaunch.Prepare(cmd)
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+func terminateManagedProcess(pid int, grace time.Duration) error {
+	if pid <= 0 {
+		return nil
+	}
+	// A negative pid addresses the process group created by PrepareManagedProcess.
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if !processGroupAlive(pid) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !processGroupAlive(pid) {
+		return nil
+	}
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
+}
+
+func processGroupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pgid, syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
 func reapExitedChild(pid int) (bool, error) {
 	if pid <= 0 {
 		return false, nil

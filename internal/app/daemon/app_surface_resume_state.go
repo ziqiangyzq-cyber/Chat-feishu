@@ -120,8 +120,14 @@ func (a *App) syncSurfaceResumeStateLocked(clearTargets map[string]bool) {
 			continue
 		}
 		desired[entry.SurfaceSessionID] = entry
-		if current, ok := a.surfaceResumeRuntime.store.Get(entry.SurfaceSessionID); ok && surfaceresume.SameEntryContent(current, entry) {
-			continue
+		if current, ok := a.surfaceResumeRuntime.store.Get(entry.SurfaceSessionID); ok {
+			if sameSurfaceResumeRecoveryTarget(current, entry) {
+				entry.ResumeFailureCode = current.ResumeFailureCode
+				entry.ResumeFailureCount = current.ResumeFailureCount
+			}
+			if surfaceresume.SameEntryContent(current, entry) {
+				continue
+			}
 		}
 		entry.UpdatedAt = now
 		if err := a.surfaceResumeRuntime.store.Put(entry); err != nil {
@@ -166,8 +172,14 @@ func (a *App) syncSurfaceResumeStateForInstanceLocked(instanceID string, clearTa
 			}
 			continue
 		}
-		if current, ok := a.surfaceResumeRuntime.store.Get(entry.SurfaceSessionID); ok && surfaceresume.SameEntryContent(current, entry) {
-			continue
+		if current, ok := a.surfaceResumeRuntime.store.Get(entry.SurfaceSessionID); ok {
+			if sameSurfaceResumeRecoveryTarget(current, entry) {
+				entry.ResumeFailureCode = current.ResumeFailureCode
+				entry.ResumeFailureCount = current.ResumeFailureCount
+			}
+			if surfaceresume.SameEntryContent(current, entry) {
+				continue
+			}
 		}
 		entry.UpdatedAt = now
 		if err := a.surfaceResumeRuntime.store.Put(entry); err != nil {
@@ -411,7 +423,15 @@ func (a *App) syncSurfaceResumeRecoveryStateLocked() {
 		}
 		current := a.surfaceResumeRuntime.recovery[surfaceID]
 		if current == nil || !sameSurfaceResumeRecoveryTarget(current.Entry, entry) {
-			a.surfaceResumeRuntime.recovery[surfaceID] = &surfaceResumeRecoveryState{Entry: entry}
+			recovery := &surfaceResumeRecoveryState{
+				Entry:               entry,
+				LastFailureCode:     entry.ResumeFailureCode,
+				ConsecutiveFailures: entry.ResumeFailureCount,
+			}
+			if isTerminalSurfaceResumeFailure(entry.ResumeFailureCode) || entry.ResumeFailureCount >= 3 {
+				recovery.TerminalFailureCode = entry.ResumeFailureCode
+			}
+			a.surfaceResumeRuntime.recovery[surfaceID] = recovery
 			continue
 		}
 		current.Entry = entry
@@ -466,7 +486,7 @@ func (a *App) maybeRecoverHeadlessSurfacesLocked(now time.Time) []eventcontract.
 		if recovery == nil {
 			continue
 		}
-		if !recovery.NextAttemptAt.IsZero() && now.Before(recovery.NextAttemptAt) {
+		if !surfaceResumeRecoveryDue(recovery, now) {
 			continue
 		}
 		if recovery.Entry.ResumeHeadless && a.shouldDeferHeadlessResumeUntilInitialRefreshLocked(recovery.Entry, allowMissingTargetFailure) {
@@ -564,7 +584,7 @@ func (a *App) maybeRecoverVSCodeSurfacesLocked(now time.Time) []eventcontract.Ev
 		if recovery == nil || !state.IsVSCodeProductMode(state.ProductMode(recovery.Entry.ProductMode)) {
 			continue
 		}
-		if !recovery.NextAttemptAt.IsZero() && now.Before(recovery.NextAttemptAt) {
+		if !surfaceResumeRecoveryDue(recovery, now) {
 			continue
 		}
 		restoreEvents, result := a.service.TryAutoResumeVSCodeSurface(surfaceID, recovery.Entry.ResumeInstanceID)
@@ -670,6 +690,13 @@ func (a *App) clearSurfaceResumeBackoffLocked(surfaceID string) {
 	recovery.LastFailureCode = ""
 	recovery.StickyFailureCode = ""
 	recovery.LastNoticeCode = ""
+	recovery.TerminalFailureCode = ""
+	recovery.ConsecutiveFailures = 0
+	recovery.Entry.ResumeFailureCode = ""
+	recovery.Entry.ResumeFailureCount = 0
+	if a.surfaceResumeRuntime.store != nil {
+		_ = a.surfaceResumeRuntime.store.Put(recovery.Entry)
+	}
 }
 
 func (a *App) clearSurfaceResumeAttemptProgressLocked(surfaceID string) {
@@ -679,7 +706,6 @@ func (a *App) clearSurfaceResumeAttemptProgressLocked(surfaceID string) {
 	}
 	recovery.NextAttemptAt = time.Time{}
 	recovery.LastAttemptAt = time.Time{}
-	recovery.LastFailureCode = ""
 }
 
 func (a *App) setSurfaceResumeBackoffLocked(surfaceID, code string, now time.Time) {
@@ -692,53 +718,11 @@ func (a *App) setSurfaceResumeBackoffLocked(surfaceID, code string, now time.Tim
 	recovery.LastFailureCode = strings.TrimSpace(code)
 }
 
-func surfaceResumeFailureSpecificity(code string) int {
-	switch strings.TrimSpace(code) {
-	case "headless_restore_provider_unavailable",
-		"headless_restore_claude_profile_unavailable":
-		return 3
-	case "headless_restore_runtime_unavailable":
-		return 2
-	case "headless_restore_start_failed",
-		"headless_restore_start_timeout":
-		return 1
-	default:
-		return 0
+func surfaceResumeRecoveryDue(recovery *surfaceResumeRecoveryState, now time.Time) bool {
+	if recovery == nil || strings.TrimSpace(recovery.TerminalFailureCode) != "" {
+		return false
 	}
-}
-
-func shouldUpgradeSurfaceResumeStickyFailure(current, next string) bool {
-	return surfaceResumeFailureSpecificity(next) > surfaceResumeFailureSpecificity(current)
-}
-
-func (a *App) recordSurfaceResumeFailureLocked(surfaceID, code string, now time.Time) (string, bool) {
-	recovery := a.surfaceResumeRuntime.recovery[strings.TrimSpace(surfaceID)]
-	if recovery == nil {
-		return strings.TrimSpace(code), false
-	}
-	code = strings.TrimSpace(code)
-	recovery.LastAttemptAt = now
-	recovery.NextAttemptAt = now.Add(surfaceResumeRetryBackoff)
-	recovery.LastFailureCode = code
-	if shouldUpgradeSurfaceResumeStickyFailure(recovery.StickyFailureCode, code) {
-		recovery.StickyFailureCode = code
-	}
-	displayCode := strings.TrimSpace(firstNonEmpty(recovery.StickyFailureCode, code))
-	if displayCode == "" {
-		return "", false
-	}
-	if recovery.LastNoticeCode == "" {
-		recovery.LastNoticeCode = displayCode
-		return displayCode, true
-	}
-	if displayCode == recovery.LastNoticeCode {
-		return displayCode, false
-	}
-	if recovery.StickyFailureCode != "" {
-		recovery.LastNoticeCode = displayCode
-		return displayCode, true
-	}
-	return displayCode, false
+	return recovery.NextAttemptAt.IsZero() || !now.Before(recovery.NextAttemptAt)
 }
 
 func rewriteHeadlessRestoreFailureEvents(events []eventcontract.Event, displayCode string, emit bool) []eventcontract.Event {

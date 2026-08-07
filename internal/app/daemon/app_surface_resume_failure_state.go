@@ -1,0 +1,134 @@
+package daemon
+
+import (
+	"strings"
+	"time"
+)
+
+func surfaceResumeFailureSpecificity(code string) int {
+	switch strings.TrimSpace(code) {
+	case "headless_restore_provider_unavailable",
+		"headless_restore_claude_profile_unavailable",
+		"headless_restore_workspace_missing",
+		"profile_definition_incomplete",
+		"profile_secret_missing",
+		"oauth_missing",
+		"oauth_probe_unknown",
+		"oauth_deployment_unsupported",
+		"codex_capability_unsupported",
+		"codex_probe_contract_mismatch",
+		"managed_model_catalog_missing",
+		"profile_revision_unavailable":
+		return 3
+	case "headless_restore_runtime_unavailable":
+		return 2
+	case "codex_binary_unavailable",
+		"codex_probe_timeout",
+		"codex_probe_unavailable":
+		return 2
+	case "headless_restore_start_failed",
+		"headless_restore_start_timeout":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func shouldUpgradeSurfaceResumeStickyFailure(current, next string) bool {
+	if isTerminalSurfaceResumeFailure(next) && !isTerminalSurfaceResumeFailure(current) {
+		return true
+	}
+	return surfaceResumeFailureSpecificity(next) > surfaceResumeFailureSpecificity(current)
+}
+
+func isTerminalSurfaceResumeFailure(code string) bool {
+	switch strings.TrimSpace(code) {
+	case "headless_restore_workspace_missing",
+		"headless_restore_thread_cwd_missing",
+		"headless_restore_provider_unavailable",
+		"headless_restore_claude_profile_unavailable",
+		"headless_restore_runtime_unavailable",
+		"thread_cwd_missing",
+		"workspace_not_found",
+		"surface_resume_target_not_found",
+		"surface_resume_instance_not_found",
+		"profile_definition_incomplete",
+		"profile_secret_missing",
+		"oauth_missing",
+		"oauth_probe_unknown",
+		"oauth_deployment_unsupported",
+		"codex_capability_unsupported",
+		"codex_probe_contract_mismatch",
+		"managed_model_catalog_missing",
+		"profile_revision_unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldEmitSurfaceResumeFailureNotice(recovery *surfaceResumeRecoveryState, code string) bool {
+	if recovery != nil && recovery.LastNoticeCode == "" {
+		return true
+	}
+	if recovery != nil && strings.EqualFold(strings.TrimSpace(recovery.Entry.ProductMode), "vscode") {
+		return true
+	}
+	if recovery != nil && strings.TrimSpace(recovery.TerminalFailureCode) != "" {
+		return true
+	}
+	return isTerminalSurfaceResumeFailure(code)
+}
+
+func (a *App) recordSurfaceResumeFailureLocked(surfaceID, code string, now time.Time) (string, bool) {
+	recovery := a.surfaceResumeRuntime.recovery[strings.TrimSpace(surfaceID)]
+	if recovery == nil {
+		return strings.TrimSpace(code), false
+	}
+	code = strings.TrimSpace(code)
+	recovery.LastAttemptAt = now
+	recovery.NextAttemptAt = now.Add(surfaceResumeRetryBackoff)
+	if code == recovery.LastFailureCode {
+		recovery.ConsecutiveFailures++
+	} else {
+		recovery.ConsecutiveFailures = 1
+	}
+	recovery.LastFailureCode = code
+	if isTerminalSurfaceResumeFailure(code) {
+		recovery.TerminalFailureCode = code
+	} else if recovery.ConsecutiveFailures >= 3 {
+		// Stop an otherwise permanent background recovery loop. An explicit
+		// target or mode action clears this state through the existing reset path.
+		recovery.TerminalFailureCode = code
+	}
+	recovery.Entry.ResumeFailureCode = code
+	recovery.Entry.ResumeFailureCount = recovery.ConsecutiveFailures
+	if a.surfaceResumeRuntime.store != nil {
+		_ = a.surfaceResumeRuntime.store.Put(recovery.Entry)
+	}
+	if shouldUpgradeSurfaceResumeStickyFailure(recovery.StickyFailureCode, code) {
+		recovery.StickyFailureCode = code
+	}
+	displayCode := strings.TrimSpace(firstNonEmpty(recovery.StickyFailureCode, code))
+	if displayCode == "" {
+		return "", false
+	}
+	if !shouldEmitSurfaceResumeFailureNotice(recovery, displayCode) {
+		return displayCode, false
+	}
+	if recovery.LastNoticeCode == "" {
+		recovery.LastNoticeCode = displayCode
+		return displayCode, true
+	}
+	if displayCode == recovery.LastNoticeCode {
+		if strings.TrimSpace(recovery.TerminalFailureCode) != "" {
+			return displayCode, true
+		}
+		return displayCode, false
+	}
+	if recovery.StickyFailureCode != "" {
+		recovery.LastNoticeCode = displayCode
+		return displayCode, true
+	}
+	return displayCode, false
+}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kxn/codex-remote-feishu/internal/config"
+	relayruntime "github.com/kxn/codex-remote-feishu/internal/runtime"
 )
 
 func firstNonEmpty(values ...string) string {
@@ -32,6 +33,7 @@ func parseBoolEnv(key string) bool {
 }
 
 func startChild(cmd *exec.Cmd) (io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+	relayruntime.PrepareManagedProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, nil, err
