@@ -154,6 +154,19 @@ func TestParseMessageEventCarriesInboundMeta(t *testing.T) {
 	if !action.Inbound.EventCreateTime.Equal(time.UnixMilli(1710000000000).UTC()) || !action.Inbound.MessageCreateTime.Equal(time.UnixMilli(1710000001000).UTC()) {
 		t.Fatalf("unexpected inbound times: %#v", action.Inbound)
 	}
+	if action.BridgePrompt == "" {
+		t.Fatal("expected trusted Feishu context to be generated automatically")
+	}
+	for _, want := range []string{
+		`"surface":"feishu:app-1"`,
+		`"senderId":"ou_user"`,
+		`"chatId":"oc_chat"`,
+		`"messageIds":["om-msg-1"]`,
+	} {
+		if !strings.Contains(action.BridgePrompt, want) {
+			t.Fatalf("bridge prompt missing %q: %s", want, action.BridgePrompt)
+		}
+	}
 }
 
 func TestParseMenuEventCarriesInboundMeta(t *testing.T) {

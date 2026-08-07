@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +9,48 @@ import (
 	"github.com/kxn/codex-remote-feishu/internal/core/control"
 	"github.com/kxn/codex-remote-feishu/internal/core/state"
 )
+
+func TestTextMessageInjectsTrustedBridgeContextWithoutUserInput(t *testing.T) {
+	now := time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.UpsertInstance(&state.InstanceRecord{
+		InstanceID:              "inst-1",
+		DisplayName:             "droid",
+		WorkspaceRoot:           "/data/dl/droid",
+		WorkspaceKey:            "/data/dl/droid",
+		ShortName:               "droid",
+		Online:                  true,
+		ObservedFocusedThreadID: "thread-1",
+		Threads: map[string]*state.ThreadRecord{
+			"thread-1": {ThreadID: "thread-1", Name: "热工计算", CWD: "/data/dl/droid"},
+		},
+	})
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionAttachInstance, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1", InstanceID: "inst-1"})
+
+	svc.ApplySurfaceAction(control.Action{
+		Kind:             control.ActionTextMessage,
+		SurfaceSessionID: "surface-1",
+		MessageID:        "msg-text",
+		Text:             "开始正式计算",
+		Inputs:           []agentproto.Input{{Type: agentproto.InputText, Text: "开始正式计算"}},
+		BridgePrompt:     `<bridge_context>{"senderId":"user-1","chatId":"chat-1","messageIds":["msg-text"]}</bridge_context>`,
+	})
+
+	surface := svc.root.Surfaces["surface-1"]
+	var item *state.QueueItemRecord
+	for _, current := range surface.QueueItems {
+		item = current
+	}
+	if item == nil || len(item.Inputs) != 2 {
+		t.Fatalf("expected bridge context plus user input, got %#v", item)
+	}
+	if item.Inputs[0].Type != agentproto.InputText || !strings.Contains(item.Inputs[0].Text, `"senderId":"user-1"`) {
+		t.Fatalf("trusted bridge context was not injected first: %#v", item.Inputs)
+	}
+	if item.Inputs[1].Text != "开始正式计算" {
+		t.Fatalf("user input changed while injecting bridge context: %#v", item.Inputs)
+	}
+}
 
 func TestTextMessageFreezesThreadAndConsumesStagedImages(t *testing.T) {
 	now := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
