@@ -14,6 +14,7 @@ import (
 func clearFeishuMCPBearerEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(feishuMCPBearerEnvName, "")
+	t.Setenv("CODEX_HOME", t.TempDir())
 }
 
 func TestBuildCodexChildLaunchAddsFeishuMCPForHeadless(t *testing.T) {
@@ -68,6 +69,35 @@ func TestBuildCodexChildLaunchDisablesConfiguredNodeREPLForHeadless(t *testing.T
 
 	if !containsAdjacentArgs(args, "-c", headlessNodeREPLDisable) {
 		t.Fatalf("expected configured node_repl to be disabled for headless child, got %#v", args)
+	}
+}
+
+func TestBuildCodexChildLaunchDisablesConfigFileNodeREPLForHeadless(t *testing.T) {
+	clearFeishuMCPBearerEnv(t)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
+[mcp_servers.node_repl]
+command = "/Applications/ChatGPT.app/Contents/Resources/node"
+args = ["node_repl.mjs"]
+`), 0o600); err != nil {
+		t.Fatalf("write Codex config: %v", err)
+	}
+	statePath := writeToolServiceState(t, `{
+  "url": "http://127.0.0.1:9702",
+  "token": "secret-token",
+  "tokenType": "bearer"
+}`)
+	app := New(Config{
+		InstanceID:   "inst-1",
+		Source:       "headless",
+		RuntimePaths: relayruntime.Paths{ToolServiceFile: statePath},
+	})
+
+	args, _ := app.buildCodexChildLaunch([]string{"app-server"})
+
+	if !containsAdjacentArgs(args, "-c", headlessNodeREPLDisable) {
+		t.Fatalf("expected config-file node_repl to be disabled for headless child, got %#v", args)
 	}
 }
 

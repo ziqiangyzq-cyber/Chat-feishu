@@ -42,10 +42,13 @@ func (a *App) applyCodexFeishuMCPPublication(baseArgs, baseEnv []string) ([]stri
 		return args, env
 	}
 	// Desktop's node_repl targets an interactive native GUI pipe. Disable it
-	// only when the child launch already carries that server's transport.
+	// only when the effective Codex config already carries that server.
 	// Adding enabled=false for an otherwise absent server creates an incomplete
 	// MCP entry, which Codex rejects before app-server initialization.
-	if hasCodexMCPServerOverride(args, "node_repl") {
+	nodeREPLDeclared, err := config.CodexMCPServerDeclared(args, env, "node_repl")
+	if err != nil {
+		a.debugf("headless node_repl isolation skipped: inspect Codex config failed err=%v", err)
+	} else if nodeREPLDeclared {
 		args = append(args, "-c", headlessNodeREPLDisable)
 	}
 	args = append(
@@ -55,24 +58,6 @@ func (a *App) applyCodexFeishuMCPPublication(baseArgs, baseEnv []string) ([]stri
 	)
 	env = upsertEnvValue(env, feishuMCPBearerEnvName, strings.TrimSpace(info.Token))
 	return args, env
-}
-
-func hasCodexMCPServerOverride(args []string, serverID string) bool {
-	prefix := "mcp_servers." + strings.TrimSpace(serverID)
-	if prefix == "mcp_servers." {
-		return false
-	}
-	for index := 0; index+1 < len(args); index++ {
-		if args[index] != "-c" && args[index] != "--config" {
-			continue
-		}
-		key, _, ok := strings.Cut(strings.TrimSpace(args[index+1]), "=")
-		if ok && (key == prefix || strings.HasPrefix(key, prefix+".")) {
-			return true
-		}
-		index++
-	}
-	return false
 }
 
 func (a *App) applyClaudeFeishuMCPPublication(baseArgs, baseEnv []string) ([]string, []string) {
