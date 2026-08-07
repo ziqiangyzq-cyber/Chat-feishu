@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kxn/codex-remote-feishu/internal/config"
 )
 
 func withDarwinGOOS(t *testing.T) func() {
@@ -119,6 +121,7 @@ func TestRenderLaunchdUserPlistContainsKeyElements(t *testing.T) {
 	stubServiceUserHome(t, baseDir)
 	binaryPath := seedBinary(t, filepath.Join(baseDir, "bin", "codex-remote"), "binary")
 	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv(config.RemoteTurnStartTimeoutEnv, "180s")
 
 	state := InstallState{
 		InstanceID:      "stable",
@@ -152,6 +155,8 @@ func TestRenderLaunchdUserPlistContainsKeyElements(t *testing.T) {
 		"<key>XDG_CONFIG_HOME</key>",
 		"<key>XDG_DATA_HOME</key>",
 		"<key>XDG_STATE_HOME</key>",
+		"<key>CODEX_REMOTE_TURN_START_TIMEOUT</key>",
+		"<string>180s</string>",
 		"<key>PATH</key>",
 		"<key>StandardOutPath</key>",
 		"<key>StandardErrorPath</key>",
@@ -449,7 +454,7 @@ func TestLaunchdUserBootstrapRetriesTransientFailure(t *testing.T) {
 	defer withMockLaunchctl(t, func(_ context.Context, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "bootstrap" {
 			attempts++
-			if attempts == 1 {
+			if attempts < 6 {
 				return "", fmt.Errorf("exit status 5: Bootstrap failed: 5: Input/output error")
 			}
 		}
@@ -459,8 +464,8 @@ func TestLaunchdUserBootstrapRetriesTransientFailure(t *testing.T) {
 	if err := launchdUserBootstrap(context.Background(), state); err != nil {
 		t.Fatalf("launchdUserBootstrap: %v", err)
 	}
-	if attempts != 2 {
-		t.Fatalf("bootstrap attempts = %d, want 2", attempts)
+	if attempts != 6 {
+		t.Fatalf("bootstrap attempts = %d, want 6", attempts)
 	}
 }
 

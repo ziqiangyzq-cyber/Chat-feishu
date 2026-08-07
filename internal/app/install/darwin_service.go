@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kxn/codex-remote-feishu/internal/config"
 	"github.com/kxn/codex-remote-feishu/internal/execlaunch"
 )
 
@@ -16,8 +17,8 @@ var launchctlUserRunner = runLaunchctl
 var launchdUserSleep = time.Sleep
 
 const (
-	launchdBootstrapAttempts = 5
-	launchdBootstrapBackoff  = 200 * time.Millisecond
+	launchdBootstrapAttempts = 10
+	launchdBootstrapBackoff  = 500 * time.Millisecond
 	launchdRestartTimeout    = 5 * time.Second
 	launchdRestartPoll       = 100 * time.Millisecond
 )
@@ -125,8 +126,16 @@ func renderLaunchdUserPlist(state InstallState) (string, error) {
 		`        <string>` + xmlEscape(dataHome) + `</string>`,
 		`        <key>XDG_STATE_HOME</key>`,
 		`        <string>` + xmlEscape(stateHome) + `</string>`,
+	}
+	if turnStartTimeout := strings.TrimSpace(os.Getenv(config.RemoteTurnStartTimeoutEnv)); turnStartTimeout != "" {
+		lines = append(lines,
+			`        <key>`+config.RemoteTurnStartTimeoutEnv+`</key>`,
+			`        <string>`+xmlEscape(turnStartTimeout)+`</string>`,
+		)
+	}
+	lines = append(lines,
 		`        <key>PATH</key>`,
-		`        <string>` + xmlEscape(systemdUserServicePATH()) + `</string>`,
+		`        <string>`+xmlEscape(systemdUserServicePATH())+`</string>`,
 		`    </dict>`,
 		`    <key>RunAtLoad</key>`,
 		`    <true/>`,
@@ -136,13 +145,13 @@ func renderLaunchdUserPlist(state InstallState) (string, error) {
 		`        <false/>`,
 		`    </dict>`,
 		`    <key>StandardOutPath</key>`,
-		`    <string>` + xmlEscape(logPath) + `</string>`,
+		`    <string>`+xmlEscape(logPath)+`</string>`,
 		`    <key>StandardErrorPath</key>`,
-		`    <string>` + xmlEscape(logPath) + `</string>`,
+		`    <string>`+xmlEscape(logPath)+`</string>`,
 		`</dict>`,
 		`</plist>`,
 		``,
-	}
+	)
 	return strings.Join(lines, "\n"), nil
 }
 
