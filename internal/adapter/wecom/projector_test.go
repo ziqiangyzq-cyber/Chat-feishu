@@ -258,6 +258,7 @@ func TestProjectTargetPickerSucceededRendersStatusMarkdown(t *testing.T) {
 }
 
 func TestProjectRequestApproveRejectButtons(t *testing.T) {
+	p := NewProjector()
 	view := control.FeishuRequestView{
 		RequestID:       "req-1",
 		Title:           "是否执行计划?",
@@ -267,7 +268,7 @@ func TestProjectRequestApproveRejectButtons(t *testing.T) {
 			{OptionID: "reject", Label: "拒绝"},
 		},
 	}
-	frames := NewProjector().ProjectEvent(eventcontract.Event{
+	frames := p.ProjectEvent(eventcontract.Event{
 		Payload: eventcontract.RequestPayload{View: view},
 	})
 	if len(frames) == 0 {
@@ -277,7 +278,7 @@ func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	if card == nil || card.CardType != cardTypeButtonInteraction {
 		t.Fatalf("expected button_interaction card, got %+v", card)
 	}
-	if card.TaskID != requestCardTaskID("req-1", 3, "options") {
+	if len(card.TaskID) > maxReqIDLength || p.resolveRequestCardTaskID(card.TaskID) != "req-1" {
 		t.Fatalf("unexpected request option task_id: %q", card.TaskID)
 	}
 	if len(card.ButtonList) != 2 {
@@ -294,7 +295,45 @@ func TestProjectRequestApproveRejectButtons(t *testing.T) {
 	}
 }
 
+func TestProjectRequestTaskIDIsShortUniqueAndResolvesAcrossRedelivery(t *testing.T) {
+	p := NewProjector()
+	requestID := "req-019c61f2-63eb-77d0-bdd4-b60ef85c3c1e"
+	view := control.FeishuRequestView{
+		RequestID:       requestID,
+		RequestRevision: 7,
+		Options: []control.RequestPromptOption{
+			{OptionID: "accept", Label: "继续", Style: "primary"},
+			{OptionID: "decline", Label: "拒绝"},
+		},
+	}
+
+	first := p.ProjectEvent(eventcontract.Event{Payload: eventcontract.RequestPayload{View: view}})
+	second := p.ProjectEvent(eventcontract.Event{Payload: eventcontract.RequestPayload{View: view}})
+	firstTaskID := first[len(first)-1].TemplateCard.TaskID
+	secondTaskID := second[len(second)-1].TemplateCard.TaskID
+	if len(firstTaskID) > maxReqIDLength || len(secondTaskID) > maxReqIDLength {
+		t.Fatalf("request task ids exceed WeCom limit: %q / %q", firstTaskID, secondTaskID)
+	}
+	if firstTaskID == secondTaskID {
+		t.Fatalf("redelivery must mint a fresh task id, got %q", firstTaskID)
+	}
+	if p.resolveRequestCardTaskID(firstTaskID) != requestID || p.resolveRequestCardTaskID(secondTaskID) != requestID {
+		t.Fatalf("short task ids did not resolve to native request id: %q / %q", firstTaskID, secondTaskID)
+	}
+
+	event := InboundCardEvent{
+		TaskID:   firstTaskID,
+		EventKey: composeEncodedKey(keyPrefixRequestRespond, "7", "accept"),
+	}
+	event.TaskID = p.resolveRequestCardTaskID(event.TaskID)
+	action, ok := MapCardEventToAction(event)
+	if !ok || action.Request == nil || action.Request.RequestID != requestID || action.Request.RequestOptionID != "accept" {
+		t.Fatalf("short task id callback did not round-trip: ok=%v action=%+v", ok, action)
+	}
+}
+
 func TestProjectRequestUserInputDirectOptionsRenderChoiceAndControlCards(t *testing.T) {
+	p := NewProjector()
 	view := control.NormalizeFeishuRequestView(control.FeishuRequestView{
 		RequestID:       "req-ui-1",
 		RequestType:     "request_user_input",
@@ -316,7 +355,7 @@ func TestProjectRequestUserInputDirectOptionsRenderChoiceAndControlCards(t *test
 			},
 		},
 	})
-	frames := NewProjector().ProjectEvent(eventcontract.Event{
+	frames := p.ProjectEvent(eventcontract.Event{
 		Payload: eventcontract.RequestPayload{View: view},
 	})
 	if len(frames) != 3 {
@@ -345,12 +384,12 @@ func TestProjectRequestUserInputDirectOptionsRenderChoiceAndControlCards(t *test
 	if choiceCard.TaskID == controlCard.TaskID {
 		t.Fatalf("request cards in one delivery must have unique task IDs, got %q", choiceCard.TaskID)
 	}
-	if requestIDFromCardTaskID(choiceCard.TaskID) != "req-ui-1" || requestIDFromCardTaskID(controlCard.TaskID) != "req-ui-1" {
+	if p.resolveRequestCardTaskID(choiceCard.TaskID) != "req-ui-1" || p.resolveRequestCardTaskID(controlCard.TaskID) != "req-ui-1" {
 		t.Fatalf("request card task IDs must decode to req-ui-1: choice=%q control=%q", choiceCard.TaskID, controlCard.TaskID)
 	}
 	next := view
 	next.RequestRevision++
-	nextFrames := NewProjector().ProjectEvent(eventcontract.Event{Payload: eventcontract.RequestPayload{View: next}})
+	nextFrames := p.ProjectEvent(eventcontract.Event{Payload: eventcontract.RequestPayload{View: next}})
 	if len(nextFrames) != 3 || nextFrames[1].TemplateCard.TaskID == choiceCard.TaskID || nextFrames[2].TemplateCard.TaskID == controlCard.TaskID {
 		t.Fatalf("new request revision must mint fresh task IDs: old=%q/%q new=%+v", choiceCard.TaskID, controlCard.TaskID, nextFrames)
 	}

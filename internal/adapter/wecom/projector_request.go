@@ -476,7 +476,7 @@ func (p *Projector) projectRequestStructuredFormInputCard(view control.FeishuReq
 		}
 		return &templateCard{
 			CardType:  cardTypeMultipleInteraction,
-			TaskID:    requestCardTaskID(requestID, view.RequestRevision, "form-input"),
+			TaskID:    p.requestCardTaskID(requestID, view.RequestRevision, "form-input"),
 			MainTitle: &cardMainTitle{Title: title, Desc: desc},
 			SelectList: []cardSelect{{
 				QuestionKey: requestStructuredFormQuestionKey(field.Name),
@@ -551,7 +551,7 @@ func (p *Projector) projectRequestStructuredFormControlCard(view control.FeishuR
 	}
 	return &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestCardTaskID(requestID, view.RequestRevision, "form-control"),
+		TaskID:     p.requestCardTaskID(requestID, view.RequestRevision, "form-control"),
 		MainTitle:  &cardMainTitle{Title: "可选操作"},
 		ButtonList: buttons,
 	}
@@ -576,7 +576,7 @@ func (p *Projector) projectRequestQuestionChoiceCard(view control.FeishuRequestV
 	if len(options) <= p.maxButtons {
 		return &templateCard{
 			CardType:  cardTypeButtonInteraction,
-			TaskID:    requestCardTaskID(requestID, view.RequestRevision, "question-input"),
+			TaskID:    p.requestCardTaskID(requestID, view.RequestRevision, "question-input"),
 			MainTitle: &cardMainTitle{Title: title, Desc: requestQuestionLabel(index, len(view.Questions))},
 			ButtonList: requestQuestionOptionButtons(
 				question,
@@ -591,7 +591,7 @@ func (p *Projector) projectRequestQuestionChoiceCard(view control.FeishuRequestV
 	}
 	return &templateCard{
 		CardType:  cardTypeMultipleInteraction,
-		TaskID:    requestCardTaskID(requestID, view.RequestRevision, "question-input"),
+		TaskID:    p.requestCardTaskID(requestID, view.RequestRevision, "question-input"),
 		MainTitle: &cardMainTitle{Title: title, Desc: requestQuestionLabel(index, len(view.Questions))},
 		SelectList: []cardSelect{{
 			QuestionKey: requestAnswerQuestionKey(question.ID),
@@ -679,7 +679,7 @@ func (p *Projector) projectRequestQuestionControlCard(view control.FeishuRequest
 	}
 	return &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestCardTaskID(requestID, view.RequestRevision, "question-control"),
+		TaskID:     p.requestCardTaskID(requestID, view.RequestRevision, "question-control"),
 		MainTitle:  &cardMainTitle{Title: "可选操作"},
 		ButtonList: buttons,
 	}
@@ -695,7 +695,7 @@ func (p *Projector) projectRequestOptionCard(title, requestID string, options []
 	}
 	card := &templateCard{
 		CardType:   cardTypeButtonInteraction,
-		TaskID:     requestCardTaskID(requestID, revision, "options"),
+		TaskID:     p.requestCardTaskID(requestID, revision, "options"),
 		MainTitle:  &cardMainTitle{Title: title},
 		ButtonList: buttons,
 	}

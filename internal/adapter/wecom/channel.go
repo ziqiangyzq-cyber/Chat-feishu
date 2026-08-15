@@ -378,6 +378,11 @@ func (c *Channel) dispatchCardEvent(ctx context.Context, event InboundCardEvent)
 	if handler == nil {
 		return
 	}
+	// Template-card task ids are transport-scoped short ids. Resolve them back
+	// to the native request id before entering the channel-neutral action path.
+	if requestID := c.projector.resolveRequestCardTaskID(event.TaskID); requestID != "" && strings.HasPrefix(strings.TrimSpace(event.TaskID), "crf-") {
+		event.TaskID = requestID
+	}
 	action, ok := MapCardEventToAction(event)
 	if !ok {
 		log.Printf("wecom: ignored card event task=%q key=%q chat=%q operator=%q selections=%d", event.TaskID, event.EventKey, event.ChatID, event.OperatorUserID, len(event.Selections))

@@ -1,8 +1,12 @@
 package wecom
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kxn/codex-remote-feishu/internal/core/agentproto"
@@ -172,11 +176,60 @@ const (
 // Projector renders channel-neutral events into WeCom outbound frames.
 type Projector struct {
 	maxButtons int
+	cardSeq    atomic.Uint64
+	cardMu     sync.RWMutex
+	requestIDs map[string]string
+	cardOrder  []string
 }
+
+const maxRequestCardBindings = 4096
 
 // NewProjector constructs a Projector with the default WeCom button budget.
 func NewProjector() *Projector {
-	return &Projector{maxButtons: defaultMaxButtons}
+	return &Projector{
+		maxButtons: defaultMaxButtons,
+		requestIDs: make(map[string]string),
+	}
+}
+
+// requestCardTaskID returns a short, unique WeCom task_id and remembers the
+// native request id for the callback path. WeCom caps task_id at 32 bytes and
+// rejects reusing a task_id, including when a pending request is re-delivered.
+func (p *Projector) requestCardTaskID(requestID string, revision int, role string) string {
+	requestID = strings.TrimSpace(requestID)
+	role = strings.TrimSpace(role)
+	if requestID == "" || role == "" {
+		return ""
+	}
+	seq := p.cardSeq.Add(1)
+	sum := sha256.Sum256([]byte(requestID + "\x00" + role + "\x00" + strconv.Itoa(revision) + "\x00" + strconv.FormatUint(seq, 10)))
+	taskID := "crf-" + base64.RawURLEncoding.EncodeToString(sum[:18])
+
+	p.cardMu.Lock()
+	p.requestIDs[taskID] = requestID
+	p.cardOrder = append(p.cardOrder, taskID)
+	if overflow := len(p.cardOrder) - maxRequestCardBindings; overflow > 0 {
+		for _, stale := range p.cardOrder[:overflow] {
+			delete(p.requestIDs, stale)
+		}
+		p.cardOrder = append([]string(nil), p.cardOrder[overflow:]...)
+	}
+	p.cardMu.Unlock()
+	return taskID
+}
+
+func (p *Projector) resolveRequestCardTaskID(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ""
+	}
+	p.cardMu.RLock()
+	requestID := p.requestIDs[taskID]
+	p.cardMu.RUnlock()
+	if requestID != "" {
+		return requestID
+	}
+	return requestIDFromCardTaskID(taskID)
 }
 
 // ProjectEvent renders an event into an ordered slice of outbound frames. When

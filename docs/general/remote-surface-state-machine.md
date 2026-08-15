@@ -1,7 +1,7 @@
 # Remote Surface 核心状态机
 
 > Type: `general`
-> Updated: `2026-08-14`
+> Updated: `2026-08-15`
 > Summary: 当前实现同步了 workspace-aware headless 主链与 vscode 主链，并把当前 live 的 backend-aware 可见命令面收口到新的投影：`codex` 继续以 `workspace` 命令族作为主展示壳，`claude` 当前 live 实现也把 `switch_target` 收口到同一套 `/workspace` 父页与 `切换 / 从目录新建 / 从 GIT URL 新建 / 从 Worktree 新建 / 解除接管` 五个入口，`current_work` 继续保留 `/new` 等当前工作动作，`常用工具` 继续收口到 `/history` 与 `/sendfile`；`/list`、`/use`、裸 `/detach` 则退回 hidden + allow 兼容 alias。`send_settings` 则改成 backend 互斥入口：`codex headless` 可见 `/codexprovider`，`claude headless` 可见 `/claudeprofile`，`vscode` 两者都隐藏，且手动输入错误 backend 的命令也会显式拒绝。`/list` `/use` / target picker / workspace recency 全部只按当前 backend 过滤，且不再因为 surface/instance `ClaudeProfileID` 不同而隐藏 Claude workspace/session 候选；同时工作区一旦确定，`/workspace list` 与 alias `/list` 现在会把 `新建会话` 置顶并默认选中，`/use`、`/useall` 与锁定工作区的恢复 picker 则继续保留 `新建会话` fallback。2026-06-05 的补充是：headless auto-resume 的运行态只在真实恢复目标身份变化时重置 backoff / last notice，标题、更新时间等非目标元数据刷新不会把同一失败 episode 重新刷成新失败；auto-restore 启动的 managed headless 一旦连回，若 exact-thread 接管失败，也会立刻终止本轮 `PendingHeadless`、kill 这次拉起的 headless，并保留持久化恢复目标等待后续 backoff 重试。2026-05-31 的补充是：headless auto-resume 现在把“恢复 episode 的稳定失败根因”与“后续 retry 观测到的派生 busy/not_found 状态”分开记账；provider/profile/runtime 这类启动前失败会保留为本轮恢复的 canonical cause，并且只有在真正恢复成功或 target 改变后才会清空，因此后续 retry 不会再把用户提示改写成误导性的 workspace/thread busy，也不会对同一根因重复刷失败卡。2026-05-01 的新变化是：headless attach/reuse/restart/create/reject 已进一步收口成单一路径，visible 与 compatibility 继续拆层，但所有 consumer 现在都共享同一个 `desired surface contract vs observed instance contract` 解析核。结果是：
 > 1. visible 但 contract mismatch 的 workspace/session 仍然可见，不会再被 `/list`、`/use`、workspace recency、target picker 直接吞掉；
 > 2. 这些 mismatch 候选不会再假装“可直接接管”；
@@ -432,6 +432,7 @@ review mode 第一版当前不是新的 route state，而是挂在 surface 上�
    4. 因此 `command_ack.accepted` 后，即使 `PendingDispatchCommandID` 已清空，surface 仍会继续被 `awaiting_backend_consume` gate 挡住，直到上游 `request.resolved` 或 owner terminal 路径显式 abort；若当前 request card 已拿到 `MessageID` owner anchor，daemon 还会继续 patch 同一张 sealed `waiting_dispatch` 卡，把状态文案从“正在提交”推进到“已提交，等待继续”。
    5. `/status` snapshot gate 当前也不再只看 visibility：`GateSummary` 会同时投影 `PendingRequestLifecycle` 与 `PendingRequestVisibility`。因此 `/status` 既能说明队头 request 正处于 `submitting` / `awaiting_backend_consume`，也能继续说明卡片是在前台显示中、已可见，还是最近一次投递失败。
    6. turn complete、detach、route lost、instance offline/transport degraded 这类 owner terminal 清理路径，当前都会先把命中的 request 标成 `aborted(+expired/cancelled phase)`，再移出 `PendingRequests`，不再直接 silent delete。
+   7. 企业微信 request 卡不再把原始 request ID 直接拼进 transport `task_id`。projector 为每次发送（包括 `/status` 重投）生成唯一且不超过 32 字符的短 ID，并在 callback 前映射回原始 request ID；因此 request 正文可见但交互卡因 `42014 taskid has existed or exceed max len` 被拒绝的路径不再形成无按钮的 `G2` 死状态。
 
 ### 3.4.1 context-bound overlay cleanup seam
 
@@ -1880,6 +1881,7 @@ retained-offline overlay 额外规则：
 48. **企业微信 `SharedAttach` 新会话首轮已完成并保存 `SelectedThreadID`，但因不写 exclusive thread claim，下一条文本仍被误判为未选择会话**：已修复。shared surface 的 pinned thread 在同 attached instance/workspace 内可见且无冲突 claim 时，`surfaceOwnsThread` 会把 lease-less selection 视为有效路由租约；后续文本直接续发到刚创建的 thread。
 49. **Codex 本地 rollout 已被清理，但 surface 仍持久化旧 `SelectedThreadID`，导致每条消息都重复返回 `no rollout found`**：已修复。明确的 missing-rollout resume rejection 会失败当前消息、解除 stale pinned 选择并进入同工作区 `R5 NewThreadReady`；下一条消息可创建新会话，不会继续命中失效 thread，也不会把失败消息偷偷改投新上下文。
 50. **新增 Grok backend 后若只注册 `/mode grok` 而没有独立 backend/launch/session contract，会出现模式切换成功但消息仍落入 Codex 的半死态**：已修复。`Backend=grok` 已贯穿 surface/instance/launch contract、workspace defaults、surface resume、managed headless、wrapper bridge 与 catalog 空分支；真实 bridge 往返已验证 Grok session ID、assistant 消息和 result 完成态。prompt 不进入 argv，而通过 `0600` 临时文件传递；CLI 子进程使用 managed process group，取消可清理完整进程树。启动失败、断连和超时继续复用 `PendingHeadless` watchdog，用户可用 `/stop` 或 `/detach` 退出。
+51. **企业微信 request 正文已出现，但审批卡因超长或重复 `task_id` 被平台以 42014 拒绝，surface 仍停在 `G2 PendingRequest` 且用户没有可点击出口**：已修复。每张 request 卡现在使用 projector 生成的 28 字符唯一 transport ID；同一 pending request 的 `/status` 重投也会得到新 ID，callback 则通过有界映射恢复原始 request ID，再进入既有 revision/owner 校验。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 
