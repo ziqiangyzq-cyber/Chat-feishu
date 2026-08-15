@@ -52,6 +52,11 @@ func TestBuildHeadlessWrapperArgsUsesExplicitLaunchMode(t *testing.T) {
 		t.Fatalf("buildHeadlessWrapperArgs agy = %#v", got)
 	}
 	if got := buildHeadlessWrapperArgs(HeadlessLaunchOptions{
+		LaunchMode: HeadlessLaunchModeGrokAppServer,
+	}); strings.Join(got, "\x00") != HeadlessLaunchModeGrokAppServer {
+		t.Fatalf("buildHeadlessWrapperArgs grok = %#v", got)
+	}
+	if got := buildHeadlessWrapperArgs(HeadlessLaunchOptions{
 		LaunchMode: "",
 		Args:       []string{"--flag"},
 	}); strings.Join(got, "\x00") != strings.Join([]string{HeadlessLaunchModeAppServer, "--flag"}, "\x00") {

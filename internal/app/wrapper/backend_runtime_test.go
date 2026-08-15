@@ -37,6 +37,34 @@ func TestAgyBackendRuntimeTranslatesPromptWithAgyConfig(t *testing.T) {
 	}
 }
 
+func TestGrokBackendRuntimeTranslatesPromptWithGrokConfig(t *testing.T) {
+	runtime := &grokBackendRuntime{agyBackendRuntime: &agyBackendRuntime{
+		translator:    claude.NewTranslator("inst-grok"),
+		workspaceRoot: t.TempDir(),
+		configSubtype: "grok_config",
+	}}
+	result, err := runtime.TranslateCommand(agentproto.Command{
+		CommandID: "cmd-grok-1",
+		Kind:      agentproto.CommandPromptSend,
+		Prompt:    agentproto.Prompt{Inputs: []agentproto.Input{{Type: agentproto.InputText, Text: "hello"}}},
+		Overrides: agentproto.PromptOverrides{Model: "grok-4.6", ReasoningEffort: "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Backend() != agentproto.BackendGrok || len(result.Phases) != 2 || len(result.Phases[1].OutboundToChild) != 2 {
+		t.Fatalf("unexpected grok runtime result: backend=%q phases=%#v", runtime.Backend(), result.Phases)
+	}
+	var configFrame map[string]any
+	if err := json.Unmarshal(result.Phases[1].OutboundToChild[0], &configFrame); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := configFrame["request"].(map[string]any)
+	if request["subtype"] != "grok_config" || request["model"] != "grok-4.6" || request["effort"] != "high" {
+		t.Fatalf("unexpected grok config frame: %#v", configFrame)
+	}
+}
+
 func TestClaudeBackendRuntimeRestartPlanUsesPersistedResumeTarget(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", configDir)

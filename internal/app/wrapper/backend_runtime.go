@@ -95,6 +95,16 @@ func newBackendRuntime(cfg Config) backendRuntime {
 			runtime.initialLaunchResume = &claudeLaunchResumeTarget{ThreadID: threadID, CWD: strings.TrimSpace(cfg.WorkspaceRoot)}
 		}
 		return runtime
+	case agentproto.BackendGrok:
+		base := &agyBackendRuntime{
+			translator:    claude.NewTranslator(cfg.InstanceID),
+			workspaceRoot: cfg.WorkspaceRoot,
+			configSubtype: "grok_config",
+		}
+		if threadID := strings.TrimSpace(cfg.ResumeThreadID); threadID != "" {
+			base.initialLaunchResume = &claudeLaunchResumeTarget{ThreadID: threadID, CWD: strings.TrimSpace(cfg.WorkspaceRoot)}
+		}
+		return &grokBackendRuntime{agyBackendRuntime: base}
 	default:
 		return &codexBackendRuntime{translator: codex.NewTranslator(cfg.InstanceID)}
 	}
@@ -107,6 +117,36 @@ type agyBackendRuntime struct {
 	initialLaunchResume *claudeLaunchResumeTarget
 	pendingLaunchResume *claudeLaunchResumeTarget
 	currentLaunchResume *claudeLaunchResumeTarget
+	configSubtype       string
+}
+
+type grokBackendRuntime struct{ *agyBackendRuntime }
+
+func (r *grokBackendRuntime) Backend() agentproto.Backend { return agentproto.BackendGrok }
+
+func (r *grokBackendRuntime) Capabilities() agentproto.Capabilities {
+	return agentproto.DefaultCapabilitiesForBackend(agentproto.BackendGrok)
+}
+
+func (r *grokBackendRuntime) Launch(ctx context.Context, app *App, rawLogger *debuglog.RawLogger, reportProblem func(agentproto.ErrorInfo)) (*childSession, error) {
+	if app == nil {
+		return nil, nil
+	}
+	r.mu.Lock()
+	resume := r.pendingLaunchResume
+	if resume == nil {
+		resume = r.initialLaunchResume
+	}
+	r.pendingLaunchResume = nil
+	r.initialLaunchResume = nil
+	r.currentLaunchResume = resume
+	resumeID := ""
+	if resume != nil {
+		resumeID = strings.TrimSpace(resume.ThreadID)
+	}
+	r.translator.PrepareForChildLaunch(resumeID)
+	r.mu.Unlock()
+	return app.launchGrokChildSession(ctx, rawLogger, reportProblem, resume)
 }
 
 func (r *agyBackendRuntime) Backend() agentproto.Backend { return agentproto.BackendAgy }
@@ -167,11 +207,15 @@ func (r *agyBackendRuntime) TranslateCommand(command agentproto.Command) (runtim
 		return runtimeCommandResult{}, err
 	}
 	if command.Kind == agentproto.CommandPromptSend {
+		configSubtype := strings.TrimSpace(r.configSubtype)
+		if configSubtype == "" {
+			configSubtype = "agy_config"
+		}
 		configFrame, marshalErr := json.Marshal(map[string]any{
 			"type":       "control_request",
 			"request_id": "relay-agy-config-" + strings.TrimSpace(command.CommandID),
 			"request": map[string]any{
-				"subtype": "agy_config",
+				"subtype": configSubtype,
 				"model":   strings.TrimSpace(command.Overrides.Model),
 				"effort":  strings.TrimSpace(command.Overrides.ReasoningEffort),
 			},

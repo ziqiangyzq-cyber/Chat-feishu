@@ -242,6 +242,8 @@ func headlessLaunchModeForBackend(backend agentproto.Backend) string {
 		return relayruntime.HeadlessLaunchModeClaudeAppServer
 	case agentproto.BackendAgy:
 		return relayruntime.HeadlessLaunchModeAgyAppServer
+	case agentproto.BackendGrok:
+		return relayruntime.HeadlessLaunchModeGrokAppServer
 	}
 	return relayruntime.HeadlessLaunchModeAppServer
 }

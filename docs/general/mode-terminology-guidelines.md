@@ -1,8 +1,8 @@
 # 模式术语基线
 
 > Type: `general`
-> Updated: `2026-08-06`
-> Summary: 固定 headless / vscode、用户可见 codex / claude / agy / vscode mode、以及兼容 alias 的仓库级术语边界。
+> Updated: `2026-08-14`
+> Summary: 固定 headless / vscode、用户可见 codex / claude / agy / grok / vscode mode、以及兼容 alias 的仓库级术语边界。
 
 ## 1. 文档定位
 
@@ -30,11 +30,12 @@
 
 ## 3. 二级划分：用户可见 mode
 
-当前用户可见、可以直接说出的 mode 名有四个：
+当前用户可见、可以直接说出的 mode 名有五个：
 
 - `codex`
 - `claude`
 - `agy`
+- `grok`
 - `vscode`
 
 它们的当前语义是：
@@ -45,6 +46,8 @@
   - `headless + claude backend`
 - `agy`
   - `headless + Antigravity backend`
+- `grok`
+  - `headless + Grok backend`
 - `vscode`
   - `vscode + codex backend`
 
@@ -75,14 +78,14 @@
 
 涉及 provider/backend 判断时，再表达：
 
-- `codex vs claude vs agy`
+- `codex vs claude vs agy vs grok`
 
 不要把“是不是 headless”继续编码成“是不是 normal 特例”。
 
 当前推荐的理解顺序是：
 
 1. 先看运行形态是不是 `headless`
-2. 再看 backend 是 `codex`、`claude` 还是 `agy`
+2. 再看 backend 是 `codex`、`claude`、`agy` 还是 `grok`
 3. 最后再做具体命令、路由或恢复语义分支
 
 ## 6. 文档与文案要求
@@ -92,6 +95,7 @@
 - `codex mode`
 - `claude mode`
 - `agy mode`
+- `grok mode`
 - `vscode mode`
 
 如果需要解释旧概念，可以补一句：

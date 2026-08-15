@@ -9,6 +9,7 @@ const (
 	HeadlessLaunchModeAppServer       = "app-server"
 	HeadlessLaunchModeClaudeAppServer = "claude-app-server"
 	HeadlessLaunchModeAgyAppServer    = "agy-app-server"
+	HeadlessLaunchModeGrokAppServer   = "grok-app-server"
 )
 
 type HeadlessLaunchOptions struct {
@@ -47,6 +48,8 @@ func normalizeHeadlessLaunchMode(mode string) string {
 		return HeadlessLaunchModeClaudeAppServer
 	case HeadlessLaunchModeAgyAppServer:
 		return HeadlessLaunchModeAgyAppServer
+	case HeadlessLaunchModeGrokAppServer:
+		return HeadlessLaunchModeGrokAppServer
 	default:
 		return HeadlessLaunchModeAppServer
 	}

@@ -57,6 +57,20 @@ func TestModeCommandSwitchesDetachedSurfaceToAgy(t *testing.T) {
 	}
 }
 
+func TestModeCommandSwitchesDetachedSurfaceToGrok(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	svc := newServiceForTest(&now)
+	svc.ApplySurfaceAction(control.Action{Kind: control.ActionStatus, SurfaceSessionID: "surface-1", ChatID: "chat-1", ActorUserID: "user-1"})
+	events := svc.ApplySurfaceAction(control.Action{Kind: control.ActionModeCommand, SurfaceSessionID: "surface-1", Text: "/mode grok"})
+	surface := svc.root.Surfaces["surface-1"]
+	if surface.ProductMode != state.ProductModeNormal || surface.Backend != agentproto.BackendGrok {
+		t.Fatalf("expected normal grok surface after switch, got %#v", surface)
+	}
+	if len(events) != 1 || events[0].Notice == nil || !strings.Contains(events[0].Notice.Text, "grok") {
+		t.Fatalf("expected grok switch notice, got %#v", events)
+	}
+}
+
 func TestModeCommandNormalAliasReturnsSurfaceToCodex(t *testing.T) {
 	now := time.Date(2026, 4, 28, 6, 10, 0, 0, time.UTC)
 	svc := newServiceForTest(&now)

@@ -47,6 +47,11 @@ func parseSurfaceModeSelection(value string) (surfaceModeSelection, bool) {
 			ProductMode: state.ProductModeNormal,
 			Backend:     agentproto.BackendAgy,
 		}, true
+	case "grok":
+		return surfaceModeSelection{
+			ProductMode: state.ProductModeNormal,
+			Backend:     agentproto.BackendGrok,
+		}, true
 	case "vscode", "vs-code", "vs_code":
 		return surfaceModeSelection{
 			ProductMode: state.ProductModeVSCode,
@@ -159,7 +164,7 @@ func (s *Service) handleModeCommand(surface *state.SurfaceConsoleRecord, action 
 	if len(parts) != 2 {
 		return s.inlineCommandCardEvents(surface, action, control.FeishuCatalogConfigView{
 			StatusKind:       "error",
-			StatusText:       "用法：/mode 查看当前状态；/mode codex|claude|agy|vscode（`normal` 仍兼容）。",
+			StatusText:       "用法：/mode 查看当前状态；/mode codex|claude|agy|grok|vscode（`normal` 仍兼容）。",
 			FormDefaultValue: actionCommandArgumentText(action),
 		})
 	}
@@ -167,7 +172,7 @@ func (s *Service) handleModeCommand(surface *state.SurfaceConsoleRecord, action 
 	if !ok {
 		return s.inlineCommandCardEvents(surface, action, control.FeishuCatalogConfigView{
 			StatusKind:       "error",
-			StatusText:       "用法：/mode 查看当前状态；/mode codex|claude|agy|vscode（`normal` 仍兼容）。",
+			StatusText:       "用法：/mode 查看当前状态；/mode codex|claude|agy|grok|vscode（`normal` 仍兼容）。",
 			FormDefaultValue: actionCommandArgumentText(action),
 		})
 	}
@@ -218,6 +223,8 @@ func (s *Service) handleModeCommand(surface *state.SurfaceConsoleRecord, action 
 		s.setSurfaceDesiredContract(surface, state.HeadlessClaudeSurfaceBackendContract(surface.ClaudeProfileID))
 	case target.Backend == agentproto.BackendAgy:
 		s.setSurfaceDesiredContract(surface, state.HeadlessAgySurfaceBackendContract())
+	case target.Backend == agentproto.BackendGrok:
+		s.setSurfaceDesiredContract(surface, state.HeadlessGrokSurfaceBackendContract())
 	default:
 		s.setSurfaceDesiredContract(surface, state.HeadlessCodexSurfaceBackendContract(surface.CodexProviderID))
 	}

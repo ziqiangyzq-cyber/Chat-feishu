@@ -2,7 +2,7 @@
 
 > Type: `general`
 > Updated: `2026-08-06`
-> Summary: 说明 headless/vscode 与 `codex|claude|agy|vscode` 的用户用法，保留 `/mode normal` 兼容说明。
+> Summary: 说明 headless/vscode 与 `codex|claude|agy|grok|vscode` 的用户用法，保留 `/mode normal` 兼容说明。
 
 ## 1. 这是什么
 
@@ -284,6 +284,7 @@ Windows PowerShell：
   - `codex`
   - `claude`
   - `agy`
+  - `grok`
   - `vscode`
 
 其中：
@@ -294,6 +295,8 @@ Windows PowerShell：
   - 也是 headless，只是 backend 换成 Claude
 - `agy`
   - 也是 headless，使用本机 Antigravity CLI；支持新建、按 conversation ID 续接、流式回复和 `/stop`
+- `grok`
+  - 也是 headless，使用本机 Grok CLI；支持新建、按 session ID 续接、统一消息流和 `/stop`
 - `vscode`
   - 专门给“飞书跟随 VS Code 当前焦点”这个场景准备
 
@@ -303,6 +306,7 @@ Windows PowerShell：
 /mode codex
 /mode claude
 /mode agy
+/mode grok
 /mode vscode
 /mode normal
 ```
@@ -604,6 +608,8 @@ Windows PowerShell：
   - 切到 headless Claude 模式
 - `/mode agy`
   - 切到 headless Antigravity 模式
+- `/mode grok`
+  - 切到 headless Grok 模式
 - `/mode normal`
   - 兼容旧写法，等价于 `/mode codex`
 - `/follow`

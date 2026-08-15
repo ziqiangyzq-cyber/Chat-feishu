@@ -53,6 +53,10 @@ func HeadlessAgySurfaceBackendContract() SurfaceBackendContract {
 	return SurfaceBackendContract{ProductMode: ProductModeNormal, Backend: agentproto.BackendAgy}
 }
 
+func HeadlessGrokSurfaceBackendContract() SurfaceBackendContract {
+	return SurfaceBackendContract{ProductMode: ProductModeNormal, Backend: agentproto.BackendGrok}
+}
+
 func PersistedSurfaceBackendContract(mode ProductMode, backend agentproto.Backend, codexProviderID, claudeProfileID string) SurfaceBackendContract {
 	mode = NormalizeProductMode(mode)
 	codexProviderID = strings.TrimSpace(codexProviderID)
@@ -90,6 +94,10 @@ func AgyInstanceBackendContract() InstanceBackendContract {
 	return InstanceBackendContract{Backend: agentproto.BackendAgy}
 }
 
+func GrokInstanceBackendContract() InstanceBackendContract {
+	return InstanceBackendContract{Backend: agentproto.BackendGrok}
+}
+
 func HeadlessCodexLaunchContract(providerID string) HeadlessLaunchContract {
 	return HeadlessLaunchContract{
 		Backend:         agentproto.BackendCodex,
@@ -107,6 +115,10 @@ func HeadlessClaudeLaunchContract(profileID, reasoningEffort string) HeadlessLau
 
 func HeadlessAgyLaunchContract() HeadlessLaunchContract {
 	return HeadlessLaunchContract{Backend: agentproto.BackendAgy}
+}
+
+func HeadlessGrokLaunchContract() HeadlessLaunchContract {
+	return HeadlessLaunchContract{Backend: agentproto.BackendGrok}
 }
 
 func NormalizeHeadlessBackend(backend agentproto.Backend) agentproto.Backend {
@@ -130,6 +142,8 @@ func NormalizeSurfaceBackendContract(contract SurfaceBackendContract) SurfaceBac
 		return HeadlessClaudeSurfaceBackendContract(contract.ClaudeProfileID)
 	case agentproto.BackendAgy:
 		return HeadlessAgySurfaceBackendContract()
+	case agentproto.BackendGrok:
+		return HeadlessGrokSurfaceBackendContract()
 	default:
 		return HeadlessCodexSurfaceBackendContract(contract.CodexProviderID)
 	}
@@ -154,6 +168,8 @@ func NormalizeObservedInstanceBackendContract(contract InstanceBackendContract) 
 		return ClaudeInstanceBackendContract(contract.ClaudeProfileID)
 	case agentproto.BackendAgy:
 		return AgyInstanceBackendContract()
+	case agentproto.BackendGrok:
+		return GrokInstanceBackendContract()
 	default:
 		return CodexInstanceBackendContract(contract.CodexProviderID)
 	}
@@ -177,6 +193,8 @@ func NormalizeHeadlessLaunchContract(contract HeadlessLaunchContract) HeadlessLa
 		return HeadlessClaudeLaunchContract(contract.ClaudeProfileID, contract.ClaudeReasoningEffort)
 	case agentproto.BackendAgy:
 		return HeadlessAgyLaunchContract()
+	case agentproto.BackendGrok:
+		return HeadlessGrokLaunchContract()
 	default:
 		return HeadlessCodexLaunchContract(contract.CodexProviderID)
 	}
@@ -193,6 +211,9 @@ func HeadlessLaunchContractFromSurface(surface *SurfaceConsoleRecord) HeadlessLa
 	}
 	if desired.Backend == agentproto.BackendAgy {
 		return HeadlessAgyLaunchContract()
+	}
+	if desired.Backend == agentproto.BackendGrok {
+		return HeadlessGrokLaunchContract()
 	}
 	return HeadlessCodexLaunchContract(EffectiveSurfaceCodexProviderID(desired))
 }
@@ -285,6 +306,8 @@ func SurfaceModeAlias(mode ProductMode, backend agentproto.Backend) string {
 		return "claude"
 	case agentproto.BackendAgy:
 		return "agy"
+	case agentproto.BackendGrok:
+		return "grok"
 	default:
 		return "codex"
 	}

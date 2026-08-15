@@ -24,7 +24,7 @@ func headlessThreadWorkspaceMustMatch(inst *state.InstanceRecord) bool {
 		return false
 	}
 	backend := state.EffectiveInstanceBackend(inst)
-	return backend == agentproto.BackendClaude || backend == agentproto.BackendAgy
+	return backend == agentproto.BackendClaude || backend == agentproto.BackendAgy || backend == agentproto.BackendGrok
 }
 
 func metadataString(metadata map[string]any, key string) string {

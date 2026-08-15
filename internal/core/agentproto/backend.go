@@ -8,6 +8,7 @@ const (
 	BackendCodex  Backend = "codex"
 	BackendClaude Backend = "claude"
 	BackendAgy    Backend = "agy"
+	BackendGrok   Backend = "grok"
 )
 
 func NormalizeBackend(value Backend) Backend {
@@ -16,6 +17,8 @@ func NormalizeBackend(value Backend) Backend {
 		return BackendClaude
 	case string(BackendAgy), "antigravity":
 		return BackendAgy
+	case string(BackendGrok):
+		return BackendGrok
 	default:
 		return BackendCodex
 	}
@@ -27,6 +30,8 @@ func BackendDisplayName(backend Backend) string {
 		return "Claude"
 	case BackendAgy:
 		return "Antigravity"
+	case BackendGrok:
+		return "Grok"
 	default:
 		return "Codex"
 	}
@@ -44,6 +49,11 @@ func DefaultCapabilitiesForBackend(backend Backend) Capabilities {
 			RequiresCWDForResume: true,
 		}
 	case BackendAgy:
+		return Capabilities{
+			ResumeByThreadID:     true,
+			RequiresCWDForResume: true,
+		}
+	case BackendGrok:
 		return Capabilities{
 			ResumeByThreadID:     true,
 			RequiresCWDForResume: true,

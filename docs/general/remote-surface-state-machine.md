@@ -1,7 +1,7 @@
 # Remote Surface 核心状态机
 
 > Type: `general`
-> Updated: `2026-08-07`
+> Updated: `2026-08-14`
 > Summary: 当前实现同步了 workspace-aware headless 主链与 vscode 主链，并把当前 live 的 backend-aware 可见命令面收口到新的投影：`codex` 继续以 `workspace` 命令族作为主展示壳，`claude` 当前 live 实现也把 `switch_target` 收口到同一套 `/workspace` 父页与 `切换 / 从目录新建 / 从 GIT URL 新建 / 从 Worktree 新建 / 解除接管` 五个入口，`current_work` 继续保留 `/new` 等当前工作动作，`常用工具` 继续收口到 `/history` 与 `/sendfile`；`/list`、`/use`、裸 `/detach` 则退回 hidden + allow 兼容 alias。`send_settings` 则改成 backend 互斥入口：`codex headless` 可见 `/codexprovider`，`claude headless` 可见 `/claudeprofile`，`vscode` 两者都隐藏，且手动输入错误 backend 的命令也会显式拒绝。`/list` `/use` / target picker / workspace recency 全部只按当前 backend 过滤，且不再因为 surface/instance `ClaudeProfileID` 不同而隐藏 Claude workspace/session 候选；同时工作区一旦确定，`/workspace list` 与 alias `/list` 现在会把 `新建会话` 置顶并默认选中，`/use`、`/useall` 与锁定工作区的恢复 picker 则继续保留 `新建会话` fallback。2026-06-05 的补充是：headless auto-resume 的运行态只在真实恢复目标身份变化时重置 backoff / last notice，标题、更新时间等非目标元数据刷新不会把同一失败 episode 重新刷成新失败；auto-restore 启动的 managed headless 一旦连回，若 exact-thread 接管失败，也会立刻终止本轮 `PendingHeadless`、kill 这次拉起的 headless，并保留持久化恢复目标等待后续 backoff 重试。2026-05-31 的补充是：headless auto-resume 现在把“恢复 episode 的稳定失败根因”与“后续 retry 观测到的派生 busy/not_found 状态”分开记账；provider/profile/runtime 这类启动前失败会保留为本轮恢复的 canonical cause，并且只有在真正恢复成功或 target 改变后才会清空，因此后续 retry 不会再把用户提示改写成误导性的 workspace/thread busy，也不会对同一根因重复刷失败卡。2026-05-01 的新变化是：headless attach/reuse/restart/create/reject 已进一步收口成单一路径，visible 与 compatibility 继续拆层，但所有 consumer 现在都共享同一个 `desired surface contract vs observed instance contract` 解析核。结果是：
 > 1. visible 但 contract mismatch 的 workspace/session 仍然可见，不会再被 `/list`、`/use`、workspace recency、target picker 直接吞掉；
 > 2. 这些 mismatch 候选不会再假装“可直接接管”；
@@ -16,6 +16,8 @@
 ## 1. 文档定位
 
 2026-08-06 增加第三个 headless backend `agy`：`/mode agy`（兼容别名 `/mode antigravity`）与 `codex`、`claude` 共用 workspace claim、`PendingHeadless`、queue、detach 和恢复主链，但通过独立 `agy-app-server` 启动。wrapper 内部把 `agy --print --output-format stream-json` 的 conversation ID、文本增量、Token 与完成态转换成统一 relay event；`/new` 创建新 conversation，已有 conversation 可按 ID 续接，`/stop` 终止当前 CLI 子进程。Agy 当前不声明 persisted session catalog、active-turn steer 或交互式 request-response 能力，因此离线历史不会混入 Codex/Claude catalog，执行中追加消息进入普通队列。
+
+2026-08-14 增加第四个 headless backend `grok`：`/mode grok` 与其它 headless backend 共用 workspace claim、`PendingHeadless`、queue、detach、watchdog 和恢复主链，通过独立 `grok-app-server` 启动。wrapper 的 Grok bridge 调用已登录的本机 `grok` CLI，以权限 `0600` 的临时 `--prompt-file` 传递 prompt，并以 `streaming-messages-json` 输出复用 Claude wire translator；Grok CLI 运行在 managed process group 中，context 取消与 `/stop` 会终止完整进程树并清理临时 prompt 文件。`/new` 创建新 Grok session，已有 session 按 ID 续接。Grok 当前与 Agy 一样不声明 persisted session catalog、active-turn steer 或交互式 request-response 能力，因此离线历史不回退到其它 backend catalog，执行中追加消息进入普通队列。
 
 这份文档描述的是**当前代码已经实现**的 remote surface 状态机，不是历史问题列表，也不是未来方案草稿。
 
@@ -134,6 +136,7 @@ surface 不是单一枚举，而是五层正交状态叠加。
 | `M0 HeadlessCodex` | `ProductMode=normal`，`Backend=codex` | headless 主链的 Codex 分支；也是新 surface 默认值。当前会开启 workspace claim 仲裁，并把已占用 workspace 投影到 `/status` |
 | `M1 HeadlessClaude` | `ProductMode=normal`，`Backend=claude` | headless 主链的 Claude 分支。workspace defaults、surface resume 与 detached catalog context 都按 Claude backend 分区；surface 还会额外携带当前 `ClaudeProfileID`，并按 `workspace+profile` 恢复飞书显式 `reasoning / access` override；`plan` 不从这套快照恢复；不进入 VS Code 语义，但已经共享 headless exact-thread 恢复主链，并在需要时通过 Claude 原生 `--resume` 恢复旧 session |
 | `M2 HeadlessAgy` | `ProductMode=normal`，`Backend=agy` | headless 主链的 Antigravity 分支；workspace defaults 与 surface resume 按 `agy` 独立分区，通过 conversation ID 恢复当前会话；当前不扫描离线历史 catalog，不支持 active-turn steer 或交互式 permission request |
+| `M3 HeadlessGrok` | `ProductMode=normal`，`Backend=grok` | headless 主链的 Grok 分支；workspace defaults 与 surface resume 按 `grok` 独立分区，通过 session ID 恢复当前会话；当前不扫描离线历史 catalog，不支持 active-turn steer 或交互式 permission request |
 | `M3 VSCode` | `ProductMode=vscode`，`Backend=codex` | VS Code 专属分支；只能显式 `/mode vscode` 进入。当前不参与 workspace claim，仍保留既有 instance/thread-first 路由语义 |
 
 补充说明：
@@ -169,11 +172,11 @@ surface 不是单一枚举，而是五层正交状态叠加。
       4. 若当前还没有新的 VS Code 活动可继续 follow，会保留 follow waiting，并明确提示用户去 VS Code 再说一句话或手动 `/use`。
       5. `vscode` 不会参与 managed-headless exact-thread continuation；`surface resume state` 在 load/write 时也会把所有非 headless entry（当前即 `ProductMode!=normal`）的 `ResumeHeadless` 强制归零，因此 `vscode` surface 不会保留可继续触发这条恢复分支的持久化目标。
 3. `/mode` 当前只在没有 live remote work 的 surface 上执行切换：
-   1. 接受 `normal|codex|claude|agy|antigravity|vscode` 六种字面值；其中 `normal` 是 `codex` 的兼容 alias，`antigravity` 是 `agy` 的兼容 alias。
-   2. `codex = Backend=codex + ProductMode=normal`，`claude = Backend=claude + ProductMode=normal`，`agy = Backend=agy + ProductMode=normal`，`vscode = Backend=codex + ProductMode=vscode`。
+   1. 接受 `normal|codex|claude|agy|antigravity|grok|vscode` 七种字面值；其中 `normal` 是 `codex` 的兼容 alias，`antigravity` 是 `agy` 的兼容 alias。
+   2. `codex = Backend=codex + ProductMode=normal`，`claude = Backend=claude + ProductMode=normal`，`agy = Backend=agy + ProductMode=normal`，`grok = Backend=grok + ProductMode=normal`，`vscode = Backend=codex + ProductMode=vscode`。
    1. 会先走 detach-like 清理。
    2. 清掉 attachment / workspace claim / thread claim、`PromptOverride`、`PendingRequest`、`RequestCapture`、`PreparedThread*`、staged image / staged file 与 queued draft。
-   3. 如果切换前后都处于 headless 主链，且 backend 在 `codex / claude / agy` 之间变化，只要切换前已经存在当前 workspace，则 surface 会恢复这份 workspace claim，并立即优先 attach 目标 backend 下同 workspace 的在线 instance；若当前还没有可 attach 的目标 backend instance，则直接启动 fresh managed headless，并保留 `new_thread_ready` 意图，而不是停在 detached idle。Claude 与 Antigravity 分别显式走 `claude-app-server` 与 `agy-app-server`。
+   3. 如果切换前后都处于 headless 主链，且 backend 在 `codex / claude / agy / grok` 之间变化，只要切换前已经存在当前 workspace，则 surface 会恢复这份 workspace claim，并立即优先 attach 目标 backend 下同 workspace 的在线 instance；若当前还没有可 attach 的目标 backend instance，则直接启动 fresh managed headless，并保留 `new_thread_ready` 意图，而不是停在 detached idle。Claude、Antigravity 与 Grok 分别显式走 `claude-app-server`、`agy-app-server` 与 `grok-app-server`。
    4. 如果切换前后发生了 backend 或 `ProductMode` 变化，会清掉 `surface resume state` 里的旧 resume target，避免 `codex` / `claude` 之间串恢复。
    5. 如果当时还带着 `PendingHeadless`，会先显式 kill 当前 headless 启动流程，并清掉 `surface resume state` 里的 headless 恢复目标与内存恢复状态。
 4. 若当前仍有 live remote work，则 `/mode` 直接拒绝，并明确提示用户 `/stop` 或 `/detach`。
@@ -191,7 +194,7 @@ surface 不是单一枚举，而是五层正交状态叠加。
    2. 当前 running turn、已入队消息、当前 turn 的 `/steer` 与 reply auto-steer 都不受新设置追溯改写。
    3. headless 主链的 queue item 会在入队时冻结 `PlanMode`，dispatch `turn/start` 时再把它落到 `PromptOverrides.PlanMode -> collaborationMode.mode=plan/default`；只要下发 `collaborationMode`，wrapper 就必须同时携带完整 `settings(model / reasoning_effort / developer_instructions)`。其中 `model` 是必填字符串，按显式 override、目标 thread 最近一次权威/本地观察值、当前选中模板值、child bootstrap `config/read` 返回的当前 cwd 有效默认值依次解析；全部为空时 fail-closed，不得发送空字符串或 `null`。目标 thread 的值由该 thread 的 `thread/start|resume` 成功响应或后续本地 `turn/start` 按观察顺序更新，跨 thread 的最近模板只能兜底，不能覆盖目标 thread。其余未显式覆盖的可空字段继续用 native `null` 交还 Codex 当前线程配置与内置模式指令处理。
    4. `vscode` 主链属于 shared-authority：只有用户显式 `/plan on|off` 后才会冻结 `PlanMode`；若未设置或已 `/plan clear`，queue item 的 `FrozenPlanMode` 保持 empty，dispatch 时不下发 plan override，让 VS Code/backend 保持当前状态。
-   5. `/detach`、`/new`、`/use`、`/mode normal|codex|claude|agy|vscode` 不会顺手清掉当前内存里的 `PlanMode`；daemon 重启后，latent surface 不再从 `surface resume state` 恢复 `PlanMode`，旧持久化 entry 里的 `planMode` 会被忽略并在下一次保存时清理。
+   5. `/detach`、`/new`、`/use`、`/mode normal|codex|claude|agy|grok|vscode` 不会顺手清掉当前内存里的 `PlanMode`；daemon 重启后，latent surface 不再从 `surface resume state` 恢复 `PlanMode`，旧持久化 entry 里的 `planMode` 会被忽略并在下一次保存时清理。
    6. 在 `claude` 模式下，`PlanMode` 也不进入 `workspace+profile` 快照：
       1. 进入某个 Claude workspace 时，会按 `workspace + ClaudeProfileID` 恢复最近一次飞书临时 `ReasoningEffort / AccessMode` 覆盖。
       2. 离开该 workspace 或切走该 profile 前，会把当前显式 `ReasoningEffort / AccessMode` 覆盖写回独立的 `workspace+profile` 持久化 store。
@@ -1485,7 +1488,7 @@ G1 PendingHeadlessStarting
   -- instance connected 且 pending.ThreadID != "" 且 auto-restore --> R2 AttachedPinned + G0 None + 单条恢复成功 notice
   -- instance connected 且 pending.ThreadID != "" 且 auto-restore exact-thread 接管失败 --> kill headless + clear pending + R0 Detached + 单条恢复失败 notice
   -- instance connected 且 pending.ThreadID == "" 且也不是 fresh_workspace（仅历史兼容兜底） --> kill headless + generic notice + G0 None
-  -- /mode codex|claude|agy|vscode（目标 backend 或 ProductMode 发生变化） --> kill headless + clear persisted resume target + G0 None + R0 Detached(目标 mode/backend)
+  -- /mode codex|claude|agy|grok|vscode（目标 backend 或 ProductMode 发生变化） --> kill headless + clear persisted resume target + G0 None + R0 Detached(目标 mode/backend)
   -- /detach --> kill headless + G0 None + R0 Detached
   -- Tick timeout --> kill headless + clear pending + detach if needed
 ```
@@ -1876,6 +1879,7 @@ retained-offline overlay 额外规则：
 47. **新增 Agy backend 后若仍落入 Codex 的 normalize/default catalog 分支，会把 `/mode agy` 静默改回 Codex 或展示错误历史**：已修复。`Backend=agy` 现在贯穿 surface/instance/launch contract、workspace defaults、surface resume 与 managed headless launch；Agy 没有离线 catalog 时显式返回空结果，不回退 Codex catalog。执行中的 Agy turn 可由 `/stop` 结束，启动失败、断连和超时继续复用既有 `PendingHeadless` watchdog 与 detach 逃生口。
 48. **企业微信 `SharedAttach` 新会话首轮已完成并保存 `SelectedThreadID`，但因不写 exclusive thread claim，下一条文本仍被误判为未选择会话**：已修复。shared surface 的 pinned thread 在同 attached instance/workspace 内可见且无冲突 claim 时，`surfaceOwnsThread` 会把 lease-less selection 视为有效路由租约；后续文本直接续发到刚创建的 thread。
 49. **Codex 本地 rollout 已被清理，但 surface 仍持久化旧 `SelectedThreadID`，导致每条消息都重复返回 `no rollout found`**：已修复。明确的 missing-rollout resume rejection 会失败当前消息、解除 stale pinned 选择并进入同工作区 `R5 NewThreadReady`；下一条消息可创建新会话，不会继续命中失效 thread，也不会把失败消息偷偷改投新上下文。
+50. **新增 Grok backend 后若只注册 `/mode grok` 而没有独立 backend/launch/session contract，会出现模式切换成功但消息仍落入 Codex 的半死态**：已修复。`Backend=grok` 已贯穿 surface/instance/launch contract、workspace defaults、surface resume、managed headless、wrapper bridge 与 catalog 空分支；真实 bridge 往返已验证 Grok session ID、assistant 消息和 result 完成态。prompt 不进入 argv，而通过 `0600` 临时文件传递；CLI 子进程使用 managed process group，取消可清理完整进程树。启动失败、断连和超时继续复用 `PendingHeadless` watchdog，用户可用 `/stop` 或 `/detach` 退出。
 
 当前审计范围内，未再发现“attach/use 成功后用户没有任何可恢复下一步”的 bug-grade 状态。
 

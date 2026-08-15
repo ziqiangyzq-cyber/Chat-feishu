@@ -50,6 +50,16 @@ func TestDetect(t *testing.T) {
 			want: Decision{Role: RoleAgyBridge, Args: []string{"--cwd", "/tmp"}},
 		},
 		{
+			name: "grok app server enters wrapper",
+			args: []string{"grok-app-server"},
+			want: Decision{Role: RoleWrapper, Args: []string{"grok-app-server"}},
+		},
+		{
+			name: "grok bridge enters bridge role",
+			args: []string{"grok-bridge", "--cwd", "/tmp"},
+			want: Decision{Role: RoleGrokBridge, Args: []string{"--cwd", "/tmp"}},
+		},
+		{
 			name: "daemon role",
 			args: []string{"daemon"},
 			want: Decision{Role: RoleDaemon},
@@ -110,7 +120,7 @@ func TestDetect(t *testing.T) {
 		{
 			name:    "wrapper resume rejected",
 			args:    []string{"wrapper", "resume", "--thread", "abc"},
-			wantErr: "wrapper only supports app-server, claude-app-server, or agy-app-server mode",
+			wantErr: "wrapper only supports app-server, claude-app-server, agy-app-server, or grok-app-server mode",
 		},
 	}
 
