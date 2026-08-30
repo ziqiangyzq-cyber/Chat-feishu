@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -490,6 +491,47 @@ func TestRunWeComChannelReconnectsAfterTemporaryFailure(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("reconnect attempts = %d, want 2", attempts)
+	}
+}
+
+func TestRestartWeComGatewayRuntimeAbortsWhenPreviousRunDoesNotStop(t *testing.T) {
+	app := New(":0", ":0", &recordingGateway{}, agentproto.ServerIdentity{})
+	app.gatewayStopTimeout = 20 * time.Millisecond
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	app.setGatewayRuntimeContext(parentCtx)
+
+	gatewayID := wecomGatewayIDForBot("bot-no-overlap")
+	channel := &recordingWeComChannel{}
+	oldCtx, oldCancel := context.WithCancel(parentCtx)
+	oldDone := make(chan struct{})
+	app.mu.Lock()
+	app.wecomChannels[gatewayID] = channel
+	app.wecomRunCancel[gatewayID] = oldCancel
+	app.wecomRunDone[gatewayID] = oldDone
+	app.mu.Unlock()
+
+	app.restartWeComGatewayRuntime(gatewayID)
+
+	select {
+	case <-oldCtx.Done():
+	default:
+		t.Fatal("previous runtime context was not cancelled")
+	}
+	app.mu.Lock()
+	_, hasReplacement := app.wecomRunCancel[gatewayID]
+	runtimeState := app.wecomRuntimeStateLocked(gatewayID)
+	state := runtimeState.state
+	lastError := runtimeState.lastError
+	app.mu.Unlock()
+	if hasReplacement {
+		t.Fatal("reconnect started a replacement while the previous runtime was still running")
+	}
+	if state != "degraded" {
+		t.Fatalf("runtime state = %q, want degraded", state)
+	}
+	if !strings.Contains(lastError, "overlapping connections") {
+		t.Fatalf("last error = %q, want overlap prevention reason", lastError)
 	}
 }
 

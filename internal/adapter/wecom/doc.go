@@ -14,7 +14,10 @@
 //   - Endpoint: wss://openws.work.weixin.qq.com — a long-lived WebSocket.
 //   - Auth: a Bot ID + Secret pair identifies and authenticates the aibot.
 //   - After dialing, the client sends an aibot_subscribe frame carrying the Bot
-//     ID/Secret to register for that bot's event stream.
+//     ID/Secret and does not report connected until the server returns the
+//     matching req_id with errcode=0.
+//   - Cancelling a run closes that run's WebSocket to unblock the reader. A
+//     reconnect never overlaps a previous runtime that failed to stop.
 //   - The server then pushes frames the client dispatches by type:
 //   - aibot_msg_callback   — an inbound user message to the bot.
 //   - aibot_event_callback — a non-message event (e.g. menu click, enter chat).

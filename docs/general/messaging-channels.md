@@ -1,7 +1,7 @@
 # Messaging Channels
 
 > Type: `general`
-> Updated: `2026-07-08`
+> Updated: `2026-08-30`
 > Summary: 记录 Feishu / WeCom 多通道 surface 架构、配置和能力声明规则。
 
 Codex Remote uses a channel-neutral surface contract to connect one daemon to one or more IM backends.
@@ -65,6 +65,12 @@ WECOM_SECRET=secret
 ```
 
 WeCom environment variables intentionally override `config.json`, including a disabled `wecom.enabled=false`, so service managers can inject secrets without editing disk config.
+
+## WeCom connection lifecycle
+
+The WeCom runtime treats the WebSocket handshake and bot subscription as separate states. Opening the socket emits `connecting`; the runtime becomes `connected` only after the server acknowledges the matching `aibot_subscribe` request with `errcode=0`. A rejected, malformed, mismatched, or timed-out acknowledgement closes the socket and enters the reconnect path.
+
+Runtime cancellation closes the exact WebSocket owned by that run so a blocked read exits before a replacement starts. If the previous runtime still does not stop within the gateway timeout, the reconnect is aborted and reported as `degraded`; overlapping old/new bot subscriptions are never allowed.
 
 ## Capability rules
 

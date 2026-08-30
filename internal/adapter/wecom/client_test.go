@@ -267,14 +267,22 @@ func TestStreamMarkdownOpensThenUpdates(t *testing.T) {
 // frame and exposes the server-side conn so tests can inject responses.
 func wsTestServer(t *testing.T) (*httptest.Server, chan map[string]any, chan *websocket.Conn) {
 	t.Helper()
+	srv, frames, conns, _ := wsLifecycleTestServer(t, true)
+	return srv, frames, conns
+}
+
+func wsLifecycleTestServer(t *testing.T, autoSubscribeAck bool) (*httptest.Server, chan map[string]any, chan *websocket.Conn, chan *websocket.Conn) {
+	t.Helper()
 	upgrader := websocket.Upgrader{}
 	frames := make(chan map[string]any, 32)
-	conns := make(chan *websocket.Conn, 1)
+	conns := make(chan *websocket.Conn, 4)
+	closed := make(chan *websocket.Conn, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
+		defer func() { closed <- conn }()
 		conns <- conn
 		for {
 			_, raw, err := conn.ReadMessage()
@@ -284,10 +292,24 @@ func wsTestServer(t *testing.T) (*httptest.Server, chan map[string]any, chan *we
 			var m map[string]any
 			if json.Unmarshal(raw, &m) == nil {
 				frames <- m
+				if autoSubscribeAck && m["cmd"] == frameCmdSubscribe {
+					headers, _ := m["headers"].(map[string]any)
+					reqID, _ := headers["req_id"].(string)
+					if reqID == "" {
+						return
+					}
+					if err := conn.WriteJSON(map[string]any{
+						"headers": map[string]any{"req_id": reqID},
+						"errcode": 0,
+						"errmsg":  "ok",
+					}); err != nil {
+						return
+					}
+				}
 			}
 		}
 	}))
-	return srv, frames, conns
+	return srv, frames, conns, closed
 }
 
 func dialTestServer(t *testing.T, srv *httptest.Server) *Client {
@@ -330,6 +352,158 @@ func frameStreamMeta(t *testing.T, m map[string]any) map[string]any {
 		t.Fatalf("frame missing stream meta: %#v", m)
 	}
 	return stream
+}
+
+func TestDialWaitsForSubscribeAckBeforeConnected(t *testing.T) {
+	srv, frames, conns, _ := wsLifecycleTestServer(t, false)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+	defer func() { _ = client.Close() }()
+
+	states := make(chan string, 4)
+	client.SetStateHook(func(state string, _ error) { states <- state })
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	dialDone := make(chan error, 1)
+	go func() { dialDone <- client.Dial(ctx) }()
+
+	serverConn := <-conns
+	subscribe := recvFrame(t, frames)
+	select {
+	case err := <-dialDone:
+		t.Fatalf("Dial returned before subscribe ack: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	for {
+		select {
+		case state := <-states:
+			if state == "connected" {
+				t.Fatal("connected state emitted before subscribe ack")
+			}
+		default:
+			goto sendAck
+		}
+	}
+
+sendAck:
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, subscribe)},
+		"errcode": 0,
+		"errmsg":  "ok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-dialDone:
+		if err != nil {
+			t.Fatalf("Dial after successful subscribe ack: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Dial did not finish after subscribe ack")
+	}
+
+	for {
+		select {
+		case state := <-states:
+			if state == "connected" {
+				return
+			}
+		case <-time.After(time.Second):
+			t.Fatal("connected state not emitted after subscribe ack")
+		}
+	}
+}
+
+func TestDialRejectsSubscribeError(t *testing.T) {
+	srv, frames, conns, _ := wsLifecycleTestServer(t, false)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	dialDone := make(chan error, 1)
+	go func() { dialDone <- client.Dial(ctx) }()
+
+	serverConn := <-conns
+	subscribe := recvFrame(t, frames)
+	if err := serverConn.WriteJSON(map[string]any{
+		"headers": map[string]any{"req_id": frameReqID(t, subscribe)},
+		"errcode": 40013,
+		"errmsg":  "invalid secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-dialDone:
+		if err == nil || !strings.Contains(err.Error(), "40013") {
+			t.Fatalf("Dial error = %v, want subscribe error 40013", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Dial did not return after rejected subscribe ack")
+	}
+	if _, err := client.currentConn(); err == nil {
+		t.Fatal("rejected subscribe must not leave a live current connection")
+	}
+}
+
+func TestRunStopsPromptlyWhenContextIsCancelled(t *testing.T) {
+	srv, frames, _ := wsTestServer(t)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+	defer func() { _ = client.Close() }()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelDial()
+	if err := client.Dial(dialCtx); err != nil {
+		t.Fatal(err)
+	}
+	recvFrame(t, frames) // subscribe
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- client.Run(runCtx) }()
+	// Let Run enter the blocking ReadMessage call. Cancelling before it starts
+	// would only exercise the loop's pre-read context check.
+	time.Sleep(100 * time.Millisecond)
+	cancelRun()
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not stop after context cancellation")
+	}
+}
+
+func TestSecondDialClosesPreviousConnection(t *testing.T) {
+	srv, frames, conns, closed := wsLifecycleTestServer(t, true)
+	defer srv.Close()
+	client := dialTestServer(t, srv)
+	defer func() { _ = client.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := client.Dial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	firstConn := <-conns
+	recvFrame(t, frames) // first subscribe
+
+	if err := client.Dial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	secondConn := <-conns
+	recvFrame(t, frames) // second subscribe
+	if firstConn == secondConn {
+		t.Fatal("second Dial reused the first server connection")
+	}
+	select {
+	case got := <-closed:
+		if got != firstConn {
+			t.Fatalf("closed connection = %p, want first connection %p", got, firstConn)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Dial left the previous connection open")
+	}
 }
 
 func TestNewReqIDIsUniqueUnderConcurrency(t *testing.T) {

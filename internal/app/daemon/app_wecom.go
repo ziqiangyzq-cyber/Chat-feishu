@@ -191,16 +191,18 @@ func (a *App) detachWeComGatewayRuntimeLocked(gatewayID string) (context.CancelF
 	return cancel, done
 }
 
-func (a *App) waitWeComGatewayRuntimeStop(gatewayID string, done chan struct{}) {
+func (a *App) waitWeComGatewayRuntimeStop(gatewayID string, done chan struct{}) bool {
 	if done == nil {
-		return
+		return true
 	}
 	timer := time.NewTimer(a.gatewayStopTimeoutValue())
 	defer timer.Stop()
 	select {
 	case <-done:
+		return true
 	case <-timer.C:
 		log.Printf("wecom runtime stop exceeded timeout: gateway=%s timeout=%s", gatewayID, a.gatewayStopTimeoutValue())
+		return false
 	}
 }
 
@@ -216,7 +218,12 @@ func (a *App) restartWeComGatewayRuntime(gatewayID string) {
 	if cancel != nil {
 		cancel()
 	}
-	a.waitWeComGatewayRuntimeStop(gatewayID, done)
+	if !a.waitWeComGatewayRuntimeStop(gatewayID, done) {
+		a.mu.Lock()
+		a.markWeComDegradedLocked(gatewayID, "previous runtime did not stop; reconnect aborted to prevent overlapping connections")
+		a.mu.Unlock()
+		return
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	channel = a.wecomChannelForGatewayLocked(gatewayID)

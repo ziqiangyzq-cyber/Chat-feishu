@@ -37,6 +37,11 @@ const tcpKeepAlivePeriod = 30 * time.Second
 // writeTimeout bounds a single frame write.
 const writeTimeout = 10 * time.Second
 
+// subscribeAckWait bounds authentication after the TCP/WebSocket handshake.
+// A socket is not usable until WeCom confirms the aibot_subscribe request with
+// the same req_id and errcode=0.
+const subscribeAckWait = 10 * time.Second
+
 // ackWait bounds how long writeEnvelopeAndWait blocks for the server's reply to
 // a request frame before giving up, so a missing ack cannot wedge the caller.
 const ackWait = 30 * time.Second
@@ -80,6 +85,12 @@ type replyEnvelope struct {
 	Body    json.RawMessage `json:"body,omitempty"`
 	ErrCode int             `json:"errcode,omitempty"`
 	ErrMsg  string          `json:"errmsg,omitempty"`
+}
+
+type subscribeAckEnvelope struct {
+	Headers frameHeaders `json:"headers,omitempty"`
+	ErrCode *int         `json:"errcode"`
+	ErrMsg  string       `json:"errmsg,omitempty"`
 }
 
 // subscribeFrame registers this aibot for its event stream. It is the first
@@ -193,6 +204,7 @@ type Client struct {
 
 	mu           sync.Mutex
 	conn         *websocket.Conn
+	dialMu       sync.Mutex
 	writeMu      sync.Mutex
 	pendingReply map[string]chan replyEnvelope
 	lastAck      replyEnvelope
@@ -249,9 +261,16 @@ func (c *Client) dialDefault(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// Dial opens the long connection and sends the initial subscribe frame.
+// Dial opens the long connection and authenticates the subscription. The
+// connected state is emitted only after WeCom acknowledges aibot_subscribe.
 func (c *Client) Dial(ctx context.Context) error {
+	c.dialMu.Lock()
+	defer c.dialMu.Unlock()
+
 	c.emitState("connecting", nil)
+	if previous := c.takeCurrentConn(); previous != nil {
+		_ = previous.Close()
+	}
 	conn, err := c.dialFn(ctx)
 	if err != nil {
 		c.emitState("degraded", err)
@@ -261,8 +280,8 @@ func (c *Client) Dial(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
-	if err := c.subscribe(ctx); err != nil {
-		_ = c.Close()
+	if err := c.subscribe(ctx, conn); err != nil {
+		_ = c.closeConn(conn)
 		c.emitState("degraded", err)
 		return err
 	}
@@ -270,12 +289,72 @@ func (c *Client) Dial(ctx context.Context) error {
 	return nil
 }
 
-// subscribe sends the aibot_subscribe frame registering this bot's stream.
-func (c *Client) subscribe(ctx context.Context) error {
+// subscribe sends the aibot_subscribe frame and waits for the matching server
+// acknowledgement before allowing the normal read loop to start.
+func (c *Client) subscribe(ctx context.Context, conn *websocket.Conn) error {
 	if c.config.BotID == "" || c.config.Secret == "" {
 		return errors.New("wecom: subscribe requires BotID and Secret")
 	}
-	return c.writeJSON(ctx, newSubscribeFrame(c.config))
+	frame := newSubscribeFrame(c.config)
+	if err := c.writeJSONToConn(ctx, conn, frame); err != nil {
+		return err
+	}
+	return c.waitSubscribeAck(ctx, conn, frame.Headers.ReqID)
+}
+
+func (c *Client) waitSubscribeAck(ctx context.Context, conn *websocket.Conn, reqID string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.Now().Add(subscribeAckWait)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("wecom: set subscribe ack deadline: %w", err)
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	cancelWatchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = c.closeConn(conn)
+		case <-cancelWatchDone:
+		}
+	}()
+	defer close(cancelWatchDone)
+
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return fmt.Errorf("wecom: subscribe ack timed out after %s", subscribeAckWait)
+		}
+		return fmt.Errorf("wecom: read subscribe ack: %w", err)
+	}
+	var ack subscribeAckEnvelope
+	if err := json.Unmarshal(raw, &ack); err != nil {
+		return fmt.Errorf("wecom: decode subscribe ack: %w", err)
+	}
+	if got := strings.TrimSpace(ack.Headers.ReqID); got != reqID {
+		return fmt.Errorf("wecom: subscribe ack req_id=%q, want %q", got, reqID)
+	}
+	if ack.ErrCode == nil {
+		return errors.New("wecom: subscribe ack missing errcode")
+	}
+	if *ack.ErrCode != 0 {
+		return fmt.Errorf("wecom: subscribe rejected: errcode=%d errmsg=%q", *ack.ErrCode, ack.ErrMsg)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if !c.isCurrentConn(conn) {
+		return errors.New("wecom: subscription connection closed before activation")
+	}
+	return nil
 }
 
 // currentConn returns the live connection or an error if not dialed.
@@ -287,6 +366,37 @@ func (c *Client) currentConn() (*websocket.Conn, error) {
 		return nil, errors.New("wecom: not connected")
 	}
 	return conn, nil
+}
+
+func (c *Client) isCurrentConn(conn *websocket.Conn) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return conn != nil && c.conn == conn
+}
+
+func (c *Client) takeCurrentConn() *websocket.Conn {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	conn := c.conn
+	c.conn = nil
+	return conn
+}
+
+// closeConn closes conn only while this Client still owns it. This identity
+// check prevents a delayed cleanup from an older run from closing a newer
+// connection installed by a later Dial.
+func (c *Client) closeConn(conn *websocket.Conn) error {
+	if conn == nil {
+		return nil
+	}
+	c.mu.Lock()
+	if c.conn != conn {
+		c.mu.Unlock()
+		return nil
+	}
+	c.conn = nil
+	c.mu.Unlock()
+	return conn.Close()
 }
 
 // writeJSON serializes v and writes it as a text frame under the write lock.
@@ -302,6 +412,13 @@ func (c *Client) writeJSON(ctx context.Context, v any) error {
 	conn, err := c.currentConn()
 	if err != nil {
 		return err
+	}
+	return c.writeJSONToConn(ctx, conn, v)
+}
+
+func (c *Client) writeJSONToConn(ctx context.Context, conn *websocket.Conn, v any) error {
+	if conn == nil {
+		return errors.New("wecom: not connected")
 	}
 	payload, err := json.Marshal(v)
 	if err != nil {
@@ -327,17 +444,35 @@ func (c *Client) writeJSON(ctx context.Context, v any) error {
 // Run drives the read loop and ping loop until the context is cancelled or the
 // connection fails. It assumes Dial has already succeeded.
 func (c *Client) Run(ctx context.Context) error {
+	conn, err := c.currentConn()
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer func() { _ = c.closeConn(conn) }()
+
+	cancelWatchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			// ReadMessage does not observe context cancellation. Closing the
+			// run-owned socket is what unblocks it and lets the supervisor wait
+			// for a complete stop before starting another connection.
+			_ = c.closeConn(conn)
+		case <-cancelWatchDone:
+		}
+	}()
+	defer close(cancelWatchDone)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		c.pingLoop(ctx)
+		c.pingLoop(ctx, conn)
 	}()
 
-	err := c.readLoop(ctx)
+	err = c.readLoop(ctx, conn)
 	cancel()
 	wg.Wait()
 	if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
@@ -350,11 +485,7 @@ func (c *Client) Run(ctx context.Context) error {
 
 // readLoop reads frames and dispatches them by type until an error occurs or
 // the context is cancelled.
-func (c *Client) readLoop(ctx context.Context) error {
-	conn, err := c.currentConn()
-	if err != nil {
-		return err
-	}
+func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 	// No application-level read deadline here: WeCom does not answer our WS pings
 	// with pongs and sends nothing on an idle connection, so a read deadline
 	// cannot tell "healthy but idle" from "dead" and just tears down good
@@ -572,7 +703,7 @@ func newReqID(prefix string) string {
 
 // pingLoop sends a WebSocket ping every pingInterval to keep the long
 // connection alive. It exits when the context is cancelled or a write fails.
-func (c *Client) pingLoop(ctx context.Context) {
+func (c *Client) pingLoop(ctx context.Context, conn *websocket.Conn) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 	for {
@@ -580,12 +711,12 @@ func (c *Client) pingLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.ping(); err != nil {
+			if err := c.pingConn(conn); err != nil {
 				log.Printf("wecom: ping failed: %v", err)
 				// A failed ping means the connection is dead. Close it so the
 				// blocked ReadMessage returns immediately, letting Run return and
 				// the supervisor re-dial rather than waiting out pongWait.
-				_ = c.Close()
+				_ = c.closeConn(conn)
 				return
 			}
 		}
@@ -593,10 +724,9 @@ func (c *Client) pingLoop(ctx context.Context) {
 }
 
 // ping writes a single WebSocket control ping frame.
-func (c *Client) ping() error {
-	conn, err := c.currentConn()
-	if err != nil {
-		return err
+func (c *Client) pingConn(conn *websocket.Conn) error {
+	if conn == nil {
+		return errors.New("wecom: not connected")
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -609,10 +739,7 @@ func (c *Client) ping() error {
 
 // Close tears down the long connection.
 func (c *Client) Close() error {
-	c.mu.Lock()
-	conn := c.conn
-	c.conn = nil
-	c.mu.Unlock()
+	conn := c.takeCurrentConn()
 	if conn == nil {
 		return nil
 	}
