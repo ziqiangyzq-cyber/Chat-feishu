@@ -302,11 +302,12 @@ func (s *Service) attachHeadlessInstance(surface *state.SurfaceConsoleRecord, in
 	}
 	if pending.Purpose == state.HeadlessLaunchPurposeFreshWorkspace {
 		pendingContract := state.HeadlessLaunchContractFromPending(pending)
-		if pendingContract.Backend == agentproto.BackendClaude {
-			s.setSurfaceDesiredContract(surface, state.HeadlessClaudeSurfaceBackendContract(pendingContract.ClaudeProfileID))
-		} else {
-			s.setSurfaceDesiredContract(surface, state.HeadlessCodexSurfaceBackendContract(pendingContract.CodexProviderID))
-		}
+		s.setSurfaceDesiredContract(surface, state.SurfaceBackendContract{
+			ProductMode:     state.ProductModeNormal,
+			Backend:         pendingContract.Backend,
+			CodexProviderID: pendingContract.CodexProviderID,
+			ClaudeProfileID: pendingContract.ClaudeProfileID,
+		})
 		workspaceKey := normalizeWorkspaceClaimKey(firstNonEmpty(pending.WorkspaceKey, pending.ThreadCWD))
 		if pending.PrepareNewThread {
 			return s.attachWorkspaceWithOptions(surface, workspaceKey, attachWorkspaceOptions{
