@@ -1,7 +1,7 @@
 # 使用说明书
 
 > Type: `general`
-> Updated: `2026-08-06`
+> Updated: `2026-10-11`
 > Summary: 说明 headless/vscode 与 `codex|claude|agy|grok|vscode` 的用户用法，保留 `/mode normal` 兼容说明。
 
 ## 1. 这是什么
@@ -294,7 +294,7 @@ Windows PowerShell：
 - `claude`
   - 也是 headless，只是 backend 换成 Claude
 - `agy`
-  - 也是 headless，使用本机 Antigravity CLI；支持新建、按 conversation ID 续接、流式回复和 `/stop`
+  - 也是 headless，使用本机 Antigravity CLI；支持新建、按 conversation ID 续接、流式回复、图片读取和 `/stop`
 - `grok`
   - 也是 headless，使用本机 Grok CLI；支持新建、按 session ID 续接、统一消息流和 `/stop`
 - `vscode`

@@ -58,21 +58,25 @@ func RunMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	go scanLines(stdin, lines, readErr)
 	turnDone := make(chan turnResult, 1)
 	busy := false
+	stopTurn := func() {
+		if busy && b.turnCancel != nil {
+			b.turnCancel()
+			<-turnDone
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			if b.turnCancel != nil {
-				b.turnCancel()
-			}
+			stopTurn()
 			return ctx.Err()
 		case err := <-readErr:
 			if errors.Is(err, io.EOF) {
-				if b.turnCancel != nil {
-					b.turnCancel()
-				}
+				stopTurn()
 				return nil
 			}
+			stopTurn()
+			b.emitResult("error_during_execution", "无法读取 Antigravity 输入："+err.Error(), nil)
 			return err
 		case result := <-turnDone:
 			busy = false
@@ -97,8 +101,13 @@ func RunMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 					b.emitResult("error_during_execution", "Antigravity 当前仍在执行，暂不支持 turn steer。", nil)
 					continue
 				}
-				prompt := promptFromClaudeFrame(frame)
+				prompt, cleanup, err := promptFromClaudeFrame(frame)
+				if err != nil {
+					b.emitResult("error_during_execution", "无法传递 Antigravity 输入："+err.Error(), nil)
+					continue
+				}
 				if strings.TrimSpace(prompt) == "" {
+					cleanup()
 					b.emitResult("error_during_execution", "Antigravity prompt 为空。", nil)
 					continue
 				}
@@ -110,7 +119,10 @@ func RunMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 				model := b.model
 				effort := b.effort
 				go func() {
-					conversation, err := b.runTurn(turnCtx, prompt, conversationID, permissionMode, model, effort)
+					conversation, err := func() (string, error) {
+						defer cleanup()
+						return b.runTurn(turnCtx, prompt, conversationID, permissionMode, model, effort)
+					}()
 					turnDone <- turnResult{conversationID: conversation, err: err}
 				}()
 			}
@@ -120,7 +132,7 @@ func RunMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 
 func scanLines(r io.Reader, lines chan<- []byte, errs chan<- error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		lines <- line
@@ -318,31 +330,6 @@ func resolveAgyBinary() string {
 		}
 	}
 	return "agy"
-}
-
-func promptFromClaudeFrame(frame map[string]any) string {
-	message := mapValue(frame["message"])
-	content := message["content"]
-	if text, ok := content.(string); ok {
-		return text
-	}
-	items, _ := content.([]any)
-	parts := make([]string, 0, len(items))
-	for _, raw := range items {
-		item := mapValue(raw)
-		switch stringValue(item["type"]) {
-		case "text":
-			if text := stringValue(item["text"]); text != "" {
-				parts = append(parts, text)
-			}
-		case "image":
-			source := mapValue(item["source"])
-			if path := firstNonEmpty(stringValue(source["path"]), stringValue(item["path"])); path != "" {
-				parts = append(parts, "[Local image: "+path+"]")
-			}
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 func mapValue(value any) map[string]any {

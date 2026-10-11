@@ -1,7 +1,7 @@
 # Remote Surface 核心状态机
 
 > Type: `general`
-> Updated: `2026-09-19`
+> Updated: `2026-10-11`
 > Summary: 当前实现同步了 workspace-aware headless 主链与 vscode 主链，并把当前 live 的 backend-aware 可见命令面收口到新的投影：`codex` 继续以 `workspace` 命令族作为主展示壳，`claude` 当前 live 实现也把 `switch_target` 收口到同一套 `/workspace` 父页与 `切换 / 从目录新建 / 从 GIT URL 新建 / 从 Worktree 新建 / 解除接管` 五个入口，`current_work` 继续保留 `/new` 等当前工作动作，`常用工具` 继续收口到 `/history` 与 `/sendfile`；`/list`、`/use`、裸 `/detach` 则退回 hidden + allow 兼容 alias。`send_settings` 则改成 backend 互斥入口：`codex headless` 可见 `/codexprovider`，`claude headless` 可见 `/claudeprofile`，`vscode` 两者都隐藏，且手动输入错误 backend 的命令也会显式拒绝。`/list` `/use` / target picker / workspace recency 全部只按当前 backend 过滤，且不再因为 surface/instance `ClaudeProfileID` 不同而隐藏 Claude workspace/session 候选；同时工作区一旦确定，`/workspace list` 与 alias `/list` 现在会把 `新建会话` 置顶并默认选中，`/use`、`/useall` 与锁定工作区的恢复 picker 则继续保留 `新建会话` fallback。2026-06-05 的补充是：headless auto-resume 的运行态只在真实恢复目标身份变化时重置 backoff / last notice，标题、更新时间等非目标元数据刷新不会把同一失败 episode 重新刷成新失败；auto-restore 启动的 managed headless 一旦连回，若 exact-thread 接管失败，也会立刻终止本轮 `PendingHeadless`、kill 这次拉起的 headless，并保留持久化恢复目标等待后续 backoff 重试。2026-05-31 的补充是：headless auto-resume 现在把“恢复 episode 的稳定失败根因”与“后续 retry 观测到的派生 busy/not_found 状态”分开记账；provider/profile/runtime 这类启动前失败会保留为本轮恢复的 canonical cause，并且只有在真正恢复成功或 target 改变后才会清空，因此后续 retry 不会再把用户提示改写成误导性的 workspace/thread busy，也不会对同一根因重复刷失败卡。2026-05-01 的新变化是：headless attach/reuse/restart/create/reject 已进一步收口成单一路径，visible 与 compatibility 继续拆层，但所有 consumer 现在都共享同一个 `desired surface contract vs observed instance contract` 解析核。结果是：
 > 1. visible 但 contract mismatch 的 workspace/session 仍然可见，不会再被 `/list`、`/use`、workspace recency、target picker 直接吞掉；
 > 2. 这些 mismatch 候选不会再假装“可直接接管”；
@@ -16,6 +16,8 @@
 ## 1. 文档定位
 
 2026-08-06 增加第三个 headless backend `agy`：`/mode agy`（兼容别名 `/mode antigravity`）与 `codex`、`claude` 共用 workspace claim、`PendingHeadless`、queue、detach 和恢复主链，但通过独立 `agy-app-server` 启动。wrapper 内部把 `agy --print --output-format stream-json` 的 conversation ID、文本增量、Token 与完成态转换成统一 relay event；`/new` 创建新 conversation，已有 conversation 可按 ID 续接，`/stop` 终止当前 CLI 子进程。Agy 当前不声明 persisted session catalog、active-turn steer 或交互式 request-response 能力，因此离线历史不会混入 Codex/Claude catalog，执行中追加消息进入普通队列。
+
+2026-10-11 修复 AGY 图文输入：Claude wire 的 Base64 图片块解码到权限 `0700` 的私有临时目录（文件 `0600`），按输入顺序附带真实路径，要求 native `view_file` 读取；当前 AGY print 的 `stream-json` 输入只支持文本，不能直接发送 image block。纯图片输入同样进入正常 turn；无效图片明确产生失败 result，不再丢弃后继续执行纯文本。桥接输入帧上限为 64 MiB，超限明确失败。临时图片在完成、失败或 `/stop` 后清理；EOF、context 取消和读取失败会等待当前 native turn 退出及清理后再退出 bridge。该修复不改变 workspace claim、backend 选择、queue 或恢复路由。
 
 2026-08-14 增加第四个 headless backend `grok`：`/mode grok` 与其它 headless backend 共用 workspace claim、`PendingHeadless`、queue、detach、watchdog 和恢复主链，通过独立 `grok-app-server` 启动。wrapper 的 Grok bridge 调用已登录的本机 `grok` CLI，以权限 `0600` 的临时 `--prompt-file` 传递 prompt，并以 `streaming-messages-json` 输出复用 Claude wire translator；Grok CLI 运行在 managed process group 中，context 取消与 `/stop` 会终止完整进程树并清理临时 prompt 文件。`/new` 创建新 Grok session，已有 session 按 ID 续接。Grok 当前与 Agy 一样不声明 persisted session catalog、active-turn steer 或交互式 request-response 能力，因此离线历史不回退到其它 backend catalog，执行中追加消息进入普通队列。
 
