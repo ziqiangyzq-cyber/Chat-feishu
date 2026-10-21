@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/compress v1.18.5
+	github.com/klauspost/compress v1.18.7
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/pmezard/go-difflib v1.0.0
